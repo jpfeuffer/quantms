@@ -80,6 +80,8 @@ process SEARCHENGINECOMET {
     il_equiv = params.IL_equivalent ? "-PeptideIndexing:IL_equivalent" : ""
 
     """
+    export TMPDIR=\$PWD
+    env
     CometAdapter \\
         -in ${mzml_file} \\
         -out ${mzml_file.baseName}_comet.idXML \\
