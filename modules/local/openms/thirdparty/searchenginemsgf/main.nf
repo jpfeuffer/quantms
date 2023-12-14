@@ -60,7 +60,6 @@ process SEARCHENGINEMSGF {
     il_equiv = params.IL_equivalent ? "-PeptideIndexing:IL_equivalent" : ""
 
     """
-    export TMPDIR=\$PWD
     env
     MSGFPlusAdapter \\
         -protocol $params.protocol \\
