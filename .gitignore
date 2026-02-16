@@ -11,7 +11,7 @@ null/
 .vscode/
 /lint_log.txt
 /lint_results.md
-
+plans/
 
 #Ignore cursor AI rules
 .cursor/rules/codacy.mdc

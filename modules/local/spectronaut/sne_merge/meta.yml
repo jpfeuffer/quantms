@@ -1,0 +1,41 @@
+name: spectronaut_sne_merge
+description: Merge SNE files and generate final report (reduce operation). Uses manageSNE for <500 samples, combine for larger.
+keywords:
+  - spectronaut
+  - SNE
+  - merge
+  - distributed
+tools:
+  - Spectronaut:
+      description: |
+        Spectronaut SNE merging for distributed workflow final step.
+      homepage: https://biognosys.com/software/spectronaut/
+input:
+  - experimentName:
+      type: string
+      description: Experiment name.
+  - sne_files:
+      type: file
+      description: SNE files from DIA analysis batches.
+      pattern: "*.sne"
+  - fasta:
+      type: file
+      description: FASTA database files (required for combine).
+  - expdesign:
+      type: file
+      description: Experimental design/condition file.
+output:
+  - report:
+      type: file
+      description: Final Spectronaut report.
+      pattern: "*Report*.tsv"
+  - sne_file:
+      type: file
+      description: Final merged SNE file (from manageSNE only).
+      pattern: "*.sne"
+  - versions:
+      type: file
+      description: Versions file.
+      pattern: "versions.yml"
+authors:
+  - "@quantms"

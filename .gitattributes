@@ -1,3 +1,7 @@
+# Enforce LF line endings for text files (nf-core standard)
+* text=auto eol=lf
+
+# Linguist overrides
 *.config linguist-language=nextflow
 *.nf.test linguist-language=nextflow
 modules/nf-core/** linguist-generated

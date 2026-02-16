@@ -1115,6 +1115,49 @@
             "description": "Settings for DIA-NN - a universal software for data-independent acquisition (DIA) proteomics data processing.",
             "default": "",
             "properties": {
+                "dia_tool": {
+                    "type": "string",
+                    "description": "Select the DIA analysis engine.",
+                    "default": "diann",
+                    "enum": ["diann", "spectronaut"],
+                    "fa_icon": "fas fa-list-ol",
+                    "help_text": "Choose which DIA tool to run. `diann` is the default option. `spectronaut` selects the Spectronaut DIA path."
+                },
+                "spectronaut_settings_prop": {
+                    "type": "string",
+                    "description": "Optional Spectronaut .prop settings file path.",
+                    "default": null,
+                    "fa_icon": "far fa-file",
+                    "help_text": "Passed to Spectronaut commands with -s."
+                },
+                "spectronaut_settings_json": {
+                    "type": "string",
+                    "description": "Optional Spectronaut .json settings file path.",
+                    "default": null,
+                    "fa_icon": "far fa-file",
+                    "help_text": "Passed to Spectronaut commands with -j as recommended for Linux settings customization."
+                },
+                "spectronaut_batch_size": {
+                    "type": "integer",
+                    "description": "Number of MS files per batch for Spectronaut distributed processing.",
+                    "default": 50,
+                    "fa_icon": "fas fa-layer-group",
+                    "help_text": "Controls parallelization granularity. Larger batches reduce overhead at cost of less parallelism. Smaller batches increase parallelism but require more merging."
+                },
+                "spectronaut_license_key": {
+                    "type": "string",
+                    "description": "Spectronaut floating license key.",
+                    "default": null,
+                    "fa_icon": "fas fa-key",
+                    "help_text": "Floating license key for Spectronaut activation. Recommended for containerized environments. Can be provided via --spectronaut_license_key or as Nextflow secret 'SPECTRONAUT_LICENSE_KEY'. Requires internet connectivity to licensing.biognosys.com."
+                },
+                "spectronaut_license_file": {
+                    "type": "string",
+                    "description": "Path to persistent Spectronaut license directory.",
+                    "default": null,
+                    "fa_icon": "far fa-folder",
+                    "help_text": "Directory containing persistent Spectronaut license (mounted to /mnt/bgs-license in container). Alternative to license key for environments with pre-activated licenses."
+                },
                 "mass_acc_automatic": {
                     "type": "boolean",
                     "default": true,

@@ -1,0 +1,40 @@
+name: spectronaut_dia_analysis
+description: Run DIA analysis against library (parallelized per batch).
+keywords:
+  - spectronaut
+  - DIA
+  - analysis
+  - distributed
+tools:
+  - Spectronaut:
+      description: |
+        Spectronaut DIA analysis for distributed workflow.
+      homepage: https://biognosys.com/software/spectronaut/
+input:
+  - meta:
+      type: map
+      description: Metadata including experiment_id and batch_id.
+  - raw_files:
+      type: file
+      description: Raw MS files for this batch.
+  - library:
+      type: file
+      description: Spectral library from merge step.
+      pattern: "*.kit"
+  - expdesign:
+      type: file
+      description: Experimental design/condition file.
+output:
+  - meta:
+      type: map
+      description: Metadata passed through.
+  - sne_file:
+      type: file
+      description: Spectronaut experiment file (.sne).
+      pattern: "*.sne"
+  - versions:
+      type: file
+      description: Versions file.
+      pattern: "versions.yml"
+authors:
+  - "@quantms"

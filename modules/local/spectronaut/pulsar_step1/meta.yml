@@ -1,0 +1,36 @@
+name: spectronaut_pulsar_step1
+description: Generate intermediate search archives using Pulsar step 1 (parallelized per batch).
+keywords:
+  - spectronaut
+  - pulsar
+  - DIA
+  - distributed
+tools:
+  - Spectronaut:
+      description: |
+        Spectronaut Pulsar step 1 for distributed library generation.
+      homepage: https://biognosys.com/software/spectronaut/
+input:
+  - meta:
+      type: map
+      description: Metadata including experiment_id and batch_id.
+  - raw_files:
+      type: file
+      description: Raw MS files for this batch.
+  - fasta:
+      type: file
+      description: FASTA database files.
+output:
+  - meta:
+      type: map
+      description: Metadata passed through.
+  - search_archive:
+      type: file
+      description: Intermediate search archive (.psar).
+      pattern: "*.psar"
+  - versions:
+      type: file
+      description: Versions file.
+      pattern: "versions.yml"
+authors:
+  - "@quantms"

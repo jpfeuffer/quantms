@@ -39,6 +39,7 @@ jobs:
           [
             "test_lfq",
             "test_dia",
+            "test_dia_spectronaut",
             "test_localize",
             "test_tmt",
             "test_dda_id_alphapeptdeep",
@@ -75,7 +76,11 @@ jobs:
       - name: Run pipeline with test data in docker/singularity profile
         if: github.event.pull_request.base.ref != 'master'
         run: |
-          nextflow run ${GITHUB_WORKSPACE} -profile $TEST_PROFILE,$EXEC_PROFILE,dev --outdir ${TEST_PROFILE}_${EXEC_PROFILE}_results
+          STUB_FLAG=""
+          if [ "$TEST_PROFILE" == "test_dia_spectronaut" ]; then
+            STUB_FLAG="-stub-run"
+          fi
+          nextflow run ${GITHUB_WORKSPACE} -profile $TEST_PROFILE,$EXEC_PROFILE,dev $STUB_FLAG --outdir ${TEST_PROFILE}_${EXEC_PROFILE}_results
 
       - name: Gather failed logs
         if: failure() || cancelled()

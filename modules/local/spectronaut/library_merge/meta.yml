@@ -1,0 +1,31 @@
+name: spectronaut_library_merge
+description: Merge final search archives into a single .kit library (reduce operation).
+keywords:
+  - spectronaut
+  - library
+  - DIA
+  - distributed
+tools:
+  - Spectronaut:
+      description: |
+        Spectronaut library merging for distributed workflow.
+      homepage: https://biognosys.com/software/spectronaut/
+input:
+  - experimentName:
+      type: string
+      description: Experiment name.
+  - search_archives:
+      type: file
+      description: Final search archives from step 3.
+      pattern: "*.psar"
+output:
+  - library:
+      type: file
+      description: Merged spectral library (.kit).
+      pattern: "*.kit"
+  - versions:
+      type: file
+      description: Versions file.
+      pattern: "versions.yml"
+authors:
+  - "@quantms"

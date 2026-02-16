@@ -1,0 +1,31 @@
+name: spectronaut_pulsar_step2
+description: Generate .qsp file from intermediate search archives using Pulsar step 2 (reduce operation).
+keywords:
+  - spectronaut
+  - pulsar
+  - DIA
+  - distributed
+tools:
+  - Spectronaut:
+      description: |
+        Spectronaut Pulsar step 2 for .qsp file generation.
+      homepage: https://biognosys.com/software/spectronaut/
+input:
+  - experimentName:
+      type: string
+      description: Experiment name.
+  - search_archives:
+      type: file
+      description: Intermediate search archives from step 1.
+      pattern: "*.psar"
+output:
+  - qsp_file:
+      type: file
+      description: Optimized models file (.qsp).
+      pattern: "*.qsp"
+  - versions:
+      type: file
+      description: Versions file.
+      pattern: "versions.yml"
+authors:
+  - "@quantms"
