@@ -18,13 +18,20 @@ experiment:
   enzyme: Trypsin
   dissociation_method: HCD
   quantification_method: LFQ
-  
-  # Legacy string-based modifications (backward compatibility)
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-  variable_mods:
-    - "Oxidation (M)"
-  
+
+  # Experiment-level modifications use the shared modification structure
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
+
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
 
@@ -74,11 +81,11 @@ mod_profiles:
   - id: lab_isotope_15n
     kind: custom
     name: "Lab 15N Isotope Label (custom)"
-    residues: 
-      - N  # Asparagine
+    residues:
+      - N # Asparagine
     mode: fixed
-    mass_shift: 1.008  # Mass difference from 14N to 15N per nitrogen atom
-    formula: "15N"  # Explicit isotope notation
+    mass_shift: 1.008 # Mass difference from 14N to 15N per nitrogen atom
+    formula: "15N" # Explicit isotope notation
     term_spec: none
     # Optional engine-specific parameters
     comet:
@@ -91,12 +98,12 @@ mod_profiles:
     kind: custom
     name: "Custom Protease Cleavage Artifact"
     residues:
-      - K  # Lysine after incomplete tryptic digestion
-      - R  # Arginine after incomplete tryptic digestion
-    mode: variable  # Can occur sometimes, not all peptides
-    mass_shift: 28.010565  # CO (carbon monoxide addition from oxidative cleavage)
+      - K # Lysine after incomplete tryptic digestion
+      - R # Arginine after incomplete tryptic digestion
+    mode: variable # Can occur sometimes, not all peptides
+    mass_shift: 28.010565 # CO (carbon monoxide addition from oxidative cleavage)
     formula: "CO"
-    term_spec: c-term  # Occurs at C-terminal positions
+    term_spec: c-term # Occurs at C-terminal positions
     # Could add Sage parameters if using Sage search engine
     sage:
       min_occurrences: 0
@@ -108,9 +115,9 @@ mod_profiles:
     kind: custom
     name: "Custom Deuterium Label (D3)"
     residues:
-      - M  # Methionine labeling
+      - M # Methionine labeling
     mode: fixed
-    mass_shift: 3.01883  # 3 deuterons instead of 3 protons
+    mass_shift: 3.01883 # 3 deuterons instead of 3 protons
     formula: "D3"
     term_spec: none
     # Engine-specific for MS-GF+ if used
@@ -123,11 +130,11 @@ mod_profiles:
     kind: custom
     name: "Custom XL-MS Crosslinker XYZ-150"
     residues:
-      - K  # Lysine-reactive crosslinker
-      - S  # Also reacts with serine
-    mode: variable  # Can be used on some positions
-    mass_shift: 150.05243  # Custom crosslinker mass
-    formula: "C7H10N2O3"  # Example chemical formula
+      - K # Lysine-reactive crosslinker
+      - S # Also reacts with serine
+    mode: variable # Can be used on some positions
+    mass_shift: 150.05243 # Custom crosslinker mass
+    formula: "C7H10N2O3" # Example chemical formula
     term_spec: none
     # No engine-specific blocks for this example (will use defaults)
 
@@ -137,8 +144,8 @@ mod_profiles:
   - id: simple_custom_modification
     kind: custom
     name: "Simple Custom Modification"
-    residues: E  # Glutamic acid
+    residues: E # Glutamic acid
     mode: variable
-    mass_shift: 45.0211  # Arbitrary mass shift
+    mass_shift: 45.0211 # Arbitrary mass shift
     term_spec: none
     # No formula or engine-specific blocks

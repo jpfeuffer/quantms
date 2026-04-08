@@ -3,6 +3,7 @@
 The quantms YAML contract now has typed schema coverage plus semantic validation for LFQ, TMT, iTRAQ, SILAC, and DIA manifests, with ontology and CV annotations applied across the manifest where practical. The modification model was also reworked into explicit ontology-backed and custom entries with a required mode enum, shared term specificity, and root-level engine blocks; the contract suite now passes 39 tests while runtime YAML support remains clearly deferred.
 
 **Files created/changed:**
+
 - assets/schemas/quantms_yaml_manifest.json
 - tests/yaml_contract/test_yaml_input_contract.py
 - tests/yaml_contract/fixtures/valid_tmtplex.yml
@@ -18,11 +19,12 @@ The quantms YAML contract now has typed schema coverage plus semantic validation
 - plans/replace-sdrf-with-quantms-yaml-plan.md
 
 **Functions created/changed:**
+
 - validate_with_custom_semantics
-- _validate_semantic_constraints
-- _validate_tmt_channels
-- _validate_itraq_channels
-- _validate_silac_channels
+- \_validate_semantic_constraints
+- \_validate_tmt_channels
+- \_validate_itraq_channels
+- \_validate_silac_channels
 - test_valid_lfq_fixture
 - test_valid_silac_fixture
 - test_valid_dia_fixture
@@ -44,6 +46,7 @@ The quantms YAML contract now has typed schema coverage plus semantic validation
 - test_valid_explicit_quantification_method_tmt
 
 **Tests created/changed:**
+
 - tests/yaml_contract/test_yaml_input_contract.py
 - tests/yaml_contract/fixtures/valid_tmtplex.yml
 - tests/yaml_contract/fixtures/valid_lfq.yml

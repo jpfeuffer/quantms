@@ -10,15 +10,27 @@ experiment:
   # Explicit quantification method declaration for isobaric labeling
   quantification_method: iTRAQ
 
-  # Fixed modifications (pre-set for all samples)
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-    - "iTRAQ8plex (K)"
-    - "iTRAQ8plex (N-term)"
-
-  # Experiment-level variable modifications
-  variable_mods:
-    - "Oxidation (M)"
+  # Experiment-level modifications use the shared modification structure
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      name: "iTRAQ8plex"
+      residues: K
+      mode: fixed
+    - kind: ontology
+      name: "iTRAQ8plex"
+      residues: N-term
+      term_spec: n-term
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
 
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"

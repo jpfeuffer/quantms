@@ -3,6 +3,7 @@
 The YAML contract definition milestone is complete. The repository now contains a real schema artifact for the quantms YAML manifest, schema-based tests using standard validator tooling, and corrected documentation that treats YAML as the approved replacement contract while keeping runtime SDRF input unchanged until later implementation work lands.
 
 **Files created/changed:**
+
 - assets/schemas/quantms_yaml_manifest.json
 - tests/yaml_contract/test_yaml_input_contract.py
 - tests/yaml_contract/fixtures/valid_tmtplex.yml
@@ -12,6 +13,7 @@ The YAML contract definition milestone is complete. The repository now contains 
 - nextflow.config
 
 **Functions created/changed:**
+
 - validate_yaml_against_schema
 - load_schema
 - load_yaml
@@ -25,6 +27,7 @@ The YAML contract definition milestone is complete. The repository now contains 
 - test_invalid_experiment_wrong_method
 
 **Tests created/changed:**
+
 - tests/yaml_contract/test_yaml_input_contract.py
 - tests/yaml_contract/fixtures/valid_tmtplex.yml
 

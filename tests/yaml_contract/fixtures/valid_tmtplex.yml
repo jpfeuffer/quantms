@@ -10,15 +10,27 @@ experiment:
   # Explicit quantification method declaration
   quantification_method: TMT
 
-  # Fixed modifications (pre-set for all samples)
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-    - "TMT16plex (K)"
-    - "TMT16plex (N-term)"
-
-  # Experiment-level variable modifications
-  variable_mods:
-    - "Oxidation (M)"
+  # Experiment-level modifications use the shared modification structure
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: K
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: N-term
+      term_spec: n-term
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
 
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"
@@ -106,43 +118,32 @@ runs:
     instrument: Q_TOF
 
 # Named modification profiles: each entry is ONE modification. Supporting two explicit
-# types: ontology-backed (with accession or name) and custom (user-defined, no ontology).
-# Reference by id via 'custom_mod_profile' at experiment or run level; takes precedence
-# over experiment-level fixed_mods/variable_mods.
+# types: ontology-backed (with ontology_id or name) and custom (user-defined, no ontology).
+# Reference by id via 'modification_profile' (or deprecated 'custom_mod_profile') at experiment or run level; takes precedence
+# over direct experiment.modifications.
 mod_profiles:
-  # Ontology-backed modification with accession and mode
+  # Ontology-backed modification with ontology_id and mode
   - id: phospho_ser
     kind: ontology
     name: "Phosphorylation"
-    accession: "UNIMOD:21"
+    ontology_id: "UNIMOD:21"
     residues: S
     mode: variable
-    mass_shift: 79.966331
-    formula: "HO3P"
-    term_spec: none
     comet:
       binary_group: 1
       min_occurrences: 0
       max_occurrences: 3
 
-  # Ontology-backed modification with name only (accession optional if name provided)
+  # Ontology-backed modification with name only
   - id: phospho_thr
     kind: ontology
     name: "Phosphorylation"
-    accession: "UNIMOD:21"
     residues: T
     mode: variable
-    mass_shift: 79.966331
-    formula: "HO3P"
-    term_spec: none
 
-  # Ontology-backed modification with accession only
+  # Ontology-backed modification with ontology_id only
   - id: phospho_tyr
     kind: ontology
-    accession: "UNIMOD:21"
+    ontology_id: "UNIMOD:21"
     residues: Y
     mode: variable
-    mass_shift: 79.966331
-    formula: "HO3P"
-    term_spec: none
-

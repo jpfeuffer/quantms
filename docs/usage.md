@@ -35,8 +35,7 @@ The YAML file should define the following top-level sections:
 
 - `acquisition_method`: Type of acquisition (e.g., `DDA`, `DIA`)
 - `enzyme`: Enzymatic digestion (e.g., `Trypsin`)
-- `fixed_mods`: List of fixed modifications
-- `variable_mods`: List of variable modifications
+- `modifications`: Experiment-level modifications using the shared modification structure
 - `dissociation_method`: MS/MS fragmentation method (e.g., `HCD`)
 - `precursor_mass_tolerance`, `fragment_mass_tolerance`: Mass calibration settings
 
@@ -61,12 +60,13 @@ The YAML file should define the following top-level sections:
 
 - Each entry defines **one** modification: either ontology-backed (UniMod/MOD) or custom
 - Use `kind: ontology` or `kind: custom` to explicitly declare modification type
-- For ontology-backed: provide either `accession` (UNIMOD:\d+ or MOD:\d+) or `name`, or both (minimum one required)
-- For custom: provide a friendly `name` without ontology reference
-- All modifications require `mode: fixed` or `mode: variable` (replaces old fixed/variable booleans)
-- Optional `term_spec` field specifies terminal position constraints (none, n-term, c-term, protein-n-term, protein-c-term)
+- For ontology-backed: provide either `ontology_id` (`UNIMOD:<n>` / `MOD:<n>`) or `name`, or both; `accession` remains a deprecated alias
+- For ontology-backed modifications, `residues`, `term_spec`, `mass_shift`, and `formula` are optional dataset-level refinements and are checked against curated ontology values when known
+- For custom: provide a friendly `name`, `residues`, and `mass_shift` without ontology reference
+- All modifications require `mode: fixed` or `mode: variable`
+- Optional `term_spec` specifies terminal position constraints (`none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`)
 - Engine-specific parameters (comet, sage, diann, msgf) are root-level blocks, not nested
-- Reference a profile by its `id` via `custom_mod_profile` at experiment or run level; it takes precedence over `fixed_mods`/`variable_mods`
+- Reference a profile by its `id` via `modification_profile` (or deprecated `custom_mod_profile`) at experiment or run level
 - **Note:** In the current specification, profiles are declared but runtime integration is not yet implemented.
 
 #### YAML Example: TMT 16-plex DDA
@@ -76,12 +76,26 @@ experiment:
   acquisition_method: DDA
   enzyme: Trypsin
   dissociation_method: HCD
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-    - "TMT16plex (K)"
-    - "TMT16plex (N-term)"
-  variable_mods:
-    - "Oxidation (M)"
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: K
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: N-term
+      term_spec: n-term
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
 
@@ -110,29 +124,24 @@ runs:
     mixture: mix_A
 
 mod_profiles:
-  # Ontology-backed modification: with accession and root-level engine block
+  # Ontology-backed modification: with ontology_id and root-level engine block
   - id: phospho_sty
     kind: ontology
     name: "Phosphorylation"
-    accession: "UNIMOD:21"
+    ontology_id: "UNIMOD:21"
     residues: [S, T, Y]
-    mode: variable                  # Required enum: fixed|variable
-    mass_shift: 79.966331
-    formula: "HO3P"
-    term_spec: none                 # Optional: terminus specificity
-    comet:                          # Root-level engine block (not nested)
+    mode: variable # Required enum: fixed|variable
+    comet: # Root-level engine block (not nested)
       binary_group: 1
       min_occurrences: 0
       max_occurrences: 3
-  
-  # Ontology-backed with accession only
+
+  # Ontology-backed with ontology_id only
   - id: carbamidomethyl
     kind: ontology
-    accession: "UNIMOD:4"
-    residues: C
+    ontology_id: "UNIMOD:4"
     mode: fixed
-    mass_shift: 57.021129
-  
+
   # Custom modification without ontology reference
   - id: custom_label
     kind: custom

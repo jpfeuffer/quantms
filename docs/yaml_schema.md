@@ -14,13 +14,14 @@ The following fields now enforce **controlled vocabularies** via machine validat
 
 #### Experiment Settings
 
-| Field | Valid Values | CV Source | Validation |
-|-------|---|---|---|
-| `acquisition_method` | DDA, DIA | quantms_acquisition_methods | Schema enum + runtime |
-| `enzyme` | Trypsin, Chymotrypsin, Pepsin, Elastase, ArgC, LysC, Asp-N, Glu-C, Arg-C, None, Whole protein | PSI-MS (MS:1001045) | Runtime validation |
-| `dissociation_method` | HCD, CID, ETD, PSD, ECD, IRMPD, PQD, UVPD, SID, NETD, SURMAC, CX | PSI-MS (MS:1000044) | Runtime validation |
+| Field                 | Valid Values                                                                                  | CV Source                   | Validation            |
+| --------------------- | --------------------------------------------------------------------------------------------- | --------------------------- | --------------------- |
+| `acquisition_method`  | DDA, DIA                                                                                      | quantms_acquisition_methods | Schema enum + runtime |
+| `enzyme`              | Trypsin, Chymotrypsin, Pepsin, Elastase, ArgC, LysC, Asp-N, Glu-C, Arg-C, None, Whole protein | PSI-MS (MS:1001045)         | Runtime validation    |
+| `dissociation_method` | HCD, CID, ETD, PSD, ECD, IRMPD, PQD, UVPD, SID, NETD, SURMAC, CX                              | PSI-MS (MS:1000044)         | Runtime validation    |
 
 #### Valid Dissociation Methods
+
 - **HCD**: Higher-energy C-trap dissociation (Orbitrap instruments)
 - **CID**: Collision-induced dissociation (common on Q-TOF, ion traps)
 - **ETD**: Electron-transfer dissociation (Orbitrap, Ion trap)
@@ -38,46 +39,47 @@ The following fields now enforce **controlled vocabularies** via machine validat
 
 Sample metadata fields can reference external ontologies. Machine validation documents expected CV sources:
 
-| Field | Ontology/CV | Expected Format | Example |
-|-------|---|---|---|
-| `organism` | NCBI Taxonomy | lowercase names | "homo sapiens", "mus musculus" |
-| `organism_part` | UBERON (Uberon anatomy) | tissue/organ names | "liver", "brain", "hippocampus" |
-| `disease` | DOID (Disease Ontology) | disease terms | "lung cancer", "diabetes mellitus" |
-| `cell_type` | CL (Cell Ontology) | cell type terms | "HeLa", "neuron", "T cell" |
-| `instrument` | PSI-MS (MS:1000031) | instrument model names | "Q Exactive HF", "Orbitrap Fusion" |
+| Field           | Ontology/CV             | Expected Format        | Example                            |
+| --------------- | ----------------------- | ---------------------- | ---------------------------------- |
+| `organism`      | NCBI Taxonomy           | lowercase names        | "homo sapiens", "mus musculus"     |
+| `organism_part` | UBERON (Uberon anatomy) | tissue/organ names     | "liver", "brain", "hippocampus"    |
+| `disease`       | DOID (Disease Ontology) | disease terms          | "lung cancer", "diabetes mellitus" |
+| `cell_type`     | CL (Cell Ontology)      | cell type terms        | "HeLa", "neuron", "T cell"         |
+| `instrument`    | PSI-MS (MS:1000031)     | instrument model names | "Q Exactive HF", "Orbitrap Fusion" |
 
 **Note on Ontology Validation:** The schema annotations document the expected ontologies. Full online lookup is **not** implemented. Expected ontology values are curated locally for validation. See the section on "Validation Scope" below.
 
 ### 3. Modification Model
 
-Modification profiles support two explicit types and enforce clear specification of modification properties:
+The shared modification structure is used both for `experiment.modifications` and for reusable `mod_profiles`. It supports ontology-backed and custom modifications together with search-engine-specific annotations.
 
 #### Modification Types: Ontology-backed vs Custom
 
 ```yaml
+experiment:
+  modifications:
+    # Ontology-backed: minimal specification can be name only
+    - kind: ontology
+      name: "Phosphorylation"
+      mode: variable
+
+    # Ontology-backed: ontology_id only is also valid
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      mode: fixed
+
+    # Dataset-specific subset of ontology-allowed residues / specificity
+    - kind: ontology
+      ontology_id: "UNIMOD:21"
+      residues: [S, T, Y]
+      mode: variable
+      comet:
+        binary_group: 1
+
 mod_profiles:
-  # Ontology-backed modification: with accession and/or name
-  - id: phosphorylation
-    kind: ontology              # Explicit type discriminator
-    name: "Phosphorylation"     # Optional if accession provided
-    accession: "UNIMOD:21"      # Optional if name provided (at least one required)
-    residues: [S, T, Y]
-    mode: variable              # Required: fixed|variable (replaces fixed/variable booleans)
-    mass_shift: 79.966331
-    formula: "HO3P"
-    term_spec: none             # Optional: terminus specificity
-    
-  # Ontology-backed with accession only (name optional)
-  - id: carbamidomethyl
-    kind: ontology
-    accession: "UNIMOD:4"
-    residues: C
-    mode: fixed
-    mass_shift: 57.021129
-    
-  # Custom modification: no ontology reference
+  # Reusable named profile uses the same structure plus an id
   - id: custom_linker
-    kind: custom                # Explicit custom type
+    kind: custom
     name: "My Custom Label"
     residues: K
     mode: fixed
@@ -86,66 +88,60 @@ mod_profiles:
       binary_group: 2
       min_occurrences: 0
       max_occurrences: 5
-    
-  # Invalid: ontology without accession or name
-  - id: invalid_mod
-    kind: ontology
-    residues: S
-    mode: variable
-    mass_shift: 79.966331      # ✗ FAILS: neither accession nor name provided
 ```
 
 #### Modification Fields
 
-| Field | Type | Required | Description |
-|-------|------|----------|---|
-| `id` | string | Yes | Unique identifier for the modification profile |
-| `kind` | enum | No | `ontology` or `custom` (default: ontology for backward compatibility) |
-| `name` | string | Conditional | Human-readable modification name. Required for custom, optional for ontology (if accession provided) |
-| `accession` | string | Conditional | Ontology accession (UNIMOD:\d+ or MOD:\d+). Required for ontology (if name not provided) |
-| `residues` | string or string[] | No | Target residue(s) or terminus (e.g., 'S', ['S','T','Y'], 'N-term') |
-| `mode` | enum | **Yes** | `fixed` or `variable` — replaces old fixed/variable booleans |
-| `mass_shift` | number | No | Monoisotopic mass shift in Daltons |
-| `formula` | string | No | Chemical formula of modification |
-| `term_spec` | enum | No | Terminus specificity: `none` (default), `n-term`, `c-term`, `protein-n-term`, `protein-c-term` |
-| `comet`, `sage`, `diann`, `msgf` | object | No | Engine-specific parameters at root level (not nested) |
+| Field                            | Type               | Required            | Description                                                                                                                       |
+| -------------------------------- | ------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                             | string             | Named profiles only | Unique identifier for `mod_profiles` entries                                                                                      |
+| `kind`                           | enum               | No                  | `ontology` or `custom` (defaults semantically to ontology)                                                                        |
+| `name`                           | string             | Conditional         | Human-readable modification name. Required for custom, optional for ontology if `ontology_id` is provided                         |
+| `ontology_id`                    | string             | Conditional         | Preferred ontology identifier (`UNIMOD:\d+` or `MOD:\d+`). For ontology modifications, either `ontology_id` or `name` is required |
+| `accession`                      | string             | Conditional         | Deprecated alias for `ontology_id`                                                                                                |
+| `residues`                       | string or string[] | Conditional         | Dataset-specific subset of allowed residues / termini. Required for custom; optional for ontology-backed modifications            |
+| `mode`                           | enum               | **Yes**             | `fixed` or `variable`                                                                                                             |
+| `mass_shift`                     | number             | Conditional         | Required for custom. Optional for ontology-backed modifications, but validated against curated ontology values when known         |
+| `formula`                        | string             | No                  | Optional formula; ontology-backed values are cross-checked when curated locally                                                   |
+| `term_spec`                      | enum               | No                  | Optional dataset-specific specificity restriction: `none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`                 |
+| `comet`, `sage`, `diann`, `msgf` | object             | No                  | Engine-specific parameters at root level (for example `comet.binary_group`)                                                       |
 
-#### Supported Accession Formats
+#### Supported Ontology Identifier Formats
 
 - **UNIMOD**: `UNIMOD:<number>` — UniMod database (https://www.unimod.org/)
 - **MOD**: `MOD:<number>` — PSI-MOD ontology (https://www.ebi.ac.uk/ols/ontologies/mod)
+- `accession` is accepted as a deprecated alias, but `ontology_id` is preferred in new manifests
 
 #### Engine-Specific Parameters (Root-Level)
 
 Engine-specific parameters are now optional blocks at the root of each modification entry:
 
 ```yaml
-mod_profiles:
-  - id: phospho_complex
-    kind: ontology
-    accession: "UNIMOD:21"
-    residues: [S, T, Y]
-    mode: variable
-    mass_shift: 79.966331
-    
-    # Comet-specific parameters
-    comet:
-      binary_group: 1
-      min_occurrences: 0
-      max_occurrences: 3
-      distance_from_terminus: -1
-    
-    # Sage-specific parameters
-    sage:
-      localize_mass_shift: true
-    
-    # DIA-NN specific parameters
-    diann:
-      label_mass_shift: 79.9663
-    
-    # MS-GF+ specific parameters
-    msgf:
-      custom_mod_code: "*"
+experiment:
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:21"
+      residues: [S, T, Y]
+      mode: variable
+
+      # Comet-specific parameters
+      comet:
+        binary_group: 1
+        min_occurrences: 0
+        max_occurrences: 3
+        distance_from_terminus: -1
+
+      # Sage-specific parameters
+      sage:
+        localize_mass_shift: true
+
+      # DIA-NN specific parameters
+      diann:
+        label_mass_shift: 79.9663
+
+      # MS-GF+ specific parameters
+      msgf:
+        custom_mod_code: "*"
 ```
 
 ### 4. Multiplex Channel Validation
@@ -167,16 +163,17 @@ mixtures:
 
 **Valid TMT Plexes and Their Channels:**
 
-| Plex | Channels | Count |
-|------|----------|-------|
-| TMT2 | TMT126, TMT127 | 2 |
-| TMT6 | TMT126, TMT127N, TMT127C, TMT128N, TMT128C, TMT129 | 6 |
-| TMT10 | TMT126–TMT131 (10 channels) | 10 |
-| TMT11 | TMT126–TMT131C (11 channels) | 11 |
-| TMT16 | TMT126–TMT134N (16 channels) | 16 |
-| TMT18 | TMT126–TMT135N (18 channels) | 18 |
+| Plex  | Channels                                           | Count |
+| ----- | -------------------------------------------------- | ----- |
+| TMT2  | TMT126, TMT127                                     | 2     |
+| TMT6  | TMT126, TMT127N, TMT127C, TMT128N, TMT128C, TMT129 | 6     |
+| TMT10 | TMT126–TMT131 (10 channels)                        | 10    |
+| TMT11 | TMT126–TMT131C (11 channels)                       | 11    |
+| TMT16 | TMT126–TMT134N (16 channels)                       | 16    |
+| TMT18 | TMT126–TMT135N (18 channels)                       | 18    |
 
 **Channel Validation Rule:** All channel names must be valid TMT identifiers. The validator checks for:
+
 - Correct prefix (TMT followed by numbers and optional suffix like N, C)
 - Membership in at least one known TMT plex
 - No invalid custom channel names like `TMT999`
@@ -189,7 +186,7 @@ mixtures:
     channels:
       light: sample_unlabeled
       heavy: sample_labeled
-      
+
   - id: silac_3plex
     channels:
       light_R0K0: sample_light
@@ -198,6 +195,7 @@ mixtures:
 ```
 
 **Valid SILAC Configurations:**
+
 - **2-plex**: light/heavy, light/labeled, unlabeled/labeled (2 channels)
 - **3-plex**: light/medium/heavy or with SILAC isotope codes (3 channels)
 
@@ -238,19 +236,24 @@ def validate_with_custom_semantics(yaml_path: Path, schema_path: Path) -> tuple:
 ### Validation Scope and Limitations
 
 **What IS currently validated:**
+
 - ✅ JSON schema structural constraints (types, required fields, enums)
+- ✅ Shared modification structure for both `experiment.modifications` and `mod_profiles`
 - ✅ Modification type discrimination (kind: ontology|custom)
 - ✅ Modification mode requirement (fixed|variable — no longer separate booleans)
-- ✅ Ontology-backed modifications: at least one of accession or name must be present
-- ✅ Modification accession format (UNIMOD:\d+|MOD:\d+ pattern)
+- ✅ Ontology-backed modifications: at least one of `ontology_id` / deprecated `accession` / `name` must be present
+- ✅ Ontology identifier format (`UNIMOD:\d+` / `MOD:\d+`)
+- ✅ Ontology-backed residue subset, specificity, and optional correction fields (`mass_shift`, `formula`) against curated local ontology values when known
 - ✅ Terminus specificity values (term_spec: none|n-term|c-term|protein-n-term|protein-c-term)
 - ✅ Root-level engine-specific blocks (comet, sage, diann, msgf) — not nested
+- ✅ Modification profile references from experiment / runs
 - ✅ Dissociation method names (against known MS methods)
 - ✅ Enzyme names (against known proteases)
 - ✅ TMT channel names and membership in known plexes
 - ✅ SILAC channel counts (2–3 labels)
 
 **What is NOT currently validated (deferred for runtime implementation):**
+
 - ❌ Online ontology lookups for organism, disease, cell_type (would require network access)
 - ❌ Instrument model validation against PSI-MS instrument CV (documented but not enforced)
 - ❌ Cross-references (e.g., sample IDs in channels match declared samples)
@@ -269,23 +272,37 @@ experiment:
   acquisition_method: DDA
   enzyme: Trypsin
   dissociation_method: HCD
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-    - "TMT16plex (K)"
-    - "TMT16plex (N-term)"
-  variable_mods:
-    - "Oxidation (M)"
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: K
+      mode: fixed
+    - kind: ontology
+      name: "TMT16plex"
+      residues: N-term
+      term_spec: n-term
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
 
 samples:
   - id: HeLa_treated_rep1
-    organism: homo sapiens              # NCBI Taxonomy
-    organism_part: cell line            # UBERON
-    cell_type: HeLa                     # CL Ontology
+    organism: homo sapiens # NCBI Taxonomy
+    organism_part: cell line # UBERON
+    cell_type: HeLa # CL Ontology
     condition: treated
     biological_replicate: 1
-    
+
   - id: HeLa_control_rep1
     organism: homo sapiens
     organism_part: cell line
@@ -303,31 +320,27 @@ runs:
   - file: s3://bucket/batch_A_F1.raw
     fraction: 1
     mixture: batch_A
-    instrument: Q Exactive HF          # PSI-MS instrument
+    instrument: Q Exactive HF # PSI-MS instrument
 
 mod_profiles:
-  # Ontology-backed modification with accession + root-level engine block
+  # Ontology-backed modification with ontology_id + root-level engine block
   - id: phospho_sty
     kind: ontology
-    name: "Phosphorylation on S/T/Y"
-    accession: "UNIMOD:21"             # Valid UNIMOD format
+    name: "Phosphorylation"
+    ontology_id: "UNIMOD:21" # Valid UNIMOD format
     residues: [S, T, Y]
-    mode: variable                     # Required: fixed|variable
-    mass_shift: 79.966331
-    term_spec: none                    # Optional: terminus specificity
-    comet:                             # Root-level engine block (not nested)
+    mode: variable # Required: fixed|variable
+    comet: # Root-level engine block (not nested)
       binary_group: 1
       min_occurrences: 0
       max_occurrences: 3
-    
-  # Ontology-backed with accession only (name optional)
+
+  # Ontology-backed with ontology_id only
   - id: carbamidomethyl
     kind: ontology
-    accession: "UNIMOD:4"
-    residues: C
+    ontology_id: "UNIMOD:4"
     mode: fixed
-    mass_shift: 57.021129
-    
+
   # Custom modification without ontology reference
   - id: custom_label
     kind: custom
@@ -354,21 +367,21 @@ uv run tests/yaml_contract/test_yaml_input_contract.py
 
 ### Test Coverage
 
-| Test | Feature | Status |
-|------|---------|--------|
-| `test_valid_fixture` | TMT 16-plex fixture | ✓ Pass |
-| `test_valid_dissociation_method_hcd` | HCD dissociation | ✓ Pass |
-| `test_valid_dissociation_method_etd` | ETD dissociation | ✓ Pass |
-| `test_invalid_dissociation_method` | Invalid dissociation | ✓ Pass |
-| `test_valid_enzyme_trypsin` | Trypsin enzyme | ✓ Pass |
-| `test_invalid_enzyme` | Invalid enzyme | ✓ Pass |
-| `test_valid_tmt16_channels` | TMT16 channels | ✓ Pass |
-| `test_invalid_tmt_channel_name` | Invalid TMT channel | ✓ Pass |
-| `test_valid_modification_accession_unimod` | UNIMOD format | ✓ Pass |
-| `test_valid_modification_accession_mod` | MOD format | ✓ Pass |
-| `test_invalid_modification_accession_format` | Invalid accession | ✓ Pass |
-| `test_valid_silac_two_plex` | SILAC 2-plex | ✓ Pass |
-| `test_valid_silac_three_plex` | SILAC 3-plex | ✓ Pass |
+| Test                                         | Feature                     | Status |
+| -------------------------------------------- | --------------------------- | ------ |
+| `test_valid_fixture`                         | TMT 16-plex fixture         | ✓ Pass |
+| `test_valid_dissociation_method_hcd`         | HCD dissociation            | ✓ Pass |
+| `test_valid_dissociation_method_etd`         | ETD dissociation            | ✓ Pass |
+| `test_invalid_dissociation_method`           | Invalid dissociation        | ✓ Pass |
+| `test_valid_enzyme_trypsin`                  | Trypsin enzyme              | ✓ Pass |
+| `test_invalid_enzyme`                        | Invalid enzyme              | ✓ Pass |
+| `test_valid_tmt16_channels`                  | TMT16 channels              | ✓ Pass |
+| `test_invalid_tmt_channel_name`              | Invalid TMT channel         | ✓ Pass |
+| `test_valid_modification_accession_unimod`   | UNIMOD / ontology_id format | ✓ Pass |
+| `test_valid_modification_accession_mod`      | MOD / ontology_id format    | ✓ Pass |
+| `test_invalid_modification_accession_format` | Invalid ontology identifier | ✓ Pass |
+| `test_valid_silac_two_plex`                  | SILAC 2-plex                | ✓ Pass |
+| `test_valid_silac_three_plex`                | SILAC 3-plex                | ✓ Pass |
 
 ## Future Roadmap
 
@@ -394,4 +407,3 @@ The following enhancements are planned:
 - **UBERON (Anatomy Ontology)**: https://www.ebi.ac.uk/ols/ontologies/uberon
 - **Cell Ontology (CL)**: https://www.ebi.ac.uk/ols/ontologies/cl
 - **Disease Ontology (DOID)**: https://disease-ontology.org/
-

@@ -1,381 +1,391 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "quantms YAML Manifest Schema",
-  "description": "Schema for quantms YAML input manifests (current specification). Defines experiment metadata, samples, multiplex mixtures, runs, and named modification profiles. Includes controlled vocabularies and ontology annotations for machine validation.",
-  "type": "object",
-  "required": ["experiment", "samples", "mixtures", "runs"],
-  "additionalProperties": false,
-  "properties": {
-    "experiment": {
-      "title": "Experiment Configuration",
-      "description": "Top-level experiment settings including MS acquisition method, enzyme, quantification method, and structured experiment-level modifications.",
-      "type": "object",
-      "required": ["acquisition_method", "enzyme"],
-      "additionalProperties": false,
-      "properties": {
-        "acquisition_method": {
-          "type": "string",
-          "enum": ["DDA", "DIA"],
-          "description": "Mass spectrometry acquisition method: Data-dependent (DDA) or data-independent (DIA).",
-          "x-controlled-vocabulary": "quantms_acquisition_methods"
-        },
-        "quantification_method": {
-          "type": "string",
-          "enum": ["LFQ", "TMT", "iTRAQ", "SILAC"],
-          "description": "Quantification method: Label-free (LFQ), isobaric (TMT, iTRAQ), or metabolic labeling (SILAC). Used to declare the quantification strategy upfront.",
-          "x-controlled-vocabulary": "quantms_quantification_methods"
-        },
-        "enzyme": {
-          "type": "string",
-          "description": "Protease used for digestion (e.g., Trypsin, Chymotrypsin, Pepsin). Must be a recognized protease name.",
-          "x-controlled-vocabulary": "MS:1001045",
-          "x-cv-source": "PSI-MS"
-        },
-        "dissociation_method": {
-          "type": "string",
-          "description": "Fragmentation/dissociation method used (e.g., HCD, CID, ETD). Machine validation enforces known MS dissociation methods.",
-          "x-controlled-vocabulary": "MS:1000044",
-          "x-cv-source": "PSI-MS",
-          "x-valid-values": ["HCD", "CID", "ETD", "PSD", "ECD", "IRMPD", "PQD", "UVPD", "SID", "NETD", "SURMAC", "CX"]
-        },
-        "modifications": {
-          "type": "array",
-          "description": "Structured experiment-level modifications. Each modification specifies its mode (fixed or variable) and applies to all samples in the experiment. Ontology-backed modifications require either accession or name; custom modifications require name and mass_shift.",
-          "minItems": 0,
-          "items": {
-            "type": "object",
-            "required": ["id", "mode", "residues", "term_spec"],
-            "additionalProperties": true,
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Unique identifier for this modification entry."
-              },
-              "kind": {
-                "type": "string",
-                "enum": ["ontology", "custom"],
-                "description": "Modification type: 'ontology' for UniMod/MOD-backed, 'custom' for user-defined."
-              },
-              "name": {
-                "type": "string",
-                "description": "Human-readable modification name. Required for custom modifications; optional for ontology if accession provided."
-              },
-              "accession": {
-                "type": "string",
-                "pattern": "^(UNIMOD|MOD):[0-9]+$",
-                "description": "Ontology accession (UNIMOD:<number> or MOD:<number>). Required for ontology if name not provided."
-              },
-              "residues": {
-                "oneOf": [
-                  {"type": "string"},
-                  {"type": "array", "items": {"type": "string"}}
-                ],
-                "description": "Target residue(s) or terminus (e.g., 'M', ['S','T','Y'], 'N-term', 'C-term'). Required."
-              },
-              "mode": {
-                "type": "string",
-                "enum": ["fixed", "variable"],
-                "description": "Modification mode: 'fixed' for static modifications, 'variable' for optional dynamic modifications. Required."
-              },
-              "mass_shift": {
-                "type": "number",
-                "description": "Monoisotopic mass shift in Daltons. Required for custom modifications."
-              },
-              "formula": {
-                "type": "string",
-                "description": "Chemical formula of the modification (e.g., 'HO3P')."
-              },
-              "term_spec": {
-                "type": "string",
-                "enum": ["none", "n-term", "c-term", "protein-n-term", "protein-c-term"],
-                "description": "Terminal specificity: 'none' (no restriction), 'n-term', 'c-term', 'protein-n-term', 'protein-c-term'. Required."
-              },
-              "comet": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "Comet-specific modification parameters."
-              },
-              "sage": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "Sage-specific modification parameters."
-              },
-              "diann": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "DIA-NN-specific modification parameters."
-              },
-              "msgf": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "MS-GF+-specific modification parameters."
-              }
-            }
-          }
-        },
-        "custom_mod_profile": {
-          "type": "string",
-          "description": "Reference to a modification profile ID (from mod_profiles section) to use as experiment-level modifications. If specified, takes precedence over the 'modifications' array."
-        },
-        "precursor_mass_tolerance": {
-          "type": "string",
-          "pattern": "^[0-9]+(\\.[0-9]+)?\\s*(ppm|Da|mDa)$",
-          "description": "Precursor mass tolerance with unit (e.g., '10 ppm', '5 Da')."
-        },
-        "fragment_mass_tolerance": {
-          "type": "string",
-          "pattern": "^[0-9]+(\\.[0-9]+)?\\s*(ppm|Da|mDa)$",
-          "description": "Fragment mass tolerance with unit (e.g., '0.02 Da', '20 ppm')."
-        }
-      }
-    },
-    "samples": {
-      "title": "Biological Samples",
-      "description": "List of unique biological samples in the experiment. Each sample is a distinct biological unit. Includes sample metadata with CV expectations.",
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["id"],
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique sample identifier. Used to reference samples in mixtures and runs."
-          },
-          "organism": {
-            "type": "string",
-            "description": "Organism or species (e.g., 'homo sapiens', 'mus musculus'). Should use NCBI Taxonomy names in lowercase.",
-            "x-ontology": "NCBI:Taxonomy",
-            "x-cv-source": "NCBI Organism Taxonomy"
-          },
-          "organism_part": {
-            "type": "string",
-            "description": "Tissue or organ source (e.g., 'liver', 'brain', 'cell line'). Should use UBERON for tissues.",
-            "x-ontology": "UBERON:Uberon anatomy",
-            "x-cv-source": "Cell and Tissue Ontology"
-          },
-          "condition": {
-            "type": "string",
-            "description": "Experimental condition or treatment (e.g., 'control', 'treatment_A'). Free text but should map to experimental design."
-          },
-          "biological_replicate": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Biological replicate number (e.g., 1, 2, 3)."
-          },
-          "technical_replicate": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Technical replicate number for multiple measurements of the same biological sample (e.g., 1, 2, 3)."
-          },
-          "disease": {
-            "type": "string",
-            "description": "Disease or disease state if applicable. Should use DOID (Disease Ontology) terms.",
-            "x-ontology": "DOID:Disease",
-            "x-cv-source": "Disease Ontology"
-          },
-          "cell_type": {
-            "type": "string",
-            "description": "Cell type if applicable (e.g., 'HeLa', 'neuron', 'fibroblast'). Should use CL (Cell Ontology) terms.",
-            "x-ontology": "CL:CellType",
-            "x-cv-source": "Cell Ontology"
-          },
-          "additional_metadata": {
-            "type": "object",
-            "description": "Free-form additional metadata fields (e.g., cell_line, passage, donor_age, treatment_group)."
-          }
-        }
-      }
-    },
-    "mixtures": {
-      "title": "Multiplex Mixtures",
-      "description": "Groups of samples multiplexed together via isobaric labels (TMT, iTRAQ) or relative quantification labels (SILAC). The channel namespace is flexible and determined by the experiment_type and channels used. Empty array allowed for label-free quantification (LFQ) experiments.",
-      "type": "array",
-      "minItems": 0,
-      "items": {
-        "type": "object",
-        "required": ["id", "channels"],
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique mixture identifier. Used to link runs to mixtures."
-          },
-          "description": {
-            "type": "string",
-            "description": "Human-readable description of the mixture (optional)."
-          },
-          "channels": {
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Mapping of channel names/labels to sample IDs. For TMT: use TMT126, TMT127N, etc. For SILAC: use light/heavy or R0K0/R6K4/R10K8. Keys are label identifiers; values are sample IDs. Machine validation enforces valid channel sets per plex type.",
-            "x-channel-types": {
-              "TMT": "TMT2, TMT6, TMT10, TMT11, TMT16, TMT18",
-              "iTRAQ": "iTRAQ4, iTRAQ8",
-              "SILAC": "2-plex (light/heavy), 3-plex (light/medium/heavy)"
-            }
-          }
-        }
-      }
-    },
-    "runs": {
-      "title": "Raw Data Runs",
-      "description": "List of raw spectrometry files (runs) with their metadata and mixture/fraction assignments.",
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["file", "mixture"],
-        "additionalProperties": false,
-        "properties": {
-          "file": {
-            "type": "string",
-            "description": "Path or URI to the raw spectrometry file (e.g., 's3://bucket/data.raw', '/local/path/file.mzML')."
-          },
-          "fraction": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Fraction number for multi-fraction runs (default: 1)."
-          },
-          "mixture": {
-            "oneOf": [
-              {"type": "string"},
-              {"type": "null"}
-            ],
-            "description": "Mixture ID this run belongs to. Must match a mixture defined in the mixtures section. Null for label-free quantification (LFQ) runs."
-          },
-          "instrument": {
-            "type": "string",
-            "description": "Instrument type or model used (e.g., 'Q_TOF', 'Orbitrap_Fusion'). Should use PSI-MS instrument CV.",
-            "x-ontology": "MS:1000031",
-            "x-cv-source": "PSI-MS Instruments"
-          },
-          "custom_mod_profile": {
-            "type": "string",
-            "description": "Reference to a modification profile ID (from mod_profiles section) to override experiment-level modifications for this run."
-          }
-        }
-      }
-    },
-    "mod_profiles": {
-      "title": "Modification Profiles",
-      "description": "Named modification definitions. Each entry describes ONE modification (ontology-backed or custom-defined) with optional engine-specific parameters. Supports two types: ontology-backed modifications (kind=ontology, requires either accession or name) and custom modifications (kind=custom, requires name and mass_shift). Reference a profile by its 'id' via 'custom_mod_profile' at experiment or run level.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id", "mode", "residues", "term_spec"],
-        "additionalProperties": true,
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique identifier referenced by 'custom_mod_profile' at experiment or run level."
-          },
-          "kind": {
-            "type": "string",
-            "enum": ["ontology", "custom"],
-            "description": "Modification type: 'ontology' for UniMod/MOD-backed modifications, 'custom' for user-defined modifications without ontology reference. Defaults to 'ontology'."
-          },
-          "name": {
-            "type": "string",
-            "description": "Human-readable modification name (e.g., 'Phosphorylation', 'TMT 16-plex'). Required if accession is not provided for ontology modifications; required for custom modifications."
-          },
-          "accession": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "quantms YAML Manifest Schema",
+    "description": "Schema for quantms YAML input manifests (current specification). Defines experiment metadata, samples, multiplex mixtures, runs, and structured modification annotations.",
+    "type": "object",
+    "required": ["experiment", "samples", "mixtures", "runs"],
+    "additionalProperties": false,
+    "definitions": {
+        "ontology_id": {
             "type": "string",
             "pattern": "^(UNIMOD|MOD):[0-9]+$",
-            "description": "Ontology accession for ontology-backed modifications. Must be UNIMOD:<number> or MOD:<number> format. Required if name is not provided for ontology modifications.",
-            "x-ontology": "UNIMOD:Modifications OR MOD:Modifications",
-            "x-cv-source": "UniMod or PSI Modification Ontology"
-          },
-          "residues": {
+            "description": "Ontology identifier in UNIMOD:<number> or MOD:<number> format."
+        },
+        "residues": {
+            "description": "Target residue subset or terminus subset used in this dataset (e.g. 'M', ['S', 'T', 'Y'], 'N-term', 'C-term').",
             "oneOf": [
-              {"type": "string"},
-              {"type": "array", "items": {"type": "string"}}
-            ],
-            "description": "Target residue(s) or terminus (e.g., 'M', ['S','T','Y'], 'N-term', 'C-term'). Required for all modifications to specify which amino acid or terminus is modified."
-          },
-          "mode": {
-            "type": "string",
-            "enum": ["fixed", "variable"],
-            "description": "Modification mode: 'fixed' for static modifications applied to all peptides, 'variable' for optional dynamic modifications. Required."
-          },
-          "mass_shift": {
-            "type": "number",
-            "description": "Monoisotopic mass shift in Daltons (e.g., 79.966331 for phosphorylation). Required for custom modifications."
-          },
-          "formula": {
-            "type": "string",
-            "description": "Chemical formula of the modification (e.g., 'HO3P')."
-          },
-          "term_spec": {
+                {
+                    "type": "string"
+                },
+                {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            ]
+        },
+        "term_spec": {
             "type": "string",
             "enum": ["none", "n-term", "c-term", "protein-n-term", "protein-c-term"],
-            "description": "Terminal specificity for this modification: 'none' (no terminal restriction), 'n-term', 'c-term', 'protein-n-term', 'protein-c-term'. Required."
-          },
-          "comet": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Comet-specific modification parameters at root level.",
-            "properties": {
-              "binary_group": {
-                "type": "integer",
-                "description": "Comet binary modification group number."
-              },
-              "min_occurrences": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "Minimum number of times this modification must occur on a peptide."
-              },
-              "max_occurrences": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "Maximum number of times this modification may occur on a peptide."
-              },
-              "distance_from_terminus": {
-                "type": "integer",
-                "description": "Maximum distance from terminus for terminus-proximal modifications (-1 = unrestricted)."
-              }
-            }
-          },
-          "sage": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Sage-specific modification parameters at root level."
-          },
-          "diann": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "DIA-NN-specific modification parameters at root level."
-          },
-          "msgf": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "MS-GF+-specific modification parameters at root level."
-          }
+            "description": "Dataset-specific term specificity restriction. Optional; defaults semantically to 'none'."
         },
-        "allOf": [
-          {
-            "if": {
-              "properties": {"kind": {"const": "ontology"}}
-            },
-            "then": {
-              "description": "Ontology-backed modification must have at least one of 'accession' or 'name'."
+        "comet_modification_parameters": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Optional Comet-specific modification annotations.",
+            "properties": {
+                "binary_group": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional Comet binary modification group number."
+                },
+                "min_occurrences": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Minimum number of times this modification must occur on a peptide."
+                },
+                "max_occurrences": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Maximum number of times this modification may occur on a peptide."
+                },
+                "distance_from_terminus": {
+                    "type": "integer",
+                    "description": "Maximum distance from the relevant terminus (-1 = unrestricted)."
+                }
             }
-          },
-          {
-            "if": {
-              "properties": {"kind": {"const": "custom"}}
+        },
+        "modification": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Optional identifier for this modification entry. Required when defining a named profile."
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["ontology", "custom"],
+                    "default": "ontology",
+                    "description": "Modification type. Ontology-backed modifications can be identified by ontology_id or name; custom modifications are user-defined."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable modification name. Required for custom modifications; optional for ontology-backed modifications when ontology_id is provided."
+                },
+                "ontology_id": {
+                    "$ref": "#/definitions/ontology_id"
+                },
+                "accession": {
+                    "$ref": "#/definitions/ontology_id",
+                    "description": "Deprecated alias for ontology_id."
+                },
+                "residues": {
+                    "$ref": "#/definitions/residues"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["fixed", "variable"],
+                    "description": "Modification mode: fixed for static modifications, variable for optional modifications."
+                },
+                "mass_shift": {
+                    "type": "number",
+                    "description": "Optional user-specified mass shift in Daltons. For ontology-backed modifications, supplied values must agree with curated ontology expectations when known."
+                },
+                "formula": {
+                    "type": "string",
+                    "description": "Optional user-specified chemical formula. For ontology-backed modifications, supplied values must agree with curated ontology expectations when known."
+                },
+                "term_spec": {
+                    "$ref": "#/definitions/term_spec"
+                },
+                "comet": {
+                    "$ref": "#/definitions/comet_modification_parameters"
+                },
+                "sage": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional Sage-specific modification annotations."
+                },
+                "diann": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional DIA-NN-specific modification annotations."
+                },
+                "msgf": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional MS-GF+-specific modification annotations."
+                }
             },
-            "then": {
-              "required": ["name", "mass_shift"],
-              "description": "Custom modification must have 'name' and 'mass_shift'."
-            }
-          }
-        ]
-      }
+            "allOf": [
+                {
+                    "required": ["mode"]
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "kind": {
+                                "const": "custom"
+                            }
+                        },
+                        "required": ["kind"]
+                    },
+                    "then": {
+                        "required": ["name", "residues", "mass_shift"]
+                    },
+                    "else": {
+                        "anyOf": [
+                            {
+                                "required": ["name"]
+                            },
+                            {
+                                "required": ["ontology_id"]
+                            },
+                            {
+                                "required": ["accession"]
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        "named_modification": {
+            "allOf": [
+                {
+                    "$ref": "#/definitions/modification"
+                },
+                {
+                    "type": "object",
+                    "required": ["id"]
+                }
+            ]
+        }
     },
-  }
+    "properties": {
+        "experiment": {
+            "title": "Experiment Configuration",
+            "description": "Top-level experiment settings including MS acquisition method, enzyme, quantification method, and structured experiment-level modifications.",
+            "type": "object",
+            "required": ["acquisition_method", "enzyme"],
+            "additionalProperties": false,
+            "properties": {
+                "acquisition_method": {
+                    "type": "string",
+                    "enum": ["DDA", "DIA"],
+                    "description": "Mass spectrometry acquisition method: data-dependent (DDA) or data-independent (DIA).",
+                    "x-controlled-vocabulary": "quantms_acquisition_methods"
+                },
+                "quantification_method": {
+                    "type": "string",
+                    "enum": ["LFQ", "TMT", "iTRAQ", "SILAC"],
+                    "description": "Quantification method: label-free (LFQ), isobaric (TMT, iTRAQ), or metabolic labeling (SILAC).",
+                    "x-controlled-vocabulary": "quantms_quantification_methods"
+                },
+                "enzyme": {
+                    "type": "string",
+                    "description": "Protease used for digestion (e.g. Trypsin, Chymotrypsin, Pepsin). Must be a recognized protease name.",
+                    "x-controlled-vocabulary": "MS:1001045",
+                    "x-cv-source": "PSI-MS"
+                },
+                "dissociation_method": {
+                    "type": "string",
+                    "description": "Fragmentation / dissociation method used (e.g. HCD, CID, ETD).",
+                    "x-controlled-vocabulary": "MS:1000044",
+                    "x-cv-source": "PSI-MS",
+                    "x-valid-values": [
+                        "HCD",
+                        "CID",
+                        "ETD",
+                        "PSD",
+                        "ECD",
+                        "IRMPD",
+                        "PQD",
+                        "UVPD",
+                        "SID",
+                        "NETD",
+                        "SURMAC",
+                        "CX"
+                    ]
+                },
+                "modifications": {
+                    "type": "array",
+                    "description": "Experiment-level modifications using the shared modification structure. This is the preferred way to describe global fixed and variable modifications for the dataset.",
+                    "minItems": 0,
+                    "items": {
+                        "$ref": "#/definitions/modification"
+                    }
+                },
+                "modification_profile": {
+                    "type": "string",
+                    "description": "Reference to a named modification profile in the mod_profiles section. If specified, it complements or replaces direct experiment.modifications according to downstream runtime behavior."
+                },
+                "custom_mod_profile": {
+                    "type": "string",
+                    "description": "Deprecated alias for modification_profile."
+                },
+                "precursor_mass_tolerance": {
+                    "type": "string",
+                    "pattern": "^[0-9]+(\\.[0-9]+)?\\s*(ppm|Da|mDa)$",
+                    "description": "Precursor mass tolerance with unit (e.g. '10 ppm', '5 Da')."
+                },
+                "fragment_mass_tolerance": {
+                    "type": "string",
+                    "pattern": "^[0-9]+(\\.[0-9]+)?\\s*(ppm|Da|mDa)$",
+                    "description": "Fragment mass tolerance with unit (e.g. '0.02 Da', '20 ppm')."
+                }
+            }
+        },
+        "samples": {
+            "title": "Biological Samples",
+            "description": "List of unique biological samples in the experiment.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["id"],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique sample identifier."
+                    },
+                    "organism": {
+                        "type": "string",
+                        "description": "Organism or species (e.g. 'homo sapiens', 'mus musculus').",
+                        "x-ontology": "NCBI:Taxonomy",
+                        "x-cv-source": "NCBI Organism Taxonomy"
+                    },
+                    "organism_part": {
+                        "type": "string",
+                        "description": "Tissue or organ source (e.g. 'liver', 'brain', 'cell line').",
+                        "x-ontology": "UBERON:Uberon anatomy",
+                        "x-cv-source": "Cell and Tissue Ontology"
+                    },
+                    "condition": {
+                        "type": "string",
+                        "description": "Experimental condition or treatment."
+                    },
+                    "biological_replicate": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Biological replicate number."
+                    },
+                    "technical_replicate": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Technical replicate number."
+                    },
+                    "disease": {
+                        "type": "string",
+                        "description": "Disease or disease state if applicable.",
+                        "x-ontology": "DOID:Disease",
+                        "x-cv-source": "Disease Ontology"
+                    },
+                    "cell_type": {
+                        "type": "string",
+                        "description": "Cell type if applicable.",
+                        "x-ontology": "CL:CellType",
+                        "x-cv-source": "Cell Ontology"
+                    },
+                    "additional_metadata": {
+                        "type": "object",
+                        "description": "Free-form additional metadata fields."
+                    }
+                }
+            }
+        },
+        "mixtures": {
+            "title": "Multiplex Mixtures",
+            "description": "Groups of samples multiplexed together via isobaric labels (TMT, iTRAQ) or relative quantification labels (SILAC). Empty array allowed for LFQ experiments.",
+            "type": "array",
+            "minItems": 0,
+            "items": {
+                "type": "object",
+                "required": ["id", "channels"],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique mixture identifier."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Human-readable description of the mixture."
+                    },
+                    "channels": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "description": "Mapping of channel names / labels to sample IDs.",
+                        "x-channel-types": {
+                            "TMT": "TMT2, TMT6, TMT10, TMT11, TMT16, TMT18",
+                            "iTRAQ": "iTRAQ4, iTRAQ8",
+                            "SILAC": "2-plex (light/heavy), 3-plex (light/medium/heavy)"
+                        }
+                    }
+                }
+            }
+        },
+        "runs": {
+            "title": "Raw Data Runs",
+            "description": "List of raw spectrometry files (runs) with their metadata and mixture / fraction assignments.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["file", "mixture"],
+                "additionalProperties": false,
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "Path or URI to the raw spectrometry file."
+                    },
+                    "fraction": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Fraction number for multi-fraction runs."
+                    },
+                    "mixture": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Mixture ID this run belongs to. Null for LFQ runs."
+                    },
+                    "instrument": {
+                        "type": "string",
+                        "description": "Instrument type or model used.",
+                        "x-ontology": "MS:1000031",
+                        "x-cv-source": "PSI-MS Instruments"
+                    },
+                    "modification_profile": {
+                        "type": "string",
+                        "description": "Reference to a named modification profile in mod_profiles to override experiment-level modification settings for this run."
+                    },
+                    "custom_mod_profile": {
+                        "type": "string",
+                        "description": "Deprecated alias for modification_profile."
+                    }
+                }
+            }
+        },
+        "mod_profiles": {
+            "title": "Modification Profiles",
+            "description": "Named reusable modification definitions. Each entry describes one ontology-backed or custom modification using the same shared structure as experiment.modifications.",
+            "type": "array",
+            "items": {
+                "$ref": "#/definitions/named_modification"
+            }
+        }
+    }
 }

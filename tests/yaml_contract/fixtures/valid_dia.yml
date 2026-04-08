@@ -10,13 +10,18 @@ experiment:
   # Explicit quantification method declaration for DIA
   quantification_method: LFQ
 
-  # Fixed modifications (pre-set for all samples)
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-
-  # Experiment-level variable modifications
-  variable_mods:
-    - "Oxidation (M)"
+  # Experiment-level modifications use the shared modification structure
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
 
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"

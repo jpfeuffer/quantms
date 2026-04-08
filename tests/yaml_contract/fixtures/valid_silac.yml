@@ -10,13 +10,18 @@ experiment:
   # Explicit quantification method declaration
   quantification_method: SILAC
 
-  # Fixed modifications
-  fixed_mods:
-    - "Carbamidomethyl (C)"
-
-  # Variable modifications
-  variable_mods:
-    - "Oxidation (M)"
+  # Experiment-level modifications use the shared modification structure
+  modifications:
+    - kind: ontology
+      ontology_id: "UNIMOD:4"
+      name: "Carbamidomethyl"
+      residues: C
+      mode: fixed
+    - kind: ontology
+      ontology_id: "UNIMOD:35"
+      name: "Oxidation"
+      residues: M
+      mode: variable
 
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"
@@ -48,9 +53,9 @@ mixtures:
   - id: silac_3plex_mix1
     description: "3-plex SILAC: control (light) and treated (medium+heavy)"
     channels:
-      light_R0K0: control_sample    # Light isotope label
-      medium_R6K4: treated_sample   # Medium isotope label
-      heavy_R10K8: control_sample   # Heavy isotope label (for normalization)
+      light_R0K0: control_sample # Light isotope label
+      medium_R6K4: treated_sample # Medium isotope label
+      heavy_R10K8: control_sample # Heavy isotope label (for normalization)
 
 # Runs: raw spectrometry files
 runs:
