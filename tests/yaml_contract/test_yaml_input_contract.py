@@ -58,7 +58,7 @@ ONTOLOGY_NAME_INDEX = {
 
 
 def _normalize_mod_name(value: str | None) -> str | None:
-    """Normalize modification names for local ontology matching."""
+    """Normalize names by lowercasing and stripping non-alphanumeric characters for local matching."""
     if not value:
         return None
     return re.sub(r'[^a-z0-9]+', '', value.lower())
@@ -77,11 +77,14 @@ def _get_ontology_id(modification: dict) -> str | None:
     """Return the canonical ontology identifier, supporting the deprecated accession alias."""
     ontology_id = modification.get('ontology_id')
     accession = modification.get('accession')
-
-    if ontology_id and accession and ontology_id != accession:
-        return None
-
     return ontology_id or accession
+
+
+def _has_mismatched_ontology_identifiers(modification: dict) -> bool:
+    """Return True when ontology_id and deprecated accession are both present but disagree."""
+    ontology_id = modification.get('ontology_id')
+    accession = modification.get('accession')
+    return bool(ontology_id and accession and ontology_id != accession)
 
 
 def _resolve_known_ontology_entry(modification: dict) -> tuple[str | None, dict | None]:
@@ -903,7 +906,7 @@ runs:
 
 
 def test_known_ontology_mod_rejects_incorrect_mass_shift():
-    """Test that user-specified ontology mass shifts are corrected against curated ontology values."""
+    """Test that user-specified ontology mass shifts are checked against curated ontology values."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -1049,13 +1052,12 @@ def _validate_semantic_constraints(data: dict) -> list:
     # Modification validation: semantic constraints for ontology-backed and custom mods
     for path, modification in _iter_modifications(data):
         kind = modification.get('kind', 'ontology')
-        ontology_id = modification.get('ontology_id')
-        accession = modification.get('accession')
         canonical_ontology_id = _get_ontology_id(modification)
 
-        if ontology_id and accession and ontology_id != accession:
+        if _has_mismatched_ontology_identifiers(modification):
             errors.append(
-                f"[{path}] ontology_id '{ontology_id}' and deprecated accession '{accession}' must match when both are provided."
+                f"[{path}] ontology_id '{modification.get('ontology_id')}' and deprecated accession "
+                f"'{modification.get('accession')}' must match when both are provided."
             )
 
         if canonical_ontology_id and not (

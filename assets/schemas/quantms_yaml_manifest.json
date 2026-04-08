@@ -9,7 +9,7 @@
         "ontology_id": {
             "type": "string",
             "pattern": "^(UNIMOD|MOD):[0-9]+$",
-            "description": "Ontology identifier in UNIMOD:<number> or MOD:<number> format."
+            "description": "Ontology identifier in UNIMOD:<number> or MOD:<number> format, for example 'UNIMOD:21' or 'MOD:00696'."
         },
         "residues": {
             "description": "Target residue subset or terminus subset used in this dataset (e.g. 'M', ['S', 'T', 'Y'], 'N-term', 'C-term').",
