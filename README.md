@@ -94,16 +94,19 @@ Compressed variants are supported for `.raw`, `.mzML`, and `.d` formats:
 - `.tar.gz` or `.tgz` (tar gzip compressed)
 - `.zip` (zip compressed)
 
-First, find or create a sample-to-data relationship file ([SDRF](https://github.com/bigbio/proteomics-sample-metadata)).
-Have a look at public datasets that were already annotated [here](https://github.com/bigbio/proteomics-sample-metadata/tree/master/annotated-projects).
+First, prepare your input metadata in **quantms YAML format** (`.yml` or `.yaml`). This is the **officially approved, specification-driven format** for defining your experiment structure. The complete specification is available at `assets/schemas/quantms_yaml_manifest.json`.
+
+**⚠️ Important:** The YAML specification is approved and validated (current specification), but **runtime consumption is not yet implemented**. You can prepare and validate YAML manifests now using the schema and test tools. For actual pipeline execution, currently use **SDRF format** (see below).
+
+Alternatively, you can use the legacy **SDRF format** (`.sdrf`, `.tsv`, or `.csv`) for current runtime execution. Have a look at public datasets that were already annotated [here](https://github.com/bigbio/proteomics-sample-metadata/tree/master/annotated-projects).
 Those SDRFs should be ready for one-command re-analysis and you can just use the URL to the file on GitHub,
 e.g., `https://raw.githubusercontent.com/bigbio/proteomics-sample-metadata/master/annotated-projects/PXD000396/PXD000396.sdrf.tsv`.
-If you create your own, please adhere to the specifications and point the pipeline to your local folder or a remote location where you uploaded it to.
+If you create your own SDRF, please adhere to the specifications and point the pipeline to your local folder or a remote location where you uploaded it to.
 The SDRF file can have `.sdrf`, `.tsv`, or `.csv` extensions.
 
 The second requirement is a protein sequence database. We suggest downloading a database for the organism(s)/proteins of interest from [Uniprot](https://www.uniprot.org/proteomes?query=*).
 
-Now, you can run the pipeline using:
+**Currently, use SDRF format for pipeline execution:**
 
 ```bash
 nextflow run bigbio/quantms \

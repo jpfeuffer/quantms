@@ -1,0 +1,90 @@
+# Valid quantms YAML input example: iTRAQ 8-plex DDA experiment
+# Demonstrates the YAML structure for iTRAQ isobaric labeling
+
+experiment:
+  # Core MS method settings
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration for isobaric labeling
+  quantification_method: iTRAQ
+
+  # Fixed modifications (pre-set for all samples)
+  fixed_mods:
+    - "Carbamidomethyl (C)"
+    - "iTRAQ8plex (K)"
+    - "iTRAQ8plex (N-term)"
+
+  # Experiment-level variable modifications
+  variable_mods:
+    - "Oxidation (M)"
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit
+samples:
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: treated
+    biological_replicate: 1
+    additional_metadata:
+      cell_line: HeLa
+      passage: 10
+
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: control
+    biological_replicate: 1
+    additional_metadata:
+      cell_line: HeLa
+      passage: 10
+
+  - id: treated_rep2
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: treated
+    biological_replicate: 2
+    additional_metadata:
+      cell_line: HeLa
+      passage: 11
+
+  - id: control_rep2
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: control
+    biological_replicate: 2
+    additional_metadata:
+      cell_line: HeLa
+      passage: 11
+
+# Mixture definitions: groups of samples multiplexed together via isobaric labels
+# The channels dictionary maps iTRAQ label names to sample IDs
+mixtures:
+  - id: itraq8_batch1
+    description: "First iTRAQ8 batch with treated and control replicates"
+    channels:
+      iTRAQ113: treated_rep1
+      iTRAQ114: treated_rep2
+      iTRAQ115: control_rep1
+      iTRAQ116: control_rep2
+      iTRAQ117: treated_rep1
+      iTRAQ118: control_rep1
+      iTRAQ119: treated_rep2
+      iTRAQ121: control_rep2
+
+# Runs: raw spectrometry files with their fraction and mixture assignment
+runs:
+  - file: s3://bucket/experiment/itraq8_batch1_fraction_1.raw
+    fraction: 1
+    mixture: itraq8_batch1
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/itraq8_batch1_fraction_2.raw
+    fraction: 2
+    mixture: itraq8_batch1
+    instrument: Q_TOF

@@ -8,13 +8,185 @@
 
 ## Running the pipeline
 
-The typical command for running the pipeline is as follows:
+**Important:** The quantms YAML manifest format is the **approved specification for contract validation** (as defined in `assets/schemas/quantms_yaml_manifest.json`). However, **runtime consumption of YAML manifests is not yet implemented**. The current pipeline accepts **SDRF format** for actual data processing.
+
+This means:
+
+- ✅ The YAML schema is the **official specification** for quantms experiments
+- ❌ The pipeline does **NOT yet** read and process `.yml` files end-to-end at runtime
+- ✅ You can use the schema to **prepare and validate** YAML manifests in advance
+- ✅ Current runtime input remains **SDRF format** (`.sdrf`, `.tsv`, `.csv`)
+
+### Recommended: Prepare YAML Manifests (Current Specification)
+
+Use quantms YAML format to define your entire experiment structure. This specification is stable and ready for adoption:
 
 ```bash
-nextflow run bigbio/quantms --input '/url/path/to/your/experiment_design.sdrf.tsv' --database '/url/path/to/your/proteindatabase.fasta' --outdir './results' -profile docker
+# Create and validate your experiment in YAML format
+# (Schema validation tools available - see below)
+experiment.yml
 ```
 
-The input file must be in [Sample-to-data-relationship format (SDRF)](https://pubs.acs.org/doi/abs/10.1021/acs.jproteome.0c00376) and can have `.sdrf`, `.tsv`, or `.csv` file extensions.
+The YAML file should define the following top-level sections:
+
+#### YAML Input Structure (Current Specification)
+
+**`experiment`**: Global experiment settings
+
+- `acquisition_method`: Type of acquisition (e.g., `DDA`, `DIA`)
+- `enzyme`: Enzymatic digestion (e.g., `Trypsin`)
+- `fixed_mods`: List of fixed modifications
+- `variable_mods`: List of variable modifications
+- `dissociation_method`: MS/MS fragmentation method (e.g., `HCD`)
+- `precursor_mass_tolerance`, `fragment_mass_tolerance`: Mass calibration settings
+
+**`samples`**: Biological samples (one entry per unique biological unit)
+
+- Each sample has a unique `id` and metadata fields like `organism`, `condition`, `biological_replicate`
+
+**`mixtures`**: Multiplex groups (isobaric labeling or SILAC) with channel mappings
+
+- Each mixture has a unique `id` and a `channels` dictionary
+- Channel keys (e.g., `TMT126`) map to sample IDs
+- For isobaric labeling (TMT, iTRAQ): maps labels to samples
+- For SILAC: maps isotope labels to samples
+
+**`runs`**: Raw data files and their assignments
+
+- Each run references a `file` (path or URI)
+- `fraction`: optional fraction number (1-based)
+- `mixture`: ID of the mixture this run belongs to
+
+**`mod_profiles`**: Named modification definitions (optional, advanced)
+
+- Each entry defines **one** modification: either ontology-backed (UniMod/MOD) or custom
+- Use `kind: ontology` or `kind: custom` to explicitly declare modification type
+- For ontology-backed: provide either `accession` (UNIMOD:\d+ or MOD:\d+) or `name`, or both (minimum one required)
+- For custom: provide a friendly `name` without ontology reference
+- All modifications require `mode: fixed` or `mode: variable` (replaces old fixed/variable booleans)
+- Optional `term_spec` field specifies terminal position constraints (none, n-term, c-term, protein-n-term, protein-c-term)
+- Engine-specific parameters (comet, sage, diann, msgf) are root-level blocks, not nested
+- Reference a profile by its `id` via `custom_mod_profile` at experiment or run level; it takes precedence over `fixed_mods`/`variable_mods`
+- **Note:** In the current specification, profiles are declared but runtime integration is not yet implemented.
+
+#### YAML Example: TMT 16-plex DDA
+
+```yaml
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+  fixed_mods:
+    - "Carbamidomethyl (C)"
+    - "TMT16plex (K)"
+    - "TMT16plex (N-term)"
+  variable_mods:
+    - "Oxidation (M)"
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+samples:
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 1
+
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 1
+
+mixtures:
+  - id: mix_A
+    channels:
+      TMT126: treated_rep1
+      TMT127N: control_rep1
+
+runs:
+  - file: s3://bucket/experiment/mix_A_fraction_1.raw
+    fraction: 1
+    mixture: mix_A
+
+mod_profiles:
+  # Ontology-backed modification: with accession and root-level engine block
+  - id: phospho_sty
+    kind: ontology
+    name: "Phosphorylation"
+    accession: "UNIMOD:21"
+    residues: [S, T, Y]
+    mode: variable                  # Required enum: fixed|variable
+    mass_shift: 79.966331
+    formula: "HO3P"
+    term_spec: none                 # Optional: terminus specificity
+    comet:                          # Root-level engine block (not nested)
+      binary_group: 1
+      min_occurrences: 0
+      max_occurrences: 3
+  
+  # Ontology-backed with accession only
+  - id: carbamidomethyl
+    kind: ontology
+    accession: "UNIMOD:4"
+    residues: C
+    mode: fixed
+    mass_shift: 57.021129
+  
+  # Custom modification without ontology reference
+  - id: custom_label
+    kind: custom
+    name: "My Custom Label"
+    residues: K
+    mode: fixed
+    mass_shift: 138.068
+```
+
+The complete schema is defined in: **`assets/schemas/quantms_yaml_manifest.json`**
+
+Refer to the schema for:
+
+- Full field definitions and constraints
+- Validation rules for each section
+- Optional vs. required fields
+- Supported enumeration values (e.g., `acquisition_method` must be `DDA` or `DIA`)
+
+#### YAML Validation
+
+To validate a YAML file against the schema **before** runtime implementation:
+
+```bash
+uv run --with jsonschema --with pyyaml python -c "
+import json
+import yaml
+import jsonschema
+
+with open('assets/schemas/quantms_yaml_manifest.json') as f:
+    schema = json.load(f)
+
+with open('experiment.yml') as f:
+    data = yaml.safe_load(f)
+
+jsonschema.validate(data, schema)
+print('✓ Valid quantms YAML manifest')
+"
+```
+
+Or use the included test suite:
+
+```bash
+uv run --with jsonschema --with pyyaml python tests/yaml_contract/test_yaml_input_contract.py
+```
+
+#### Timeline and Roadmap
+
+- **Current specification:** Schema definition and validation toolkit available. YAML manifests can be prepared and validated in advance.
+- **Future release:** Runtime normalizer/parser implementation (not yet scheduled).
+- **Runtime integration not yet implemented:** Full YAML manifest consumption at pipeline runtime.
+
+Until runtime implementation is complete, **use SDRF format for actual pipeline execution** (see below).
+
+### Current Runtime: SDRF Format
 
 ### Supported file formats
 

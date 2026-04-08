@@ -1,0 +1,88 @@
+# Valid quantms YAML input example: Label-Free Quantification (LFQ) experiment
+# Demonstrates the YAML structure for label-free quantification without multiplexing
+
+experiment:
+  # Core MS method settings
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration
+  quantification_method: LFQ
+
+  # Fixed modifications (pre-set for all samples)
+  fixed_mods:
+    - "Carbamidomethyl (C)"
+
+  # Experiment-level variable modifications
+  variable_mods:
+    - "Oxidation (M)"
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit
+samples:
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 1
+    additional_metadata:
+      cell_line: HeLa
+      passage: 10
+
+  - id: control_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 2
+    additional_metadata:
+      cell_line: HeLa
+      passage: 11
+
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 1
+    additional_metadata:
+      cell_line: HeLa
+      passage: 10
+
+  - id: treated_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 2
+    additional_metadata:
+      cell_line: HeLa
+      passage: 11
+
+# No mixtures for LFQ (empty array)
+# Each sample is measured independently without multiplexing
+mixtures: []
+
+# Runs: raw spectrometry files with their fraction assignment
+# Each run belongs to exactly one sample (no multiplexing)
+runs:
+  - file: s3://bucket/experiment/control_rep1.raw
+    fraction: 1
+    mixture: null
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/control_rep2.raw
+    fraction: 1
+    mixture: null
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/treated_rep1.raw
+    fraction: 1
+    mixture: null
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/treated_rep2.raw
+    fraction: 1
+    mixture: null
+    instrument: Q_TOF
