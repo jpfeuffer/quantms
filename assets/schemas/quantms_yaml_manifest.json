@@ -224,7 +224,7 @@
                 },
                 "modifications": {
                     "type": "array",
-                    "description": "Deprecated alias for the top-level modifications collection. Prefer the top-level field when describing one or more modification profiles."
+                    "description": "Deprecated alias for the top-level modifications collection. Use the top-level modifications field instead."
                 },
                 "modification_profile": {
                     "type": "string",

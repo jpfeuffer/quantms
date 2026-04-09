@@ -67,8 +67,10 @@ ONTOLOGY_NAME_INDEX = {
     for name in entry.get('names', set())
 }
 
+MASS_SHIFT_TOLERANCE = 0.001
 
-def _normalize_mod_name(value: str | None) -> str | None:
+
+def _normalize_modification_name_for_lookup(value: str | None) -> str | None:
     """Normalize names by lowercasing and stripping non-alphanumeric characters for local matching."""
     if not value:
         return None
@@ -106,7 +108,7 @@ def _has_mismatched_ontology_identifiers(modification: dict) -> bool:
 def _resolve_known_ontology_entry(modification: dict) -> tuple[str | None, dict | None]:
     """Resolve a modification to the local ontology registry by ontology_id or normalized name."""
     ontology_id = _get_ontology_id(modification)
-    name_key = _normalize_mod_name(modification.get('name'))
+    name_key = _normalize_modification_name_for_lookup(modification.get('name'))
 
     if ontology_id and ontology_id in KNOWN_ONTOLOGY_MODIFICATIONS:
         return ontology_id, KNOWN_ONTOLOGY_MODIFICATIONS[ontology_id]
@@ -303,8 +305,8 @@ runs:
         schema_path = get_schema_path()
         is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
 
-        assert is_valid, f"Valid YAML without mod_profiles should pass: {errors}"
-        print(f"✓ test_valid_without_mod_profiles passed")
+        assert is_valid, f"Valid YAML without modifications should pass: {errors}"
+        print("✓ test_valid_without_mod_profiles passed")
     finally:
         yaml_path.unlink()
 
@@ -341,8 +343,8 @@ runs:
         yaml_path.unlink()
 
 
-def test_invalid_mod_profile_wrong_type():
-    """Test that mod_profiles with wrong type (not list) fails validation."""
+def test_invalid_modification_collection_wrong_type():
+    """Test that modifications with wrong type (not list) fails validation."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -360,7 +362,7 @@ runs:
   - file: data.raw
     mixture: mix1
 
-mod_profiles:
+modifications:
   invalid: "profile"
 """
 
@@ -372,10 +374,10 @@ mod_profiles:
         schema_path = get_schema_path()
         is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
 
-        assert not is_valid, "YAML with invalid mod_profiles type should fail"
+        assert not is_valid, "YAML with invalid modifications type should fail"
         assert any("is not of type 'array'" in e for e in errors), \
             f"Error should mention array type requirement: {errors}"
-        print(f"✓ test_invalid_mod_profile_wrong_type passed")
+        print("✓ test_invalid_modification_collection_wrong_type passed")
     finally:
         yaml_path.unlink()
 
@@ -1159,7 +1161,7 @@ def _validate_semantic_constraints(data: dict) -> list:
 
     # Enzyme validation (known proteases)
     valid_enzymes = {
-        'Trypsin', 'Chymotrypsin', 'Pepsin', 'Elastase', 'ArgC', 'LysC',
+        'Trypsin', 'Chymotrypsin', 'Pepsin', 'Elastase', 'LysC',
         'Asp-N', 'Glu-C', 'Arg-C', 'None', 'Whole protein'
     }
     if 'experiment' in data and 'enzyme' in data['experiment']:
@@ -1256,7 +1258,7 @@ def _validate_semantic_constraints(data: dict) -> list:
             and modification.get('name')
             and canonical_ontology_id in KNOWN_ONTOLOGY_MODIFICATIONS
         ):
-            normalized_name = _normalize_mod_name(modification.get('name'))
+            normalized_name = _normalize_modification_name_for_lookup(modification.get('name'))
             if normalized_name not in KNOWN_ONTOLOGY_MODIFICATIONS[canonical_ontology_id].get('names', set()):
                 errors.append(
                     f"[{path}] Modification name '{modification.get('name')}' does not match known ontology entry "
@@ -1278,7 +1280,7 @@ def _validate_semantic_constraints(data: dict) -> list:
 
             mass_shift = modification.get('mass_shift')
             if mass_shift is not None and known_entry.get('mass_shift') is not None:
-                if abs(float(mass_shift) - float(known_entry['mass_shift'])) > 0.001:
+                if abs(float(mass_shift) - float(known_entry['mass_shift'])) > MASS_SHIFT_TOLERANCE:
                     errors.append(
                         f"[{path}.mass_shift] {mass_shift} disagrees with the curated ontology value "
                         f"{known_entry['mass_shift']} for {resolved_ontology_id or modification.get('name')}."
@@ -2752,7 +2754,7 @@ if __name__ == '__main__':
         test_valid_silac_fixture,
         test_valid_without_mod_profiles,
         test_missing_required_section_samples,
-        test_invalid_mod_profile_wrong_type,
+        test_invalid_modification_collection_wrong_type,
         test_multiple_profiles_require_run_profile,
         test_additional_metadata_overlap_is_rejected,
         test_mod_profile_with_root_level_engine_fields,

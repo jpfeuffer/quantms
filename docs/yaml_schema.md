@@ -14,11 +14,11 @@ The following fields now enforce **controlled vocabularies** via machine validat
 
 #### Experiment Settings
 
-| Field                 | Valid Values                                                                                  | CV Source                   | Validation            |
-| --------------------- | --------------------------------------------------------------------------------------------- | --------------------------- | --------------------- |
-| `acquisition_method`  | DDA, DIA                                                                                      | quantms_acquisition_methods | Schema enum + runtime |
-| `enzyme`              | Trypsin, Chymotrypsin, Pepsin, Elastase, ArgC, LysC, Asp-N, Glu-C, Arg-C, None, Whole protein | PSI-MS (MS:1001045)         | Runtime validation    |
-| `dissociation_method` | HCD, CID, ETD, PSD, ECD, IRMPD, PQD, UVPD, SID, NETD, SURMAC, CX                              | PSI-MS (MS:1000044)         | Runtime validation    |
+| Field                 | Valid Values                                                                            | CV Source                   | Validation            |
+| --------------------- | --------------------------------------------------------------------------------------- | --------------------------- | --------------------- |
+| `acquisition_method`  | DDA, DIA                                                                                | quantms_acquisition_methods | Schema enum + runtime |
+| `enzyme`              | Trypsin, Chymotrypsin, Pepsin, Elastase, LysC, Asp-N, Glu-C, Arg-C, None, Whole protein | PSI-MS (MS:1001045)         | Runtime validation    |
+| `dissociation_method` | HCD, CID, ETD, PSD, ECD, IRMPD, PQD, UVPD, SID, NETD, SURMAC, CX                        | PSI-MS (MS:1000044)         | Runtime validation    |
 
 #### Valid Dissociation Methods
 
@@ -88,24 +88,24 @@ modifications:
 
 #### Modification Fields
 
-| Field                                                          | Type               | Required    | Description                                                                                                                       |
-| -------------------------------------------------------------- | ------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                                                           | string             | No          | Optional identifier for one modification entry                                                                                    |
-| `profile`                                                      | string             | No          | Optional profile name grouping modifications into alternative search settings                                                     |
-| `kind`                                                         | enum               | No          | `ontology` or `custom` (defaults semantically to ontology)                                                                        |
-| `name`                                                         | string             | Conditional | Human-readable modification name. Required for custom, optional for ontology if `ontology_id` is provided                         |
-| `ontology_id`                                                  | string             | Conditional | Preferred ontology identifier (`UNIMOD:\d+` or `MOD:\d+`). For ontology modifications, either `ontology_id` or `name` is required |
-| `accession`                                                    | string             | Conditional | Deprecated alias for `ontology_id`                                                                                                |
-| `residues`                                                     | string or string[] | Conditional | Dataset-specific subset of allowed amino-acid residues. Do **not** encode N-term/C-term here; use `term_specificity` instead      |
-| `mode`                                                         | enum               | **Yes**     | `fixed` or `variable`                                                                                                             |
-| `mass_shift`                                                   | number             | Conditional | Required for custom. Optional for ontology-backed modifications, but validated against curated ontology values when known         |
-| `formula`                                                      | string             | No          | Optional formula; ontology-backed values are cross-checked when curated locally                                                   |
-| `term_specificity`                                             | enum               | No          | Optional dataset-specific specificity restriction: `none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`                 |
-| `term_spec`                                                    | enum               | No          | Deprecated alias for `term_specificity`                                                                                           |
-| `binary_group`                                                 | integer            | No          | Optional Comet binary group number                                                                                                |
-| `min_occurrences` / `max_occurrences`                          | integer            | No          | Optional minimum / maximum occurrence constraints                                                                                 |
-| `distance_from_terminus`                                       | integer            | No          | Optional Comet-style distance constraint relative to the chosen terminus                                                          |
-| `localize_mass_shift` / `label_mass_shift` / `custom_mod_code` | mixed              | No          | Optional flat tool-specific annotations kept directly on the modification object                                                  |
+| Field                                                          | Type               | Required    | Description                                                                                                                                                                          |
+| -------------------------------------------------------------- | ------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                                                           | string             | No          | Optional identifier for one modification entry                                                                                                                                       |
+| `profile`                                                      | string             | No          | Optional profile name grouping modifications into alternative search settings                                                                                                        |
+| `kind`                                                         | enum               | No          | `ontology` or `custom` (defaults semantically to ontology)                                                                                                                           |
+| `name`                                                         | string             | Conditional | Human-readable modification name. Required for custom, optional for ontology if `ontology_id` is provided                                                                            |
+| `ontology_id`                                                  | string             | Conditional | Preferred ontology identifier (`UNIMOD:\d+` or `MOD:\d+`). For ontology modifications, either `ontology_id` or `name` is required                                                    |
+| `accession`                                                    | string             | Conditional | Deprecated alias for `ontology_id`                                                                                                                                                   |
+| `residues`                                                     | string or string[] | Conditional | Dataset-specific subset of allowed amino-acid residues. Do **not** encode N-term/C-term here; use `term_specificity` instead so terminal modifications stay semantically unambiguous |
+| `mode`                                                         | enum               | **Yes**     | `fixed` or `variable`                                                                                                                                                                |
+| `mass_shift`                                                   | number             | Conditional | Required for custom. Optional for ontology-backed modifications, but validated against curated ontology values when known                                                            |
+| `formula`                                                      | string             | No          | Optional formula; ontology-backed values are cross-checked when curated locally                                                                                                      |
+| `term_specificity`                                             | enum               | No          | Optional dataset-specific specificity restriction: `none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`                                                                    |
+| `term_spec`                                                    | enum               | No          | Deprecated alias for `term_specificity`                                                                                                                                              |
+| `binary_group`                                                 | integer            | No          | Optional Comet binary group number                                                                                                                                                   |
+| `min_occurrences` / `max_occurrences`                          | integer            | No          | Optional minimum / maximum occurrence constraints                                                                                                                                    |
+| `distance_from_terminus`                                       | integer            | No          | Optional Comet-style distance constraint relative to the chosen terminus                                                                                                             |
+| `localize_mass_shift` / `label_mass_shift` / `custom_mod_code` | mixed              | No          | Optional flat tool-specific annotations kept directly on the modification object                                                                                                     |
 
 #### Supported Ontology Identifier Formats
 

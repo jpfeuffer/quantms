@@ -71,12 +71,6 @@ mixtures:
       TMT126: treated_rep1
       TMT127N: control_rep1
 
-  # Future: SILAC experiments can also use mixtures.channels:
-  # - id: silac_light_heavy
-  #   channels:
-  #     light: unlabeled_sample
-  #     heavy: silac_labeled_sample
-
 # Runs: raw spectrometry files with their fraction and mixture assignment
 # Fraction is implicit if all runs for a mixture have fraction=1
 runs:
