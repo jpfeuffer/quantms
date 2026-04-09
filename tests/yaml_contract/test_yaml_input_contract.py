@@ -88,7 +88,7 @@ def _as_list(value) -> list:
 
 def _get_term_specificity(modification: dict) -> str | None:
     """Return the canonical term-specificity value, supporting the deprecated term_spec alias."""
-    return modification.get('term_specificity') or modification.get('term_spec')
+    return modification.get('term_specificity') if 'term_specificity' in modification else modification.get('term_spec')
 
 
 def _get_ontology_id(modification: dict) -> str | None:

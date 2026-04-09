@@ -114,6 +114,7 @@ modifications:
     mass_shift: 3.01883 # 3 deuterons instead of 3 protons
     formula: "D3"
     term_specificity: none
+    # Optional short code for tools that need one (e.g. MS-GF+)
     custom_mod_code: "*"
 
   # ===== Example 4: Custom Chemical Crosslinker =====
