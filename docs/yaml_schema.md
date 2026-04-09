@@ -51,60 +51,61 @@ Sample metadata fields can reference external ontologies. Machine validation doc
 
 ### 3. Modification Model
 
-The shared modification structure is used both for `experiment.modifications` and for reusable `mod_profiles`. It supports ontology-backed and custom modifications together with search-engine-specific annotations.
+The canonical modification collection is the top-level `modifications` array. Each entry defines one ontology-backed or custom modification and may optionally belong to a named `profile`. Deprecated aliases (`experiment.modifications`, `mod_profiles`, `accession`, `term_spec`) are still recognized by the validator but are no longer the preferred contract.
 
 #### Modification Types: Ontology-backed vs Custom
 
 ```yaml
-experiment:
-  modifications:
-    # Ontology-backed: minimal specification can be name only
-    - kind: ontology
-      name: "Phosphorylation"
-      mode: variable
+modifications:
+  # Ontology-backed: minimal specification can be name only
+  - kind: ontology
+    name: "Phosphorylation"
+    mode: variable
 
-    # Ontology-backed: ontology_id only is also valid
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      mode: fixed
+  # Ontology-backed: ontology_id only is also valid
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    mode: fixed
 
-    # Dataset-specific subset of ontology-allowed residues / specificity
-    - kind: ontology
-      ontology_id: "UNIMOD:21"
-      residues: [S, T, Y]
-      mode: variable
-      comet:
-        binary_group: 1
+  # Dataset-specific subset of ontology-allowed residues / specificity
+  - kind: ontology
+    profile: phospho_enriched
+    ontology_id: "UNIMOD:21"
+    residues: [S, T, Y]
+    mode: variable
+    binary_group: 1
 
-mod_profiles:
-  # Reusable named profile uses the same structure plus an id
+  # Custom modification
   - id: custom_linker
     kind: custom
     name: "My Custom Label"
     residues: K
     mode: fixed
     mass_shift: 150.5
-    comet:
-      binary_group: 2
-      min_occurrences: 0
-      max_occurrences: 5
+    min_occurrences: 0
+    max_occurrences: 5
 ```
 
 #### Modification Fields
 
-| Field                            | Type               | Required            | Description                                                                                                                       |
-| -------------------------------- | ------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                             | string             | Named profiles only | Unique identifier for `mod_profiles` entries                                                                                      |
-| `kind`                           | enum               | No                  | `ontology` or `custom` (defaults semantically to ontology)                                                                        |
-| `name`                           | string             | Conditional         | Human-readable modification name. Required for custom, optional for ontology if `ontology_id` is provided                         |
-| `ontology_id`                    | string             | Conditional         | Preferred ontology identifier (`UNIMOD:\d+` or `MOD:\d+`). For ontology modifications, either `ontology_id` or `name` is required |
-| `accession`                      | string             | Conditional         | Deprecated alias for `ontology_id`                                                                                                |
-| `residues`                       | string or string[] | Conditional         | Dataset-specific subset of allowed residues / termini. Required for custom; optional for ontology-backed modifications            |
-| `mode`                           | enum               | **Yes**             | `fixed` or `variable`                                                                                                             |
-| `mass_shift`                     | number             | Conditional         | Required for custom. Optional for ontology-backed modifications, but validated against curated ontology values when known         |
-| `formula`                        | string             | No                  | Optional formula; ontology-backed values are cross-checked when curated locally                                                   |
-| `term_spec`                      | enum               | No                  | Optional dataset-specific specificity restriction: `none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`                 |
-| `comet`, `sage`, `diann`, `msgf` | object             | No                  | Engine-specific parameters at root level (for example `comet.binary_group`)                                                       |
+| Field                                                          | Type               | Required    | Description                                                                                                                       |
+| -------------------------------------------------------------- | ------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                           | string             | No          | Optional identifier for one modification entry                                                                                    |
+| `profile`                                                      | string             | No          | Optional profile name grouping modifications into alternative search settings                                                     |
+| `kind`                                                         | enum               | No          | `ontology` or `custom` (defaults semantically to ontology)                                                                        |
+| `name`                                                         | string             | Conditional | Human-readable modification name. Required for custom, optional for ontology if `ontology_id` is provided                         |
+| `ontology_id`                                                  | string             | Conditional | Preferred ontology identifier (`UNIMOD:\d+` or `MOD:\d+`). For ontology modifications, either `ontology_id` or `name` is required |
+| `accession`                                                    | string             | Conditional | Deprecated alias for `ontology_id`                                                                                                |
+| `residues`                                                     | string or string[] | Conditional | Dataset-specific subset of allowed amino-acid residues. Do **not** encode N-term/C-term here; use `term_specificity` instead      |
+| `mode`                                                         | enum               | **Yes**     | `fixed` or `variable`                                                                                                             |
+| `mass_shift`                                                   | number             | Conditional | Required for custom. Optional for ontology-backed modifications, but validated against curated ontology values when known         |
+| `formula`                                                      | string             | No          | Optional formula; ontology-backed values are cross-checked when curated locally                                                   |
+| `term_specificity`                                             | enum               | No          | Optional dataset-specific specificity restriction: `none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`                 |
+| `term_spec`                                                    | enum               | No          | Deprecated alias for `term_specificity`                                                                                           |
+| `binary_group`                                                 | integer            | No          | Optional Comet binary group number                                                                                                |
+| `min_occurrences` / `max_occurrences`                          | integer            | No          | Optional minimum / maximum occurrence constraints                                                                                 |
+| `distance_from_terminus`                                       | integer            | No          | Optional Comet-style distance constraint relative to the chosen terminus                                                          |
+| `localize_mass_shift` / `label_mass_shift` / `custom_mod_code` | mixed              | No          | Optional flat tool-specific annotations kept directly on the modification object                                                  |
 
 #### Supported Ontology Identifier Formats
 
@@ -114,34 +115,22 @@ mod_profiles:
 
 #### Engine-Specific Parameters (Root-Level)
 
-Engine-specific parameters are now optional blocks at the root of each modification entry:
+Optional tool-specific parameters are kept as flat optional fields on each modification entry:
 
 ```yaml
-experiment:
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:21"
-      residues: [S, T, Y]
-      mode: variable
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:21"
+    residues: [S, T, Y]
+    mode: variable
 
-      # Comet-specific parameters
-      comet:
-        binary_group: 1
-        min_occurrences: 0
-        max_occurrences: 3
-        distance_from_terminus: -1
-
-      # Sage-specific parameters
-      sage:
-        localize_mass_shift: true
-
-      # DIA-NN specific parameters
-      diann:
-        label_mass_shift: 79.9663
-
-      # MS-GF+ specific parameters
-      msgf:
-        custom_mod_code: "*"
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
+    distance_from_terminus: -1
+    localize_mass_shift: true
+    label_mass_shift: 79.9663
+    custom_mod_code: "*"
 ```
 
 ### 4. Multiplex Channel Validation
@@ -238,15 +227,18 @@ def validate_with_custom_semantics(yaml_path: Path, schema_path: Path) -> tuple:
 **What IS currently validated:**
 
 - ✅ JSON schema structural constraints (types, required fields, enums)
-- ✅ Shared modification structure for both `experiment.modifications` and `mod_profiles`
+- ✅ Canonical top-level `modifications` collection with deprecated alias support
 - ✅ Modification type discrimination (kind: ontology|custom)
 - ✅ Modification mode requirement (fixed|variable — no longer separate booleans)
+- ✅ Modification profile grouping via the optional `profile` field, including run-level profile selection when multiple profiles exist
 - ✅ Ontology-backed modifications: at least one of `ontology_id` / deprecated `accession` / `name` must be present
 - ✅ Ontology identifier format (`UNIMOD:\d+` / `MOD:\d+`)
 - ✅ Ontology-backed residue subset, specificity, and optional correction fields (`mass_shift`, `formula`) against curated local ontology values when known
-- ✅ Terminus specificity values (term_spec: none|n-term|c-term|protein-n-term|protein-c-term)
-- ✅ Root-level engine-specific blocks (comet, sage, diann, msgf) — not nested
-- ✅ Modification profile references from experiment / runs
+- ✅ Terminus specificity values (`term_specificity`: none|n-term|c-term|protein-n-term|protein-c-term)
+- ✅ Rejection of terminal residue aliases like `N-term` / `C-term`
+- ✅ Flat optional tool-specific fields such as `binary_group`
+- ✅ Sample metadata overlap checks for `additional_metadata`
+- ✅ Modification profile references from runs
 - ✅ Dissociation method names (against known MS methods)
 - ✅ Enzyme names (against known proteases)
 - ✅ TMT channel names and membership in known plexes
@@ -260,8 +252,8 @@ def validate_with_custom_semantics(yaml_path: Path, schema_path: Path) -> tuple:
 - ❌ Numeric accession validation (e.g., checking that UNIMOD:21 actually exists in UniMod)
 - ❌ Sample-to-mixture consistency
 - ❌ File path validation or existence checks
-- ❌ Runtime resolution of mod_profiles in experiment context
-- ❌ Semantic validation of engine-specific parameter values
+- ❌ Full SDRF-to-YAML runtime normalization
+- ❌ Semantic validation of all tool-specific parameter meanings
 
 **Documentation Note:** The schema includes `x-ontology` and `x-cv-source` annotations to guide future full validation. These are informational reference metadata.
 
@@ -272,26 +264,6 @@ experiment:
   acquisition_method: DDA
   enzyme: Trypsin
   dissociation_method: HCD
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: K
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: N-term
-      term_spec: n-term
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
 
@@ -302,6 +274,8 @@ samples:
     cell_type: HeLa # CL Ontology
     condition: treated
     biological_replicate: 1
+    characteristics:
+      passage: 10
 
   - id: HeLa_control_rep1
     organism: homo sapiens
@@ -309,6 +283,8 @@ samples:
     cell_type: HeLa
     condition: control
     biological_replicate: 1
+    characteristics:
+      passage: 10
 
 mixtures:
   - id: batch_A
@@ -321,28 +297,29 @@ runs:
     fraction: 1
     mixture: batch_A
     instrument: Q Exactive HF # PSI-MS instrument
+    modification_profile: phospho_enriched
 
-mod_profiles:
-  # Ontology-backed modification with ontology_id + root-level engine block
-  - id: phospho_sty
+modifications:
+  - profile: phospho_enriched
+    id: phospho_sty
     kind: ontology
     name: "Phosphorylation"
     ontology_id: "UNIMOD:21" # Valid UNIMOD format
     residues: [S, T, Y]
     mode: variable # Required: fixed|variable
-    comet: # Root-level engine block (not nested)
-      binary_group: 1
-      min_occurrences: 0
-      max_occurrences: 3
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
 
-  # Ontology-backed with ontology_id only
-  - id: carbamidomethyl
+  - profile: phospho_enriched
+    id: carbamidomethyl
     kind: ontology
     ontology_id: "UNIMOD:4"
+    residues: C
     mode: fixed
 
-  # Custom modification without ontology reference
-  - id: custom_label
+  - profile: phospho_enriched
+    id: custom_label
     kind: custom
     name: "Custom Labeling"
     residues: K

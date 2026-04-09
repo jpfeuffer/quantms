@@ -38,16 +38,27 @@ KNOWN_ONTOLOGY_MODIFICATIONS = {
     'UNIMOD:4': {
         'names': {'carbamidomethyl'},
         'residues': {'C'},
-        'term_specs': {'none'},
+        'term_specificities': {'none'},
         'mass_shift': 57.021464,
     },
     'UNIMOD:21': {
         'names': {'phosphorylation'},
         'residues': {'S', 'T', 'Y'},
-        'term_specs': {'none'},
+        'term_specificities': {'none'},
         'mass_shift': 79.966331,
         'formula': 'HO3P',
     },
+}
+
+SAMPLE_EXPLICIT_FIELDS = {
+    'id',
+    'organism',
+    'organism_part',
+    'condition',
+    'biological_replicate',
+    'technical_replicate',
+    'disease',
+    'cell_type',
 }
 
 ONTOLOGY_NAME_INDEX = {
@@ -71,6 +82,11 @@ def _as_list(value) -> list:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _get_term_specificity(modification: dict) -> str | None:
+    """Return the canonical term-specificity value, supporting the deprecated term_spec alias."""
+    return modification.get('term_specificity') or modification.get('term_spec')
 
 
 def _get_ontology_id(modification: dict) -> str | None:
@@ -102,14 +118,27 @@ def _resolve_known_ontology_entry(modification: dict) -> tuple[str | None, dict 
     return ontology_id, None
 
 
-def _iter_modifications(data: dict):
-    """Yield all direct modification entries and named profiles with their source paths."""
-    experiment = data.get('experiment', {})
-    for i, modification in enumerate(experiment.get('modifications', []) or []):
-        yield f"experiment.modifications[{i}]", modification
+def _get_modification_sources(data: dict) -> list[tuple[str, list]]:
+    """Return the configured modification collections, including deprecated aliases."""
+    sources = []
+    if data.get('modifications'):
+        sources.append(('modifications', data.get('modifications') or []))
 
-    for i, modification in enumerate(data.get('mod_profiles', []) or []):
-        yield f"mod_profiles[{i}]", modification
+    experiment = data.get('experiment', {})
+    if experiment.get('modifications'):
+        sources.append(('experiment.modifications', experiment.get('modifications') or []))
+
+    if data.get('mod_profiles'):
+        sources.append(('mod_profiles', data.get('mod_profiles') or []))
+
+    return sources
+
+
+def _iter_modifications(data: dict):
+    """Yield all direct modification entries from the canonical collection or deprecated aliases."""
+    for source_name, source_entries in _get_modification_sources(data):
+        for i, modification in enumerate(source_entries):
+            yield f"{source_name}[{i}]", modification
 
 
 def get_schema_path() -> Path:
@@ -351,8 +380,8 @@ mod_profiles:
         yaml_path.unlink()
 
 
-def test_invalid_mod_profile_missing_id():
-    """Test that mod_profile without required 'id' field fails validation."""
+def test_multiple_profiles_require_run_profile():
+    """Test that runs must select a profile when multiple modification profiles are defined."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -370,11 +399,17 @@ runs:
   - file: data.raw
     mixture: mix1
 
-mod_profiles:
-  - name: "Phosphorylation"
+modifications:
+  - profile: default
+    name: "Phosphorylation"
     accession: "UNIMOD:21"
     residues: S
-    variable: true
+    mode: variable
+  - profile: phospho_enriched
+    name: "Phosphorylation"
+    accession: "UNIMOD:21"
+    residues: T
+    mode: variable
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -383,18 +418,58 @@ mod_profiles:
 
     try:
         schema_path = get_schema_path()
-        is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
 
-        assert not is_valid, "mod_profile without 'id' should fail"
-        assert any("'id' is a required property" in e for e in errors), \
-            f"Error should mention 'id' requirement: {errors}"
-        print(f"✓ test_invalid_mod_profile_missing_id passed")
+        assert not is_valid, "Runs must choose a profile when multiple are defined"
+        assert any("must set modification_profile" in e for e in errors), \
+            f"Error should mention missing modification_profile: {errors}"
+        print("✓ test_multiple_profiles_require_run_profile passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_additional_metadata_overlap_is_rejected():
+    """Test that additional_metadata cannot duplicate explicit or SDRF-derived sample fields."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+    characteristics:
+      cell_line: HeLa
+    additional_metadata:
+      organism: duplicate
+      cell_line: duplicate
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Overlapping additional_metadata should fail"
+        assert any("additional_metadata overlaps" in e for e in errors), f"Unexpected errors: {errors}"
+        print("✓ test_additional_metadata_overlap_is_rejected passed")
     finally:
         yaml_path.unlink()
 
 
 def test_mod_profile_with_root_level_engine_fields():
-    """Test that mod_profile with new root-level engine-specific blocks (comet, sage) validates correctly."""
+    """Test that flat optional tool-specific fields on modifications validate correctly."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -425,13 +500,11 @@ mod_profiles:
     mode: variable
     mass_shift: 79.966331
     formula: "HO3P"
-    term_spec: none
-    comet:
-      binary_group: 1
-      min_occurrences: 0
-      max_occurrences: 3
-    sage:
-      localize_mass_shift: true
+    term_specificity: none
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
+    localize_mass_shift: true
   # Custom modification with fixed mode
   - id: custom_crosslink
     kind: custom
@@ -439,7 +512,7 @@ mod_profiles:
     residues: K
     mode: fixed
     mass_shift: 138.068
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -484,7 +557,7 @@ mod_profiles:
     residues: Y
     mode: variable
     mass_shift: 79.966331
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -527,7 +600,7 @@ mod_profiles:
     residues: T
     mode: variable
     mass_shift: 79.966331
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -570,7 +643,7 @@ mod_profiles:
     residues: K
     mode: fixed
     mass_shift: 150.5
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -676,8 +749,8 @@ mod_profiles:
         yaml_path.unlink()
 
 
-def test_invalid_term_spec_value():
-    """Test that modification with invalid term_spec value fails validation."""
+def test_invalid_term_specificity_value():
+    """Test that modification with invalid term_specificity value fails validation."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -696,14 +769,14 @@ runs:
     mixture: mix1
 
 mod_profiles:
-  - id: bad_term_spec
+  - id: bad_term_specificity
     kind: ontology
     name: "Phosphorylation"
     accession: "UNIMOD:21"
     residues: S
     mode: variable
     mass_shift: 79.966331
-    term_spec: invalid_terminus
+    term_specificity: invalid_terminus
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -714,19 +787,19 @@ mod_profiles:
         schema_path = get_schema_path()
         is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
 
-        assert not is_valid, "Modification with invalid term_spec should fail"
+        assert not is_valid, "Modification with invalid term_specificity should fail"
         assert any("is not one of" in e or "enum" in e.lower() for e in errors), \
             f"Error should mention enum constraint: {errors}"
-        print(f"✓ test_invalid_term_spec_value passed")
+        print(f"✓ test_invalid_term_specificity_value passed")
     finally:
         yaml_path.unlink()
 
 
-def test_valid_term_spec_values():
-    """Test that all valid term_spec values are accepted."""
-    valid_term_specs = ["none", "n-term", "c-term", "protein-n-term", "protein-c-term"]
+def test_valid_term_specificity_values():
+    """Test that all valid term_specificity values are accepted."""
+    valid_term_specificities = ["none", "n-term", "c-term", "protein-n-term", "protein-c-term"]
 
-    for term_spec in valid_term_specs:
+    for term_specificity in valid_term_specificities:
         yaml_content = f"""experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -752,7 +825,7 @@ mod_profiles:
     residues: S
     mode: variable
     mass_shift: 79.966331
-    term_spec: {term_spec}
+    term_specificity: {term_specificity}
 """
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -763,11 +836,11 @@ mod_profiles:
             schema_path = get_schema_path()
             is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
 
-            assert is_valid, f"term_spec='{term_spec}' should pass: {errors}"
+            assert is_valid, f"term_specificity='{term_specificity}' should pass: {errors}"
         finally:
             yaml_path.unlink()
 
-    print(f"✓ test_valid_term_spec_values passed")
+    print(f"✓ test_valid_term_specificity_values passed")
 
 
 def test_ontology_mod_without_accession_or_name():
@@ -816,26 +889,10 @@ mod_profiles:
 
 
 def test_experiment_level_modifications_use_shared_structure():
-    """Test that experiment.modifications accepts the same ontology/custom structure as mod_profiles."""
+    """Test that the canonical top-level modifications collection accepts shared ontology/custom entries."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
-  modifications:
-    - kind: ontology
-      name: "Phosphorylation"
-      residues:
-        - S
-        - T
-      mode: variable
-      comet:
-        binary_group: 1
-    - kind: custom
-      name: "Custom Crosslinker"
-      residues: K
-      mode: fixed
-      mass_shift: 138.068
-      sage:
-        localize_mass_shift: true
 
 samples:
   - id: sample1
@@ -849,6 +906,21 @@ mixtures:
 runs:
   - file: data.raw
     mixture: mix1
+
+modifications:
+  - kind: ontology
+    name: "Phosphorylation"
+    residues:
+      - S
+      - T
+    mode: variable
+    binary_group: 1
+  - kind: custom
+    name: "Custom Crosslinker"
+    residues: K
+    mode: fixed
+    mass_shift: 138.068
+    localize_mass_shift: true
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -946,6 +1018,48 @@ runs:
         yaml_path.unlink()
 
 
+def test_terminal_modification_must_use_term_specificity():
+    """Test that terminal modifications cannot encode N-term/C-term in the residues field."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+
+modifications:
+  - kind: ontology
+    name: "TMT16plex"
+    residues: N-term
+    mode: fixed
+    term_specificity: n-term
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Terminal residue aliases should fail"
+        assert any("must use 'term_specificity'" in e for e in errors), f"Unexpected errors: {errors}"
+        print("✓ test_terminal_modification_must_use_term_specificity passed")
+    finally:
+        yaml_path.unlink()
+
+
 def test_invalid_experiment_wrong_method():
     """Test that invalid acquisition_method is rejected."""
     yaml_content = """experiment:
@@ -1023,6 +1137,13 @@ def _validate_semantic_constraints(data: dict) -> list:
     """Validate semantic constraints beyond JSON schema."""
     errors = []
 
+    modification_sources = _get_modification_sources(data)
+    if len(modification_sources) > 1:
+        errors.append(
+            "[modifications] Use only one modification collection: top-level 'modifications' is canonical; "
+            "do not combine it with deprecated aliases such as experiment.modifications or mod_profiles."
+        )
+
     # Dissociation method validation (known MS fragmentation methods)
     valid_dissociation_methods = {
         'HCD', 'CID', 'ETD', 'PSD', 'ECD', 'IRMPD', 'PQD',
@@ -1049,10 +1170,34 @@ def _validate_semantic_constraints(data: dict) -> list:
                 f"Valid enzymes: {', '.join(sorted(valid_enzymes))}"
             )
 
+    # Sample metadata overlap checks
+    for i, sample in enumerate(data.get('samples', []) or []):
+        path = f"samples[{i}]"
+        characteristics = set((sample.get('characteristics') or {}).keys())
+        factor_values = set((sample.get('factor_values') or {}).keys())
+        additional = set((sample.get('additional_metadata') or {}).keys())
+        explicit = {key for key in SAMPLE_EXPLICIT_FIELDS if key in sample}
+
+        duplicate_standard = (characteristics | factor_values) & explicit
+        if duplicate_standard:
+            errors.append(
+                f"[{path}] Explicit sample properties must not be duplicated under characteristics/factor_values: "
+                f"{sorted(duplicate_standard)}."
+            )
+
+        additional_overlap = additional & (explicit | characteristics | factor_values)
+        if additional_overlap:
+            errors.append(
+                f"[{path}.additional_metadata] User-specific additional_metadata overlaps with standard sample metadata: "
+                f"{sorted(additional_overlap)}."
+            )
+
     # Modification validation: semantic constraints for ontology-backed and custom mods
     for path, modification in _iter_modifications(data):
         kind = modification.get('kind', 'ontology')
         canonical_ontology_id = _get_ontology_id(modification)
+        term_specificity = _get_term_specificity(modification)
+        residues = set(_as_list(modification.get('residues')))
 
         if _has_mismatched_ontology_identifiers(modification):
             errors.append(
@@ -1092,10 +1237,17 @@ def _validate_semantic_constraints(data: dict) -> list:
                     f"to specify the mass change in Daltons."
                 )
 
-            if not _as_list(modification.get('residues')):
+            if not residues and not term_specificity:
                 errors.append(
-                    f"[{path}] Custom modification (kind='custom') must define 'residues'."
+                    f"[{path}] Custom modification (kind='custom') must define 'residues' and/or 'term_specificity'."
                 )
+
+        terminal_residue_aliases = {'n-term', 'c-term', 'N-term', 'C-term'}
+        if residues & terminal_residue_aliases:
+            errors.append(
+                f"[{path}.residues] Terminal modifications must use 'term_specificity' instead of residues "
+                f"like N-term/C-term."
+            )
 
         resolved_ontology_id, known_entry = _resolve_known_ontology_entry(modification)
 
@@ -1112,17 +1264,15 @@ def _validate_semantic_constraints(data: dict) -> list:
                 )
 
         if kind == 'ontology' and known_entry:
-            residues = set(_as_list(modification.get('residues')))
             if residues and not residues.issubset(known_entry.get('residues', set())):
                 errors.append(
                     f"[{path}.residues] {sorted(residues)} is not an allowed residue subset for "
                     f"{resolved_ontology_id or modification.get('name')}."
                 )
 
-            term_spec = modification.get('term_spec')
-            if term_spec and term_spec not in known_entry.get('term_specs', {term_spec}):
+            if term_specificity and term_specificity not in known_entry.get('term_specificities', {term_specificity}):
                 errors.append(
-                    f"[{path}.term_spec] '{term_spec}' is not an allowed specificity for "
+                    f"[{path}.term_specificity] '{term_specificity}' is not an allowed specificity for "
                     f"{resolved_ontology_id or modification.get('name')}."
                 )
 
@@ -1141,7 +1291,10 @@ def _validate_semantic_constraints(data: dict) -> list:
                     f"'{known_entry['formula']}' for {resolved_ontology_id or modification.get('name')}."
                 )
 
-    profile_ids = {profile.get('id') for profile in data.get('mod_profiles', []) or [] if profile.get('id')}
+    profile_ids = {
+        modification.get('profile') or 'default'
+        for _, modification in _iter_modifications(data)
+    }
     reference_scopes = [('experiment', data.get('experiment', {}))]
     reference_scopes.extend((f"runs[{i}]", run) for i, run in enumerate(data.get('runs', []) or []))
 
@@ -1157,6 +1310,11 @@ def _validate_semantic_constraints(data: dict) -> list:
         ref_value = ref_new or ref_old
         if ref_value and ref_value not in profile_ids:
             errors.append(f"[{path}] references unknown modification profile '{ref_value}'.")
+
+        if path.startswith('runs[') and len(profile_ids) > 1 and not ref_value:
+            errors.append(
+                f"[{path}] must set modification_profile when multiple modification profiles are defined."
+            )
 
     # Multiplex validation: TMT and SILAC channels
     if 'mixtures' in data:
@@ -1575,7 +1733,7 @@ mod_profiles:
     accession: "UNIMOD:21"
     residues: S
     mode: variable
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -1618,7 +1776,7 @@ mod_profiles:
     accession: "MOD:00696"
     residues: S
     mode: variable
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -1948,8 +2106,7 @@ def test_valid_explicit_quantification_method_tmt():
       mode: fixed
     - kind: ontology
       name: "TMT16plex"
-      residues: N-term
-      term_spec: n-term
+      term_specificity: n-term
       mode: fixed
 
 samples:
@@ -2099,8 +2256,7 @@ def test_valid_itraq8_channels():
       mode: fixed
     - kind: ontology
       name: "iTRAQ8plex"
-      residues: N-term
-      term_spec: n-term
+      term_specificity: n-term
       mode: fixed
 
 samples:
@@ -2179,7 +2335,7 @@ runs:
 # These tests enforce the strict requirements for custom modifications:
 # Custom modifications (kind='custom') must include:
 # - id, kind, name, mode, residues, mass_shift
-# - term_spec, formula, and root-level engine blocks are optional
+# - term_specificity, formula, and root-level engine blocks are optional
 
 def test_custom_mod_missing_name():
     """Test that custom modification without 'name' field fails validation."""
@@ -2206,7 +2362,7 @@ mod_profiles:
     residues: K
     mode: fixed
     mass_shift: 150.5
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2250,7 +2406,7 @@ mod_profiles:
     name: "Custom Label"
     residues: K
     mode: fixed
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2295,7 +2451,7 @@ mod_profiles:
     residues: K
     mode: fixed
     mass_shift: 138.068
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2339,7 +2495,7 @@ mod_profiles:
     mode: fixed
     mass_shift: 150.5
     formula: "C6H12N2O"
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2357,7 +2513,7 @@ mod_profiles:
 
 
 def test_custom_mod_with_engine_blocks():
-    """Test that custom modification can include optional engine-specific blocks."""
+    """Test that custom modification can include optional flat tool-specific fields."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -2382,11 +2538,9 @@ mod_profiles:
     residues: K
     mode: fixed
     mass_shift: 138.068
-    term_spec: none
-    comet:
-      binary_group: 1
-    sage:
-      localize_mass_shift: true
+    term_specificity: none
+    binary_group: 1
+    localize_mass_shift: true
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2410,7 +2564,7 @@ mod_profiles:
 # Ontology modifications (kind='ontology') must include:
 # - id, kind, mode
 # - at least one of (ontology_id | accession | name)
-# - residues / term_spec are optional dataset-level constraints
+# - residues / term_specificity are optional dataset-level constraints
 # - NO requirement for mass_shift or formula (chemical shift is provided by ontology)
 # - optional root-level engine blocks
 
@@ -2440,7 +2594,7 @@ mod_profiles:
     accession: "UNIMOD:21"
     residues: S
     mode: variable
-    term_spec: none
+    term_specificity: none
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2481,11 +2635,8 @@ mod_profiles:
     kind: ontology
     name: "Acetylation"
     accession: "UNIMOD:1"
-    residues:
-      - K
-      - N-term
     mode: variable
-    term_spec: none
+    term_specificity: protein-n-term
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2545,8 +2696,8 @@ mod_profiles:
         yaml_path.unlink()
 
 
-def test_modifications_without_term_spec_are_allowed():
-    """Test that term_spec is optional and defaults semantically to no extra restriction."""
+def test_modifications_without_term_specificity_are_allowed():
+    """Test that term_specificity is optional and defaults semantically to no extra restriction."""
     yaml_content = """experiment:
   acquisition_method: DDA
   enzyme: Trypsin
@@ -2565,7 +2716,7 @@ runs:
     mixture: mix1
 
 mod_profiles:
-  - id: custom_no_term_spec
+  - id: custom_no_term_specificity
     kind: custom
     name: "Custom Mod"
     residues: K
@@ -2581,8 +2732,8 @@ mod_profiles:
         schema_path = get_schema_path()
         is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
 
-        assert is_valid, f"Modification without 'term_spec' should pass: {errors}"
-        print(f"✓ test_modifications_without_term_spec_are_allowed passed")
+        assert is_valid, f"Modification without 'term_specificity' should pass: {errors}"
+        print(f"✓ test_modifications_without_term_specificity_are_allowed passed")
     finally:
         yaml_path.unlink()
 
@@ -2602,19 +2753,21 @@ if __name__ == '__main__':
         test_valid_without_mod_profiles,
         test_missing_required_section_samples,
         test_invalid_mod_profile_wrong_type,
-        test_invalid_mod_profile_missing_id,
+        test_multiple_profiles_require_run_profile,
+        test_additional_metadata_overlap_is_rejected,
         test_mod_profile_with_root_level_engine_fields,
         test_ontology_mod_accession_only,
         test_ontology_mod_name_only,
         test_custom_modification_shape,
         test_missing_required_mode_field,
         test_invalid_mode_value,
-        test_invalid_term_spec_value,
-        test_valid_term_spec_values,
+        test_invalid_term_specificity_value,
+        test_valid_term_specificity_values,
         test_ontology_mod_without_accession_or_name,
         test_experiment_level_modifications_use_shared_structure,
         test_known_ontology_mod_rejects_invalid_residue_subset,
         test_known_ontology_mod_rejects_incorrect_mass_shift,
+        test_terminal_modification_must_use_term_specificity,
         test_invalid_experiment_wrong_method,
         # Dissociation and Enzyme validation tests
         test_valid_dissociation_method_hcd,
@@ -2659,7 +2812,7 @@ if __name__ == '__main__':
         test_ontology_mod_without_mass_shift,
         test_ontology_mod_without_formula,
         test_modifications_missing_residues,
-        test_modifications_without_term_spec_are_allowed,
+        test_modifications_without_term_specificity_are_allowed,
     ]
 
     failed = []

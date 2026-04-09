@@ -12,7 +12,7 @@
             "description": "Ontology identifier in UNIMOD:<number> or MOD:<number> format, for example 'UNIMOD:21' or 'MOD:00696'."
         },
         "residues": {
-            "description": "Target residue subset or terminus subset used in this dataset (e.g. 'M', ['S', 'T', 'Y'], 'N-term', 'C-term').",
+            "description": "Target amino-acid residue subset used in this dataset (e.g. 'M', ['S', 'T', 'Y']). Terminal specificity must be expressed via term_specificity instead of using N-term/C-term as residues.",
             "oneOf": [
                 {
                     "type": "string"
@@ -24,39 +24,16 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                {
+                    "type": "null"
                 }
             ]
         },
-        "term_spec": {
+        "term_specificity": {
             "type": "string",
             "enum": ["none", "n-term", "c-term", "protein-n-term", "protein-c-term"],
             "description": "Dataset-specific term specificity restriction. Optional; defaults semantically to 'none'."
-        },
-        "comet_modification_parameters": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Optional Comet-specific modification annotations.",
-            "properties": {
-                "binary_group": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Optional Comet binary modification group number."
-                },
-                "min_occurrences": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Minimum number of times this modification must occur on a peptide."
-                },
-                "max_occurrences": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Maximum number of times this modification may occur on a peptide."
-                },
-                "distance_from_terminus": {
-                    "type": "integer",
-                    "description": "Maximum distance from the relevant terminus (-1 = unrestricted)."
-                }
-            }
         },
         "modification": {
             "type": "object",
@@ -64,7 +41,11 @@
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "Optional identifier for this modification entry. Required when defining a named profile."
+                    "description": "Optional identifier for this modification entry."
+                },
+                "profile": {
+                    "type": "string",
+                    "description": "Optional modification profile name. If omitted, the entry belongs to the implicit default profile."
                 },
                 "kind": {
                     "type": "string",
@@ -99,26 +80,51 @@
                     "type": "string",
                     "description": "Optional user-specified chemical formula. For ontology-backed modifications, supplied values must agree with curated ontology expectations when known."
                 },
+                "term_specificity": {
+                    "$ref": "#/definitions/term_specificity"
+                },
                 "term_spec": {
-                    "$ref": "#/definitions/term_spec"
+                    "$ref": "#/definitions/term_specificity",
+                    "description": "Deprecated alias for term_specificity."
                 },
-                "comet": {
-                    "$ref": "#/definitions/comet_modification_parameters"
+                "binary_group": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional Comet binary modification group number."
                 },
-                "sage": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "description": "Optional Sage-specific modification annotations."
+                "min_occurrences": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Minimum number of times this modification must occur on a peptide."
                 },
-                "diann": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "description": "Optional DIA-NN-specific modification annotations."
+                "max_occurrences": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Maximum number of times this modification may occur on a peptide."
                 },
-                "msgf": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "description": "Optional MS-GF+-specific modification annotations."
+                "distance_from_terminus": {
+                    "type": "integer",
+                    "description": "Maximum distance from the relevant terminus (-1 = unrestricted)."
+                },
+                "required": {
+                    "type": "boolean",
+                    "description": "Whether this modification must be present."
+                },
+                "neutral_loss": {
+                    "type": "number",
+                    "description": "Optional neutral loss mass annotation."
+                },
+                "localize_mass_shift": {
+                    "type": "boolean",
+                    "description": "Optional localization hint used by tools such as Sage."
+                },
+                "label_mass_shift": {
+                    "type": "number",
+                    "description": "Optional label mass-shift annotation used by tools such as DIA-NN."
+                },
+                "custom_mod_code": {
+                    "type": "string",
+                    "description": "Optional tool-specific short code, for example for MS-GF+."
                 }
             },
             "allOf": [
@@ -135,7 +141,18 @@
                         "required": ["kind"]
                     },
                     "then": {
-                        "required": ["name", "residues", "mass_shift"]
+                        "required": ["name", "mass_shift"],
+                        "anyOf": [
+                            {
+                                "required": ["residues"]
+                            },
+                            {
+                                "required": ["term_specificity"]
+                            },
+                            {
+                                "required": ["term_spec"]
+                            }
+                        ]
                     },
                     "else": {
                         "anyOf": [
@@ -153,16 +170,10 @@
                 }
             ]
         },
-        "named_modification": {
-            "allOf": [
-                {
-                    "$ref": "#/definitions/modification"
-                },
-                {
-                    "type": "object",
-                    "required": ["id"]
-                }
-            ]
+        "sample_metadata": {
+            "type": "object",
+            "description": "Structured SDRF-derived sample metadata fields keyed by their normalized names.",
+            "additionalProperties": true
         }
     },
     "properties": {
@@ -213,19 +224,15 @@
                 },
                 "modifications": {
                     "type": "array",
-                    "description": "Experiment-level modifications using the shared modification structure. This is the preferred way to describe global fixed and variable modifications for the dataset.",
-                    "minItems": 0,
-                    "items": {
-                        "$ref": "#/definitions/modification"
-                    }
+                    "description": "Deprecated alias for the top-level modifications collection. Prefer the top-level field when describing one or more modification profiles."
                 },
                 "modification_profile": {
                     "type": "string",
-                    "description": "Reference to a named modification profile in the mod_profiles section. If specified, it complements or replaces direct experiment.modifications according to downstream runtime behavior."
+                    "description": "Deprecated experiment-level default profile selector. Runs should use run.modification_profile when multiple profiles exist."
                 },
                 "custom_mod_profile": {
                     "type": "string",
-                    "description": "Deprecated alias for modification_profile."
+                    "description": "Deprecated alias for experiment.modification_profile."
                 },
                 "precursor_mass_tolerance": {
                     "type": "string",
@@ -291,9 +298,15 @@
                         "x-ontology": "CL:CellType",
                         "x-cv-source": "Cell Ontology"
                     },
+                    "characteristics": {
+                        "$ref": "#/definitions/sample_metadata"
+                    },
+                    "factor_values": {
+                        "$ref": "#/definitions/sample_metadata"
+                    },
                     "additional_metadata": {
                         "type": "object",
-                        "description": "Free-form additional metadata fields."
+                        "description": "Free-form user-specific metadata fields that do not overlap with explicit sample properties or SDRF-derived characteristics/factor values."
                     }
                 }
             }
@@ -370,7 +383,7 @@
                     },
                     "modification_profile": {
                         "type": "string",
-                        "description": "Reference to a named modification profile in mod_profiles to override experiment-level modification settings for this run."
+                        "description": "Reference to a modification profile name present on top-level modification entries via their profile field."
                     },
                     "custom_mod_profile": {
                         "type": "string",
@@ -379,12 +392,20 @@
                 }
             }
         },
-        "mod_profiles": {
-            "title": "Modification Profiles",
-            "description": "Named reusable modification definitions. Each entry describes one ontology-backed or custom modification using the same shared structure as experiment.modifications.",
+        "modifications": {
+            "title": "Modification Definitions",
+            "description": "Canonical merged modification collection. Each entry defines one modification and can optionally belong to a named profile via the profile field. If only one profile exists, it is used by default for all runs; otherwise runs should select a profile.",
             "type": "array",
             "items": {
-                "$ref": "#/definitions/named_modification"
+                "$ref": "#/definitions/modification"
+            }
+        },
+        "mod_profiles": {
+            "title": "Modification Definitions",
+            "description": "Deprecated alias for the top-level modifications collection.",
+            "type": "array",
+            "items": {
+                "$ref": "#/definitions/modification"
             }
         }
     }

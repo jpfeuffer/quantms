@@ -35,13 +35,15 @@ The YAML file should define the following top-level sections:
 
 - `acquisition_method`: Type of acquisition (e.g., `DDA`, `DIA`)
 - `enzyme`: Enzymatic digestion (e.g., `Trypsin`)
-- `modifications`: Experiment-level modifications using the shared modification structure
 - `dissociation_method`: MS/MS fragmentation method (e.g., `HCD`)
 - `precursor_mass_tolerance`, `fragment_mass_tolerance`: Mass calibration settings
 
 **`samples`**: Biological samples (one entry per unique biological unit)
 
-- Each sample has a unique `id` and metadata fields like `organism`, `condition`, `biological_replicate`
+- Each sample has a unique `id` and explicit metadata fields like `organism`, `condition`, and `biological_replicate`
+- SDRF-derived but less common sample fields should go under `characteristics` and `factor_values`
+- Only truly user-specific fields should go under `additional_metadata`
+- The validator rejects overlaps between `additional_metadata` and standard sample metadata keys
 
 **`mixtures`**: Multiplex groups (isobaric labeling or SILAC) with channel mappings
 
@@ -56,18 +58,20 @@ The YAML file should define the following top-level sections:
 - `fraction`: optional fraction number (1-based)
 - `mixture`: ID of the mixture this run belongs to
 
-**`mod_profiles`**: Named modification definitions (optional, advanced)
+**`modifications`**: Merged modification definitions and optional profile grouping
 
 - Each entry defines **one** modification: either ontology-backed (UniMod/MOD) or custom
+- Optional `profile` groups modifications into named profiles
+- If only one profile is present (or no `profile` is set), it is used by default for all runs
+- If multiple profiles are present, runs must select one via `modification_profile`
 - Use `kind: ontology` or `kind: custom` to explicitly declare modification type
 - For ontology-backed: provide either `ontology_id` (`UNIMOD:<n>` / `MOD:<n>`) or `name`, or both; `accession` remains a deprecated alias
-- For ontology-backed modifications, `residues`, `term_spec`, `mass_shift`, and `formula` are optional dataset-level refinements and are checked against curated ontology values when known
-- For custom: provide a friendly `name`, `residues`, and `mass_shift` without ontology reference
+- For ontology-backed modifications, `residues`, `term_specificity`, `mass_shift`, and `formula` are optional dataset-level refinements and are checked against curated ontology values when known
+- For custom: provide a friendly `name`, `mass_shift`, and either `residues` or `term_specificity`
 - All modifications require `mode: fixed` or `mode: variable`
-- Optional `term_spec` specifies terminal position constraints (`none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`)
-- Engine-specific parameters (comet, sage, diann, msgf) are root-level blocks, not nested
-- Reference a profile by its `id` via `modification_profile` (or deprecated `custom_mod_profile`) at experiment or run level
-- **Note:** In the current specification, profiles are declared but runtime integration is not yet implemented.
+- Optional `term_specificity` specifies terminal position constraints (`none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`)
+- Terminal modifications must use `term_specificity`; do not use `N-term` / `C-term` as residues
+- Optional tool-specific fields like `binary_group`, `min_occurrences`, `max_occurrences`, `distance_from_terminus`, `localize_mass_shift`, `label_mass_shift`, and `custom_mod_code` live directly on the modification object
 
 #### YAML Example: TMT 16-plex DDA
 
@@ -76,26 +80,6 @@ experiment:
   acquisition_method: DDA
   enzyme: Trypsin
   dissociation_method: HCD
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: K
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: N-term
-      term_spec: n-term
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
 
@@ -122,25 +106,39 @@ runs:
   - file: s3://bucket/experiment/mix_A_fraction_1.raw
     fraction: 1
     mixture: mix_A
+    modification_profile: phospho_enriched
 
-mod_profiles:
-  # Ontology-backed modification: with ontology_id and root-level engine block
+modifications:
+  - profile: default
+    kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+
+  - profile: default
+    kind: ontology
+    name: "TMT16plex"
+    residues: K
+    mode: fixed
+
+  - profile: default
+    kind: ontology
+    name: "TMT16plex"
+    term_specificity: n-term
+    mode: fixed
+
+  # Ontology-backed modification with flat optional tool-specific fields
   - id: phospho_sty
+    profile: phospho_enriched
     kind: ontology
     name: "Phosphorylation"
     ontology_id: "UNIMOD:21"
     residues: [S, T, Y]
     mode: variable # Required enum: fixed|variable
-    comet: # Root-level engine block (not nested)
-      binary_group: 1
-      min_occurrences: 0
-      max_occurrences: 3
-
-  # Ontology-backed with ontology_id only
-  - id: carbamidomethyl
-    kind: ontology
-    ontology_id: "UNIMOD:4"
-    mode: fixed
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
 
   # Custom modification without ontology reference
   - id: custom_label

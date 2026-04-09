@@ -10,19 +10,6 @@ experiment:
   # Explicit quantification method declaration
   quantification_method: LFQ
 
-  # Experiment-level modifications use the shared modification structure
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
-
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
@@ -34,7 +21,7 @@ samples:
     organism_part: cell line
     condition: control
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -43,7 +30,7 @@ samples:
     organism_part: cell line
     condition: control
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -52,7 +39,7 @@ samples:
     organism_part: cell line
     condition: treated
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -61,7 +48,7 @@ samples:
     organism_part: cell line
     condition: treated
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -91,3 +78,15 @@ runs:
     fraction: 1
     mixture: null
     instrument: Q_TOF
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable

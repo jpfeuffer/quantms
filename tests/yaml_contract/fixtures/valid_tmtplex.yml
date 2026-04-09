@@ -10,28 +10,6 @@ experiment:
   # Explicit quantification method declaration
   quantification_method: TMT
 
-  # Experiment-level modifications use the shared modification structure
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: K
-      mode: fixed
-    - kind: ontology
-      name: "TMT16plex"
-      residues: N-term
-      term_spec: n-term
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
-
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
@@ -43,7 +21,7 @@ samples:
     organism_part: cell line
     condition: treated
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -52,7 +30,7 @@ samples:
     organism_part: cell line
     condition: control
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -61,7 +39,7 @@ samples:
     organism_part: cell line
     condition: treated
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -70,7 +48,7 @@ samples:
     organism_part: cell line
     condition: control
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -117,22 +95,36 @@ runs:
     mixture: mix_batch2
     instrument: Q_TOF
 
-# Named modification profiles: each entry is ONE modification. Supporting two explicit
-# types: ontology-backed (with ontology_id or name) and custom (user-defined, no ontology).
-# Reference by id via 'modification_profile' (or deprecated 'custom_mod_profile') at experiment or run level; takes precedence
-# over direct experiment.modifications.
-mod_profiles:
-  # Ontology-backed modification with ontology_id and mode
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    name: "TMT16plex"
+    residues: K
+    mode: fixed
+  - kind: ontology
+    name: "TMT16plex"
+    term_specificity: n-term
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable
+
+  # Profile-specific phosphorylation settings
   - id: phospho_ser
     kind: ontology
     name: "Phosphorylation"
     ontology_id: "UNIMOD:21"
     residues: S
     mode: variable
-    comet:
-      binary_group: 1
-      min_occurrences: 0
-      max_occurrences: 3
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
 
   # Ontology-backed modification with name only
   - id: phospho_thr

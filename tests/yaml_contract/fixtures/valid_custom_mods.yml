@@ -6,31 +6,18 @@
 # - id: Unique identifier for this modification
 # - kind: Must be 'custom' (not 'ontology')
 # - name: Human-readable modification name (required for custom to be uniquely defined)
-# - residues: Target residue(s) or terminus (e.g., 'K', ['S','T','Y'], 'N-term')
+# - residues: Target residue(s) (e.g., 'K', ['S','T','Y'])
 # - mode: 'fixed' (static) or 'variable' (optional)
-# - term_spec: Terminal specificity ('none', 'n-term', 'c-term', 'protein-n-term', 'protein-c-term')
+# - term_specificity: Terminal specificity ('none', 'n-term', 'c-term', 'protein-n-term', 'protein-c-term')
 # - mass_shift: Mass change in Daltons (required for custom to define chemical change)
 # - formula: Chemical formula (optional, e.g., 'C12H20N4O2')
-# - Comet/Sage/DIA-NN/MS-GF+ engine blocks: Optional, search-engine-specific parameters
+# - Optional flat tool-specific fields like binary_group, min_occurrences, max_occurrences
 
 experiment:
   acquisition_method: DDA
   enzyme: Trypsin
   dissociation_method: HCD
   quantification_method: LFQ
-
-  # Experiment-level modifications use the shared modification structure
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
 
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
@@ -41,7 +28,7 @@ samples:
     organism_part: cell line
     condition: treatment_custom
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -50,7 +37,7 @@ samples:
     organism_part: cell line
     condition: treatment_custom
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -69,12 +56,23 @@ runs:
     instrument: Q_TOF
 
 # ============================================================================
-# Custom Modification Profiles - Non-ontology defined modifications
+# Custom modifications - non-ontology defined modifications
 # ============================================================================
 # These demonstrate how to define modifications without external ontologies.
 # Each custom modification uniquely defined by name + mass_shift.
 
-mod_profiles:
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable
+
   # ===== Example 1: Custom Lab Isotope Label =====
   # A custom isotope label used in your lab (not in UniMod)
   # Typically a fixed modification applied to all peptides
@@ -86,10 +84,8 @@ mod_profiles:
     mode: fixed
     mass_shift: 1.008 # Mass difference from 14N to 15N per nitrogen atom
     formula: "15N" # Explicit isotope notation
-    term_spec: none
-    # Optional engine-specific parameters
-    comet:
-      binary_group: 1
+    term_specificity: none
+    binary_group: 1
 
   # ===== Example 2: Custom Protease Artifact =====
   # A modification arising from your specific experimental procedure
@@ -103,11 +99,9 @@ mod_profiles:
     mode: variable # Can occur sometimes, not all peptides
     mass_shift: 28.010565 # CO (carbon monoxide addition from oxidative cleavage)
     formula: "CO"
-    term_spec: c-term # Occurs at C-terminal positions
-    # Could add Sage parameters if using Sage search engine
-    sage:
-      min_occurrences: 0
-      max_occurrences: 1
+    term_specificity: c-term # Occurs at C-terminal positions
+    min_occurrences: 0
+    max_occurrences: 1
 
   # ===== Example 3: Custom Heavy Isotope Spike =====
   # A deuterium labeling used for your specific quantification experiment
@@ -119,10 +113,8 @@ mod_profiles:
     mode: fixed
     mass_shift: 3.01883 # 3 deuterons instead of 3 protons
     formula: "D3"
-    term_spec: none
-    # Engine-specific for MS-GF+ if used
-    msgf:
-      mass_type: "monoisotopic"
+    term_specificity: none
+    custom_mod_code: "*"
 
   # ===== Example 4: Custom Chemical Crosslinker =====
   # A non-standard crosslinker reagent used in your XL-MS experiment
@@ -135,7 +127,7 @@ mod_profiles:
     mode: variable # Can be used on some positions
     mass_shift: 150.05243 # Custom crosslinker mass
     formula: "C7H10N2O3" # Example chemical formula
-    term_spec: none
+    term_specificity: none
     # No engine-specific blocks for this example (will use defaults)
 
   # ===== Example 5: Minimal Custom Modification =====
@@ -147,5 +139,5 @@ mod_profiles:
     residues: E # Glutamic acid
     mode: variable
     mass_shift: 45.0211 # Arbitrary mass shift
-    term_spec: none
+    term_specificity: none
     # No formula or engine-specific blocks

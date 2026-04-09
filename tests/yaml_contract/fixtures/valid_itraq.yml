@@ -10,28 +10,6 @@ experiment:
   # Explicit quantification method declaration for isobaric labeling
   quantification_method: iTRAQ
 
-  # Experiment-level modifications use the shared modification structure
-  modifications:
-    - kind: ontology
-      ontology_id: "UNIMOD:4"
-      name: "Carbamidomethyl"
-      residues: C
-      mode: fixed
-    - kind: ontology
-      name: "iTRAQ8plex"
-      residues: K
-      mode: fixed
-    - kind: ontology
-      name: "iTRAQ8plex"
-      residues: N-term
-      term_spec: n-term
-      mode: fixed
-    - kind: ontology
-      ontology_id: "UNIMOD:35"
-      name: "Oxidation"
-      residues: M
-      mode: variable
-
   # Mass calibration tolerance settings
   precursor_mass_tolerance: "10 ppm"
   fragment_mass_tolerance: "0.02 Da"
@@ -43,7 +21,7 @@ samples:
     organism_part: cell culture
     condition: treated
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -52,7 +30,7 @@ samples:
     organism_part: cell culture
     condition: control
     biological_replicate: 1
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 10
 
@@ -61,7 +39,7 @@ samples:
     organism_part: cell culture
     condition: treated
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -70,7 +48,7 @@ samples:
     organism_part: cell culture
     condition: control
     biological_replicate: 2
-    additional_metadata:
+    characteristics:
       cell_line: HeLa
       passage: 11
 
@@ -100,3 +78,23 @@ runs:
     fraction: 2
     mixture: itraq8_batch1
     instrument: Q_TOF
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    name: "iTRAQ8plex"
+    residues: K
+    mode: fixed
+  - kind: ontology
+    name: "iTRAQ8plex"
+    term_specificity: n-term
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable
