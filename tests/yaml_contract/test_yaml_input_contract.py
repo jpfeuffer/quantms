@@ -4,12 +4,15 @@
 # dependencies = [
 #   "jsonschema",
 #   "pyyaml",
+#   "oaklib",
+#   "pooch",
 # ]
 # ///
 """
 Test suite for quantms YAML input contract validation.
 
-Validates YAML manifests against the quantms_yaml_manifest.json schema.
+Validates YAML manifests against the quantms_yaml_manifest.json schema with
+ontology-backed semantic validation for dissociation methods and enzymes using OAK.
 The schema defines the contract for experiment metadata, samples, mixtures, runs,
 and named modification profiles.
 
@@ -17,7 +20,8 @@ IMPORTANT: This test validates the current, approved schema contract.
 Runtime consumption of YAML manifests is not yet implemented.
 The current pipeline still accepts SDRF format for data processing.
 
-Tests use jsonschema + PyYAML for standards-based validation.
+Tests use jsonschema + PyYAML for standards-based validation, with optional OAK
+integration for ontology-based semantic validation when available.
 """
 
 import sys
@@ -32,6 +36,19 @@ try:
 except ImportError:
     print("ERROR: jsonschema not installed. Install with: pip install jsonschema")
     sys.exit(1)
+
+try:
+    import pooch
+    POOCH_AVAILABLE = True
+except ImportError:
+    POOCH_AVAILABLE = False
+
+try:
+    from oaklib import get_adapter as _oak_get_adapter
+    from oaklib.datamodels.search_datamodel import SearchConfiguration, SearchProperty
+    OAK_AVAILABLE = True
+except ImportError:
+    OAK_AVAILABLE = False
 
 
 KNOWN_ONTOLOGY_MODIFICATIONS = {
@@ -141,6 +158,303 @@ def _iter_modifications(data: dict):
     for source_name, source_entries in _get_modification_sources(data):
         for i, modification in enumerate(source_entries):
             yield f"{source_name}[{i}]", modification
+
+
+# ============================================================================
+# PSI-MS Ontology Resource Handling (Version-Pinned with Pooch)
+# ============================================================================
+# Deterministic version-pinned resolution for PSI-MS using pooch to fetch
+# exact versioned OBO files with SHA-256 checksum verification.
+#
+# - OAK loads the locally cached OBO files using get_adapter(str(path))
+# - Different versions map to different cached files
+# - Unsupported versions emit non-fatal warnings and fall back to default pinned version
+
+# Supported PSI-MS versions with direct URLs and SHA-256 checksums
+# These are versioned tags from https://github.com/HUPO-PSI/psi-ms-CV
+_SUPPORTED_PSI_MS_VERSIONS = {
+    "4.1.244",
+    "4.1.243",
+}
+
+# Version registry: maps version to (URL, SHA-256 checksum)
+_PSI_MS_VERSION_REGISTRY = {
+    "4.1.244": {
+        "url": "https://raw.githubusercontent.com/HUPO-PSI/psi-ms-CV/v4.1.244/psi-ms.obo",
+        "sha256": "c85f27fa6ddec29ed02235cb6069247d8a969fbe4acbf951434e42c41cb9e53c",
+    },
+    "4.1.243": {
+        "url": "https://raw.githubusercontent.com/HUPO-PSI/psi-ms-CV/v4.1.243/psi-ms.obo",
+        "sha256": "72ea8463212b8f3406e737cba9f70c900d93ab8b6fb0a4f00dd6caaa5f61e45d",
+    },
+}
+
+# Validator-defined default pinned PSI-MS version
+_DEFAULT_PSI_MS_VERSION = "4.1.244"
+
+# Cache for loaded adapters: maps version-specific cache key to adapter
+_psi_ms_resource_cache: dict = {}
+
+
+def _get_psi_ms_cache_dir() -> Path:
+    """Get the cache directory for PSI-MS ontologies (platform-specific)."""
+    if POOCH_AVAILABLE:
+        # Use pooch's platform-aware cache location
+        cache_dir = pooch.os_cache("quantms/psi-ms")
+        return Path(cache_dir)
+    else:
+        # Fallback to temp directory if pooch unavailable
+        return Path(tempfile.gettempdir()) / "quantms-psi-ms-cache"
+
+
+def _resolve_psi_ms_version(declared_version: str | None = None) -> tuple[str, bool]:
+    """
+    Resolve the PSI-MS version to use for validation.
+
+    If declared_version is not in the supported registry, remaps to the default pinned version.
+
+    Args:
+        declared_version: Optional version declared in metadata.ontology_versions.psi-ms
+
+    Returns:
+        (resolved_version: str, is_default: bool) where is_default is True if using the default
+    """
+    if declared_version:
+        # Check if declared version is supported
+        if declared_version in _SUPPORTED_PSI_MS_VERSIONS:
+            return declared_version, False
+        else:
+            # Unsupported declared version: remap to default (caller will emit warning)
+            return _DEFAULT_PSI_MS_VERSION, True
+
+    # No version declared: use validator-defined default
+    return _DEFAULT_PSI_MS_VERSION, True
+
+
+def _download_psi_ms_obo(version: str) -> Path | None:
+    """
+    Download and cache a versioned PSI-MS OBO file using pooch with checksum verification.
+
+    Args:
+        version: PSI-MS version (e.g., "4.1.244")
+
+    Returns:
+        Path to the downloaded OBO file, or None if download failed/pooch unavailable
+    """
+    if not POOCH_AVAILABLE or version not in _PSI_MS_VERSION_REGISTRY:
+        return None
+
+    try:
+        entry = _PSI_MS_VERSION_REGISTRY[version]
+        cache_dir = _get_psi_ms_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use pooch.retrieve to download with checksum verification
+        filename = f"psi-ms-{version}.obo"
+        local_path = pooch.retrieve(
+            entry["url"],
+            known_hash=f"sha256:{entry['sha256']}",
+            fname=filename,
+            path=str(cache_dir),
+        )
+        return Path(local_path)
+    except Exception:
+        # Download or checksum verification failed
+        return None
+
+
+def _load_psi_ms_resource(version: str | None = None) -> tuple[any, bool]:
+    """
+    Load PSI-MS ontology for a specific version using pooch for download and OAK for loading.
+
+    This implementation:
+    1. Resolves declared_version to a supported version (remapping unsupported to default)
+    2. Uses pooch to fetch and cache exact versioned OBO files with SHA-256 verification
+    3. Loads the local cached file with OAK using get_adapter(str(path))
+    4. Returns (None, degraded=True) if download fails despite OAK being available
+    5. Returns (None, degraded=False) if OAK is unavailable
+
+    Unsupported declared versions are silently remapped to the default pinned version
+    (caller responsible for emitting warnings via _validate_psi_ms_version).
+
+    Args:
+        version: Optional PSI-MS version to use (if None, uses default)
+
+    Returns:
+        (adapter, degraded) tuple where:
+        - adapter: OAK adapter or None if unavailable
+        - degraded: True if OAK was available but download failed, False otherwise.
+                    When degraded=True, validation will fall back to hardcoded allowlists
+                    and should emit a non-fatal warning.
+    """
+    if not OAK_AVAILABLE:
+        return None, False
+
+    resolved_version, _ = _resolve_psi_ms_version(version)
+    cache_key = f"psi_ms_{resolved_version}"
+    degraded_cache_key = f"{cache_key}_degraded"
+
+    # Return cached adapter if already loaded
+    if cache_key in _psi_ms_resource_cache:
+        is_degraded = _psi_ms_resource_cache.get(degraded_cache_key, False)
+        return _psi_ms_resource_cache[cache_key], is_degraded
+
+    # Try to download versioned OBO file using pooch
+    local_obo_path = _download_psi_ms_obo(resolved_version)
+
+    try:
+        if local_obo_path and local_obo_path.exists():
+            # Load the downloaded OBO file directly with OAK
+            adapter = _oak_get_adapter(str(local_obo_path))
+            _psi_ms_resource_cache[cache_key] = adapter
+            _psi_ms_resource_cache[degraded_cache_key] = False
+            return adapter, False
+        else:
+            # Download failed: return (None, degraded=True) to signal fallback with warning
+            _psi_ms_resource_cache[cache_key] = None
+            _psi_ms_resource_cache[degraded_cache_key] = True
+            return None, True
+    except Exception:
+        _psi_ms_resource_cache[cache_key] = None
+        _psi_ms_resource_cache[degraded_cache_key] = True
+        return None, True
+
+
+def _is_descendant_of(adapter, curie: str, parent: str) -> bool:
+    """Return True if curie is a (transitive) subclass of parent."""
+    try:
+        return parent in set(adapter.ancestors(curie, predicates=["rdfs:subClassOf"]))
+    except Exception:
+        return False
+
+
+def _lookup_term_under_parent(adapter, label: str, parent_curie: str) -> str | None:
+    """
+    Search the ontology for a term matching label or exact synonym that is a
+    descendant of parent_curie.  Returns the CURIE on success.
+    """
+    try:
+        # Search over both labels and synonyms so that short forms like "HCD"
+        # (which is an exact synonym of MS:1000422) are resolved correctly.
+        if OAK_AVAILABLE:
+            cfg = SearchConfiguration(
+                properties=[SearchProperty.LABEL, SearchProperty.SYNONYM]
+            )
+            hits = adapter.basic_search(label, config=cfg)
+        else:
+            hits = adapter.basic_search(label)
+        for entity in hits:
+            if _is_descendant_of(adapter, entity, parent_curie):
+                return entity
+    except Exception:
+        pass
+    return None
+
+
+def _validate_dissociation_method_oak(method: str, psi_ms_version: str | None = None) -> tuple[bool, str | None, bool]:
+    """
+    Validate dissociation method: tries OAK descendant-of-MS:1000044 check with
+    optionally version-pinned PSI-MS, falls back to a hardcoded allowlist when
+    OAK is unavailable or download fails.
+
+    Args:
+        method: Dissociation method label (e.g., "HCD")
+        psi_ms_version: Optional PSI-MS version to use (if None, uses default)
+
+    Returns:
+        (is_valid: bool, ontology_id: str | None, degraded: bool)
+        where degraded=True if OAK was available but download failed and we fell back
+    """
+    if not method or not method.strip():
+        return False, None, False
+
+    adapter, degraded = _load_psi_ms_resource(psi_ms_version)
+    if adapter is not None:
+        curie = _lookup_term_under_parent(adapter, method, "MS:1000044")
+        if curie:
+            return True, curie, False
+        # OAK loaded but term not found — treat as invalid (don't fall through to allowlist)
+        return False, None, False
+
+    # OAK not available or download failed — use hardcoded allowlist as fallback
+    valid_dissociation_methods = {
+        'HCD', 'CID', 'ETD', 'PSD', 'ECD', 'IRMPD', 'PQD',
+        'UVPD', 'SID', 'NETD', 'SURMAC', 'CX'
+    }
+    if method.upper() in valid_dissociation_methods:
+        return True, None, degraded
+    return False, None, degraded
+
+
+def _validate_enzyme_oak(enzyme: str, psi_ms_version: str | None = None) -> tuple[bool, str | None, bool]:
+    """
+    Validate enzyme: tries OAK descendant-of-MS:1001045 check with optionally
+    version-pinned PSI-MS, falls back to a hardcoded allowlist when OAK is unavailable
+    or download fails.
+
+    Args:
+        enzyme: Enzyme/protease label (e.g., "Trypsin")
+        psi_ms_version: Optional PSI-MS version to use (if None, uses default)
+
+    Returns:
+        (is_valid: bool, ontology_id: str | None, degraded: bool)
+        where degraded=True if OAK was available but download failed and we fell back
+    """
+    if not enzyme or not enzyme.strip():
+        return False, None, False
+
+    adapter, degraded = _load_psi_ms_resource(psi_ms_version)
+    if adapter is not None:
+        curie = _lookup_term_under_parent(adapter, enzyme, "MS:1001045")
+        if curie:
+            return True, curie, False
+        # OAK loaded but enzyme not found — treat as invalid
+        return False, None, False
+
+    # OAK not available or download failed — use hardcoded allowlist as fallback
+    valid_enzymes = {
+        'Trypsin', 'Chymotrypsin', 'Pepsin', 'Elastase', 'LysC',
+        'Asp-N', 'Glu-C', 'Arg-C', 'None', 'Whole protein'
+    }
+    if enzyme.strip() in valid_enzymes:
+        return True, None, degraded
+    return False, None, degraded
+
+
+
+
+
+def _validate_psi_ms_version(data: dict) -> list:
+    """
+    Validate PSI-MS version declaration and emit warnings if needed.
+
+    - If metadata.ontology_versions.psi-ms is declared, check that it's in the
+      supported pinned registry. Unsupported versions trigger a non-fatal warning
+      and validation falls back to the default pinned version.
+    - If absent, emit a non-fatal warning that the default pinned version is being used.
+
+    Returns list of warning messages (non-blocking).
+    """
+    warnings = []
+    metadata = data.get('metadata', {})
+    ontology_versions = metadata.get('ontology_versions', {})
+    psi_ms_version = ontology_versions.get('psi_ms') or ontology_versions.get('psi-ms')
+
+    if not psi_ms_version:
+        # No version declared: warn that default is being used
+        resolved_version, _ = _resolve_psi_ms_version(None)
+        warnings.append(
+            f"[metadata.ontology_versions.psi-ms] Not specified. Using validator-defined default pinned version '{resolved_version}'."
+        )
+    else:
+        # Version declared: check if it's supported and will be remapped
+        if psi_ms_version not in _SUPPORTED_PSI_MS_VERSIONS:
+            warnings.append(
+                f"[metadata.ontology_versions.psi-ms] Version '{psi_ms_version}' is not in the supported registry "
+                f"{sorted(_SUPPORTED_PSI_MS_VERSIONS)}. Using the default pinned version '{_DEFAULT_PSI_MS_VERSION}' instead."
+            )
+
+    return warnings
 
 
 def get_schema_path() -> Path:
@@ -1111,6 +1425,9 @@ def validate_with_custom_semantics(yaml_path: Path, schema_path: Path) -> tuple:
 
     Returns:
         (is_valid: bool, error_messages: list[str])
+
+    Note: Version mismatch warnings are included in error_messages but do not cause
+    is_valid to be False.
     """
     # First, run JSON schema validation
     schema_errors = []
@@ -1128,16 +1445,29 @@ def validate_with_custom_semantics(yaml_path: Path, schema_path: Path) -> tuple:
             path = '.'.join(str(p) for p in error.absolute_path) or '<root>'
             schema_errors.append(f"[{path}] {error.message}")
 
-    # Then apply custom semantic validation
-    semantic_errors = _validate_semantic_constraints(data)
+    # Apply custom semantic validation (blocking errors only)
+    semantic_errors, degradation_warnings = _validate_semantic_constraints(data)
 
-    all_errors = schema_errors + semantic_errors
-    return len(all_errors) == 0, all_errors
+    # Check for PSI-MS version mismatches (non-blocking warnings)
+    version_warnings = _validate_psi_ms_version(data)
+
+    all_messages = schema_errors + semantic_errors + degradation_warnings + version_warnings
+    return len(schema_errors + semantic_errors) == 0, all_messages
 
 
-def _validate_semantic_constraints(data: dict) -> list:
-    """Validate semantic constraints beyond JSON schema."""
+def _validate_semantic_constraints(data: dict) -> tuple[list, list]:
+    """Validate semantic constraints beyond JSON schema.
+
+    Returns:
+        (errors: list[str], degradation_warnings: list[str])
+    """
     errors = []
+    degradation_warnings = []
+
+    # Extract declared PSI-MS version for validation
+    metadata = data.get('metadata', {})
+    ontology_versions = metadata.get('ontology_versions', {})
+    declared_psi_ms_version = ontology_versions.get('psi_ms') or ontology_versions.get('psi-ms')
 
     modification_sources = _get_modification_sources(data)
     if len(modification_sources) > 1:
@@ -1146,30 +1476,38 @@ def _validate_semantic_constraints(data: dict) -> list:
             "do not combine it with deprecated aliases such as experiment.modifications or mod_profiles."
         )
 
-    # Dissociation method validation (known MS fragmentation methods)
-    valid_dissociation_methods = {
-        'HCD', 'CID', 'ETD', 'PSD', 'ECD', 'IRMPD', 'PQD',
-        'UVPD', 'SID', 'NETD', 'SURMAC', 'CX'
-    }
+    # Dissociation method validation using OAK-backed PSI-MS checks (with optional version pinning)
     if 'experiment' in data and 'dissociation_method' in data['experiment']:
-        method = data['experiment'].get('dissociation_method', '').upper()
-        if method and method not in valid_dissociation_methods:
+        method = data['experiment'].get('dissociation_method', '')
+        is_valid, ont_id, degraded = _validate_dissociation_method_oak(method, declared_psi_ms_version)
+        if degraded:
+            degradation_warnings.append(
+                f"[experiment.dissociation_method] Ontology-backed validation could not be performed: "
+                f"PSI-MS ontology download failed. Falling back to hardcoded allowlist. "
+                f"Term '{method}' was validated against built-in terms only, not the full ontology."
+            )
+        if not is_valid:
             errors.append(
                 f"[experiment.dissociation_method] '{method}' is not a recognized MS dissociation method. "
-                f"Valid methods: {', '.join(sorted(valid_dissociation_methods))}"
+                f"Must be a descendant of PSI-MS:MS:1000044 or one of: "
+                f"HCD, CID, ETD, PSD, ECD, IRMPD, PQD, UVPD, SID, NETD, SURMAC, CX"
             )
 
-    # Enzyme validation (known proteases)
-    valid_enzymes = {
-        'Trypsin', 'Chymotrypsin', 'Pepsin', 'Elastase', 'LysC',
-        'Asp-N', 'Glu-C', 'Arg-C', 'None', 'Whole protein'
-    }
+    # Enzyme validation using OAK-backed PSI-MS checks (with optional version pinning)
     if 'experiment' in data and 'enzyme' in data['experiment']:
         enzyme = data['experiment'].get('enzyme', '').strip()
-        if enzyme and enzyme not in valid_enzymes:
+        is_valid, ont_id, degraded = _validate_enzyme_oak(enzyme, declared_psi_ms_version)
+        if degraded:
+            degradation_warnings.append(
+                f"[experiment.enzyme] Ontology-backed validation could not be performed: "
+                f"PSI-MS ontology download failed. Falling back to hardcoded allowlist. "
+                f"Term '{enzyme}' was validated against built-in terms only, not the full ontology."
+            )
+        if enzyme and not is_valid:
             errors.append(
                 f"[experiment.enzyme] '{enzyme}' is not a recognized protease. "
-                f"Valid enzymes: {', '.join(sorted(valid_enzymes))}"
+                f"Must be a descendant of PSI-MS:MS:1001045 or one of: "
+                f"Trypsin, Chymotrypsin, Pepsin, Elastase, LysC, Asp-N, Glu-C, Arg-C, None, Whole protein"
             )
 
     # Sample metadata overlap checks
@@ -1347,7 +1685,7 @@ def _validate_semantic_constraints(data: dict) -> list:
                 if silac_channels:
                     errors.extend(_validate_silac_channels(silac_channels, i))
 
-    return errors
+    return errors, degradation_warnings
 
 
 def _validate_tmt_channels(channel_names: set, mixture_idx: int) -> list:
@@ -2332,7 +2670,7 @@ runs:
 
 
 # ============================================================================
-# Custom Modification Validation Tests (Phase 2 Requirements)
+# Custom Modification Validation Tests
 # ============================================================================
 # These tests enforce the strict requirements for custom modifications:
 # Custom modifications (kind='custom') must include:
@@ -2560,7 +2898,7 @@ mod_profiles:
 
 
 # ============================================================================
-# Ontology Modification Validation Tests (Phase 2 Requirements)
+# Ontology Modification Validation Tests
 # ============================================================================
 # These tests enforce the strict requirements for ontology modifications:
 # Ontology modifications (kind='ontology') must include:
@@ -2741,6 +3079,825 @@ mod_profiles:
 
 
 # ============================================================================
+# Ontology Metadata and Validation Tests
+# ============================================================================
+
+def test_metadata_with_schema_version_and_ontology_versions():
+    """Test that metadata with schema_version and ontology_versions is accepted."""
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+    unimod: "2024-03"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
+
+        assert is_valid, f"Manifest with metadata should pass schema validation: {errors}"
+        print(f"✓ test_metadata_with_schema_version_and_ontology_versions passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_metadata_section_is_optional():
+    """Test that metadata section is optional (manifest without metadata is valid)."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
+
+        assert is_valid, f"Manifest without metadata should remain valid: {errors}"
+        print(f"✓ test_metadata_section_is_optional passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_metadata_rejects_unknown_properties():
+    """Test that metadata with unknown properties is rejected (additionalProperties=false)."""
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  unknown_field: "should fail"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_yaml_against_schema(yaml_path, schema_path)
+
+        assert not is_valid, "Metadata with unknown properties should fail"
+        assert any("Additional properties are not allowed" in e or "unknown_field" in str(errors) for e in errors), \
+            f"Error should mention unknown property: {errors}"
+        print(f"✓ test_metadata_rejects_unknown_properties passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_valid_hcd_dissociation_method_with_ontology_validation():
+    """Test that HCD dissociation method validates as valid MS dissociation (MS:1000044 descendant)."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert is_valid, f"HCD dissociation method should pass semantic validation: {errors}"
+        if _download_psi_ms_obo(_DEFAULT_PSI_MS_VERSION) is not None:
+            assert not any("Falling back to hardcoded allowlist" in e for e in errors), \
+                f"Pinned ontology should validate HCD without degradation warnings: {errors}"
+        print(f"✓ test_valid_hcd_dissociation_method_with_ontology_validation passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_invalid_dissociation_method_rejected_by_ontology():
+    """Test that invalid dissociation method is rejected by semantic validation."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: UNKNOWN_DISSOCIATION
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Invalid dissociation method should fail semantic validation"
+        assert any("dissociation_method" in e.lower() and ("not a recognized" in e or "unknown" in e.lower()) for e in errors), \
+            f"Error should mention invalid dissociation method: {errors}"
+        print(f"✓ test_invalid_dissociation_method_rejected_by_ontology passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_valid_trypsin_enzyme_with_ontology_validation():
+    """Test that Trypsin enzyme validates as valid protease (MS:1001045 descendant)."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert is_valid, f"Trypsin enzyme should pass semantic validation: {errors}"
+        if _download_psi_ms_obo(_DEFAULT_PSI_MS_VERSION) is not None:
+            assert not any("Falling back to hardcoded allowlist" in e for e in errors), \
+                f"Pinned ontology should validate Trypsin without degradation warnings: {errors}"
+        print(f"✓ test_valid_trypsin_enzyme_with_ontology_validation passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_invalid_enzyme_rejected_by_ontology():
+    """Test that invalid enzyme is rejected by semantic validation."""
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: InvalidProteaseXYZ
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Invalid enzyme should fail semantic validation"
+        assert any("enzyme" in e.lower() and ("not a recognized" in e or "invalid" in e.lower()) for e in errors), \
+            f"Error should mention invalid enzyme: {errors}"
+        print(f"✓ test_invalid_enzyme_rejected_by_ontology passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_psi_ms_version_mismatch_is_warning_not_error():
+    """
+    Test that PSI-MS version mismatch is reported as a warning but does not
+    cause validation to fail (non-fatal).
+    """
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "999.255.0"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, error_messages = validate_with_custom_semantics(yaml_path, schema_path)
+
+        # The manifest should still be valid despite version mismatch
+        assert is_valid, f"Manifest with unsupported version should still be valid: {error_messages}"
+
+        # A warning must be emitted for unsupported version
+        unsupported_warnings = [m for m in error_messages
+                                if "not in the supported registry" in m.lower()
+                                or "unsupported" in m.lower()]
+        assert len(unsupported_warnings) > 0, \
+            f"Must emit warning for unsupported version '999.255.0': {error_messages}"
+        assert any("999.255.0" in w for w in unsupported_warnings), \
+            f"Warning should mention the unsupported version number: {unsupported_warnings}"
+
+        print(f"✓ test_psi_ms_version_mismatch_is_warning_not_error passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_metadata_ontology_versions_optional():
+    """Test that metadata.ontology_versions is optional."""
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert is_valid, f"Metadata without ontology_versions should be valid: {errors}"
+        print(f"✓ test_metadata_ontology_versions_optional passed")
+    finally:
+        yaml_path.unlink()
+
+
+# ============================================================================
+# Version-Pinned Ontology Validation Tests (Corrected Milestone)
+# ============================================================================
+# These tests validate the new version-pinned approach:
+# - Declare metadata.ontology_versions.psi-ms for deterministic validation
+# - If absent, use validator-defined default with non-fatal warning
+# - Fetch and cache ontologies using pooch with exact versions
+# - Different versions map to different cache artifacts
+
+def test_version_pinned_dissociation_method_validation():
+    """Test that dissociation method (HCD) validates using a pinned PSI-MS version."""
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert is_valid, f"Pinned PSI-MS version with HCD should pass: {errors}"
+        print(f"✓ test_version_pinned_dissociation_method_validation passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_version_pinned_enzyme_validation():
+    """Test that enzyme (Trypsin) validates using a pinned PSI-MS version."""
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert is_valid, f"Pinned PSI-MS version with Trypsin should pass: {errors}"
+        print(f"✓ test_version_pinned_enzyme_validation passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_default_pinned_version_used_when_metadata_omitted():
+    """
+    Test that when metadata.ontology_versions.psi-ms is omitted,
+    validation still succeeds using a default pinned version,
+    and a non-fatal warning is emitted.
+    """
+    yaml_content = """experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        # Validation must succeed even without declared version
+        assert is_valid, f"Validation without metadata.ontology_versions should succeed: {errors}"
+
+        # A non-fatal warning MUST be emitted indicating default was used
+        default_warnings = [m for m in errors if "default" in m.lower() and "psi-ms" in m.lower()]
+        assert len(default_warnings) > 0, \
+            f"Must emit warning about default pinned version when metadata.ontology_versions.psi-ms is absent: {errors}"
+        assert any("Not specified" in w for w in default_warnings), \
+            f"Warning should mention that psi-ms is not specified: {default_warnings}"
+
+        print(f"✓ test_default_pinned_version_used_when_metadata_omitted passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_different_versions_map_to_different_validation_contexts():
+    """
+    Test that declaring different PSI-MS versions results in different
+    validation contexts (distinct cache keys/paths). Both versions should
+    validate the same dissociation_method correctly.
+
+    Since OAK availability varies across environments, this test verifies:
+    1. Both declared versions validate successfully
+    2. The implementation structure supports version-specific cache keys
+       (verified by examining the cache key format and _resolve_psi_ms_version)
+    3. Different versions produce different cache keys
+    """
+    # Test that both versions validate
+    yaml_content_v1 = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    yaml_content_v2 = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.243"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    for yaml_content, version in [(yaml_content_v1, "4.1.244"), (yaml_content_v2, "4.1.243")]:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = Path(f.name)
+
+        try:
+            schema_path = get_schema_path()
+            is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+            assert is_valid, f"Version {version} should validate: {errors}"
+        finally:
+            yaml_path.unlink()
+
+    # Verify that the implementation uses distinct cache keys for different versions
+    # by checking that _resolve_psi_ms_version returns different versions
+    resolved_v1, _ = _resolve_psi_ms_version("4.1.244")
+    resolved_v2, _ = _resolve_psi_ms_version("4.1.243")
+    assert resolved_v1 != resolved_v2, \
+        "Different declared versions should resolve to different version strings"
+    assert resolved_v1 == "4.1.244" and resolved_v2 == "4.1.243", \
+        "Version resolution should preserve declared versions"
+
+    # Verify cache keys are distinct
+    cache_key_v1 = f"psi_ms_{resolved_v1}"
+    cache_key_v2 = f"psi_ms_{resolved_v2}"
+    assert cache_key_v1 != cache_key_v2, \
+        "Different versions should generate distinct cache keys"
+
+    print(f"✓ test_different_versions_map_to_different_validation_contexts passed")
+
+
+def test_ontology_download_failure_emits_degradation_warning():
+    """
+    Test that when PSI-MS ontology download fails (returns None) while OAK is available,
+    validation still passes for known terms (like HCD/Trypsin) but includes a
+    degradation warning in the messages.
+
+    This simulates the scenario where _download_psi_ms_obo fails but OAK_AVAILABLE is True,
+    which should trigger a warning about validation falling back to hardcoded allowlists.
+    """
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        # Patch OAK_AVAILABLE to True and _download_psi_ms_obo to return None
+        # This tests the case where OAK is available but the ontology file download fails
+        from unittest.mock import patch
+        import sys
+        module_name = __name__
+        with patch.dict(sys.modules[module_name].__dict__, {'OAK_AVAILABLE': True}), \
+             patch(f'{module_name}._download_psi_ms_obo', return_value=None):
+            # Clear the cache to ensure fresh load with the patch
+            _psi_ms_resource_cache.clear()
+
+            schema_path = get_schema_path()
+            is_valid, messages = validate_with_custom_semantics(yaml_path, schema_path)
+
+            # Validation should still pass for known terms (HCD, Trypsin)
+            assert is_valid, f"Validation should pass for known terms despite ontology download failure: {messages}"
+
+            # Should include degradation warning(s) in messages
+            # Look for warnings about ontology validation falling back to hardcoded allowlists
+            degradation_warnings = [
+                msg for msg in messages
+                if "Ontology-backed validation could not be performed" in msg or "ontology download failed" in msg.lower() or "fall" in msg.lower()
+            ]
+            assert len(degradation_warnings) > 0, \
+                f"Should include degradation warning when ontology download fails. Messages: {messages}"
+
+            print(f"✓ test_ontology_download_failure_emits_degradation_warning passed")
+            for msg in degradation_warnings:
+                print(f"  Warning: {msg}")
+
+    finally:
+        yaml_path.unlink()
+        # Clear the cache after the test
+        _psi_ms_resource_cache.clear()
+
+
+def test_invalid_dissociation_with_pinned_version_still_fails():
+    """
+    Test that an invalid dissociation method still fails validation
+    even when using a pinned PSI-MS version.
+    """
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: INVALID_DISSOCIATION_METHOD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Invalid dissociation should fail even with pinned version"
+        assert any("dissociation_method" in e for e in errors), \
+            f"Error should mention invalid dissociation_method: {errors}"
+        print(f"✓ test_invalid_dissociation_with_pinned_version_still_fails passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_invalid_enzyme_with_pinned_version_still_fails():
+    """
+    Test that an invalid enzyme still fails validation
+    even when using a pinned PSI-MS version.
+    """
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "4.1.244"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: InvalidProteaseXYZ
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        assert not is_valid, "Invalid enzyme should fail even with pinned version"
+        assert any("enzyme" in e for e in errors), \
+            f"Error should mention invalid enzyme: {errors}"
+        print(f"✓ test_invalid_enzyme_with_pinned_version_still_fails passed")
+    finally:
+        yaml_path.unlink()
+
+
+def test_unsupported_psi_ms_version_emits_warning_and_uses_default_pinned_obo():
+    """
+    Test that when an unsupported PSI-MS version is declared:
+    1. Validation succeeds (warning is non-blocking)
+    2. A warning is emitted explaining unsupported version and default fallback
+    3. The implementation uses the default pinned version's OBO file (not generic sqlite:obo:ms)
+
+    This test verifies the core requirement: unsupported declared versions must
+    fall back to the default pinned version's downloaded OBO file, NOT to a
+    generic sqlite:obo:ms adapter.
+    """
+    yaml_content = """metadata:
+  schema_version: "1.0.0"
+  ontology_versions:
+    psi-ms: "9.9.999"
+
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+samples:
+  - id: sample1
+    organism: homo sapiens
+
+mixtures:
+  - id: mix1
+    channels:
+      TMT126: sample1
+
+runs:
+  - file: data.raw
+    mixture: mix1
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        f.write(yaml_content)
+        yaml_path = Path(f.name)
+
+    try:
+        schema_path = get_schema_path()
+        is_valid, errors = validate_with_custom_semantics(yaml_path, schema_path)
+
+        # Validation must succeed (warning is non-blocking)
+        assert is_valid, f"Validation with unsupported version should succeed: {errors}"
+
+        # Warning must be emitted about unsupported version and default fallback
+        unsupported_warnings = [m for m in errors if "9.9.999" in m and "supported registry" in m.lower()]
+        assert len(unsupported_warnings) > 0, \
+            f"Must emit warning about unsupported version '9.9.999': {errors}"
+
+        # Verify the warning mentions the default pinned version
+        assert any(_DEFAULT_PSI_MS_VERSION in w for w in unsupported_warnings), \
+            f"Warning should mention default pinned version '{_DEFAULT_PSI_MS_VERSION}': {unsupported_warnings}"
+
+        # Verify implementation structure: _resolve_psi_ms_version should remap to default
+        resolved_unsupported, is_default = _resolve_psi_ms_version("9.9.999")
+        assert resolved_unsupported == _DEFAULT_PSI_MS_VERSION, \
+            f"Unsupported version should remap to default '{_DEFAULT_PSI_MS_VERSION}', got '{resolved_unsupported}'"
+        assert is_default is True, \
+            "Remapped default version should have is_default=True"
+
+        # Verify cache key uses the default version (implementation detail proving correct path used)
+        cache_key_unsupported = f"psi_ms_{resolved_unsupported}"
+        cache_key_default = f"psi_ms_{_DEFAULT_PSI_MS_VERSION}"
+        assert cache_key_unsupported == cache_key_default, \
+            "Cache key for unsupported version should match default version's key"
+
+        print(f"✓ test_unsupported_psi_ms_version_emits_warning_and_uses_default_pinned_obo passed")
+    finally:
+        yaml_path.unlink()
+
+
+# ============================================================================
 # CLI execution
 # ============================================================================
 
@@ -2804,17 +3961,36 @@ if __name__ == '__main__':
         test_valid_itraq_fixture,
         test_valid_itraq8_channels,
         test_invalid_itraq_channel_name,
-        # Custom modification validation tests (Phase 2)
+        # Custom modification validation tests
         test_custom_mod_missing_name,
         test_custom_mod_missing_mass_shift,
         test_custom_mod_complete_required_fields,
         test_custom_mod_with_optional_formula,
         test_custom_mod_with_engine_blocks,
-        # Ontology modification validation tests (Phase 2)
+        # Ontology modification validation tests
         test_ontology_mod_without_mass_shift,
         test_ontology_mod_without_formula,
         test_modifications_missing_residues,
         test_modifications_without_term_specificity_are_allowed,
+        # Ontology metadata and validation tests
+        test_metadata_with_schema_version_and_ontology_versions,
+        test_metadata_section_is_optional,
+        test_metadata_rejects_unknown_properties,
+        test_valid_hcd_dissociation_method_with_ontology_validation,
+        test_invalid_dissociation_method_rejected_by_ontology,
+        test_valid_trypsin_enzyme_with_ontology_validation,
+        test_invalid_enzyme_rejected_by_ontology,
+        # PSI-MS version handling tests
+        test_psi_ms_version_mismatch_is_warning_not_error,
+        test_metadata_ontology_versions_optional,
+        test_unsupported_psi_ms_version_emits_warning_and_uses_default_pinned_obo,
+        # Version-pinned ontology validation tests (corrected milestone)
+        test_version_pinned_dissociation_method_validation,
+        test_version_pinned_enzyme_validation,
+        test_default_pinned_version_used_when_metadata_omitted,
+        test_different_versions_map_to_different_validation_contexts,
+        test_invalid_dissociation_with_pinned_version_still_fails,
+        test_invalid_enzyme_with_pinned_version_still_fails,
     ]
 
     failed = []

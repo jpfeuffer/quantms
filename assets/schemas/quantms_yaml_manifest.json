@@ -177,6 +177,25 @@
         }
     },
     "properties": {
+        "metadata": {
+            "title": "Manifest Metadata",
+            "description": "Optional manifest-level metadata including schema version and ontology provenance information.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "schema_version": {
+                    "type": "string",
+                    "description": "Version of the quantms YAML manifest schema that this file was created/validated against."
+                },
+                "ontology_versions": {
+                    "type": "object",
+                    "description": "Map of ontology names to their versions used for validation (e.g., 'psi-ms': '4.1.135').",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "experiment": {
             "title": "Experiment Configuration",
             "description": "Top-level experiment settings including MS acquisition method, enzyme, quantification method, and structured experiment-level modifications.",
