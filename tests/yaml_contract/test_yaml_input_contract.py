@@ -45,7 +45,7 @@ except ImportError:
 
 try:
     from oaklib import get_adapter as _oak_get_adapter
-    from oaklib.datamodels.search_datamodel import SearchConfiguration, SearchProperty
+    from oaklib.datamodels.search import SearchConfiguration, SearchProperty
     OAK_AVAILABLE = True
 except ImportError:
     OAK_AVAILABLE = False
@@ -304,16 +304,17 @@ def _load_psi_ms_resource(version: str | None = None) -> tuple[any, bool]:
 
     try:
         if local_obo_path and local_obo_path.exists():
-            # Load the downloaded OBO file directly with OAK
-            adapter = _oak_get_adapter(str(local_obo_path))
+            # Load the downloaded OBO file directly with OAK via an explicit
+            # local-file scheme instead of relying on path autodetection.
+            adapter = _oak_get_adapter(f"pronto:{local_obo_path}")
             _psi_ms_resource_cache[cache_key] = adapter
             _psi_ms_resource_cache[degraded_cache_key] = False
             return adapter, False
-        else:
-            # Download failed: return (None, degraded=True) to signal fallback with warning
-            _psi_ms_resource_cache[cache_key] = None
-            _psi_ms_resource_cache[degraded_cache_key] = True
-            return None, True
+
+        # Download failed: return (None, degraded=True) to signal fallback with warning
+        _psi_ms_resource_cache[cache_key] = None
+        _psi_ms_resource_cache[degraded_cache_key] = True
+        return None, True
     except Exception:
         _psi_ms_resource_cache[cache_key] = None
         _psi_ms_resource_cache[degraded_cache_key] = True
@@ -338,7 +339,7 @@ def _lookup_term_under_parent(adapter, label: str, parent_curie: str) -> str | N
         # (which is an exact synonym of MS:1000422) are resolved correctly.
         if OAK_AVAILABLE:
             cfg = SearchConfiguration(
-                properties=[SearchProperty.LABEL, SearchProperty.SYNONYM]
+            properties=[SearchProperty.LABEL, SearchProperty.ALIAS]
             )
             hits = adapter.basic_search(label, config=cfg)
         else:
@@ -438,7 +439,7 @@ def _validate_psi_ms_version(data: dict) -> list:
     warnings = []
     metadata = data.get('metadata', {})
     ontology_versions = metadata.get('ontology_versions', {})
-    psi_ms_version = ontology_versions.get('psi_ms') or ontology_versions.get('psi-ms')
+    psi_ms_version = ontology_versions.get('psi-ms') or ontology_versions.get('psi_ms')
 
     if not psi_ms_version:
         # No version declared: warn that default is being used
@@ -1467,7 +1468,7 @@ def _validate_semantic_constraints(data: dict) -> tuple[list, list]:
     # Extract declared PSI-MS version for validation
     metadata = data.get('metadata', {})
     ontology_versions = metadata.get('ontology_versions', {})
-    declared_psi_ms_version = ontology_versions.get('psi_ms') or ontology_versions.get('psi-ms')
+    declared_psi_ms_version = ontology_versions.get('psi-ms') or ontology_versions.get('psi_ms')
 
     modification_sources = _get_modification_sources(data)
     if len(modification_sources) > 1:
@@ -3984,6 +3985,7 @@ if __name__ == '__main__':
         test_psi_ms_version_mismatch_is_warning_not_error,
         test_metadata_ontology_versions_optional,
         test_unsupported_psi_ms_version_emits_warning_and_uses_default_pinned_obo,
+        test_ontology_download_failure_emits_degradation_warning,
         # Version-pinned ontology validation tests (corrected milestone)
         test_version_pinned_dissociation_method_validation,
         test_version_pinned_enzyme_validation,

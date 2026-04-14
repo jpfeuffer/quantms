@@ -20,6 +20,7 @@ null/
 
 # Claude Code
 .claude/
+.tmp/
 plans/
 
 
