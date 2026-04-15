@@ -8,28 +8,11 @@
 
 ## Running the pipeline
 
-**Important:** The quantms YAML manifest format is the **approved specification for contract validation** (as defined in `assets/schemas/quantms_yaml_manifest.json`). However, **runtime consumption of YAML manifests is not yet implemented**. The current pipeline accepts **SDRF format** for actual data processing.
+The quantms YAML manifest format is the **official, specification-driven contract** for quantms experiments (defined in `assets/schemas/quantms_yaml_manifest.json`). The pipeline accepts YAML manifests (`.yml` or `.yaml`) as input, which define all aspects of your experimental design.
 
-This means:
+### YAML Input Structure
 
-- ✅ The YAML schema is the **official specification** for quantms experiments
-- ❌ The pipeline does **NOT yet** read and process `.yml` files end-to-end at runtime
-- ✅ You can use the schema to **prepare and validate** YAML manifests in advance
-- ✅ Current runtime input remains **SDRF format** (`.sdrf`, `.tsv`, `.csv`)
-
-### Recommended: Prepare YAML Manifests (Current Specification)
-
-Use quantms YAML format to define your entire experiment structure. This specification is stable and ready for adoption:
-
-```bash
-# Create and validate your experiment in YAML format
-# (Schema validation tools available - see below)
-experiment.yml
-```
-
-The YAML file should define the following top-level sections:
-
-#### YAML Input Structure (Current Specification)
+The YAML input format defines your experiment structure with the following top-level sections:
 
 **`experiment`**: Global experiment settings
 
@@ -41,7 +24,7 @@ The YAML file should define the following top-level sections:
 **`samples`**: Biological samples (one entry per unique biological unit)
 
 - Each sample has a unique `id` and explicit metadata fields like `organism`, `condition`, and `biological_replicate`
-- SDRF-derived but less common sample fields should go under `characteristics` and `factor_values`
+- Additional sample metadata fields should go under `characteristics` and `factor_values`
 - Only truly user-specific fields should go under `additional_metadata`
 - The validator rejects overlaps between `additional_metadata` and standard sample metadata keys
 
@@ -185,15 +168,9 @@ Or use the included test suite:
 uv run --with jsonschema --with pyyaml python tests/yaml_contract/test_yaml_input_contract.py
 ```
 
-#### Timeline and Roadmap
+#### YAML Specification
 
-- **Current specification:** Schema definition and validation toolkit available. YAML manifests can be prepared and validated in advance.
-- **Future release:** Runtime normalizer/parser implementation (not yet scheduled).
-- **Runtime integration not yet implemented:** Full YAML manifest consumption at pipeline runtime.
-
-Until runtime implementation is complete, **use SDRF format for actual pipeline execution** (see below).
-
-### Current Runtime: SDRF Format
+The YAML manifest contract is stable and fully specification-driven. Full documentation and schema validation examples are available in the pipeline and at [quantms.readthedocs.io](https://quantms.readthedocs.io/).
 
 ### Supported file formats
 
@@ -210,9 +187,6 @@ Compressed variants are supported for `.raw`, `.mzML`, and `.d` formats:
 - `.tar` (tar archive)
 - `.tar.gz` or `.tgz` (tar gzip compressed)
 - `.zip` (zip compressed)
-
-In the respective "comment[file uri]" or "Spectra_Filepath" columns, the mass spectra files to be processed have to be listed. URIs are possible,
-and the root folder as well as the file endings can be changed in the options in case of previously downloaded, moved or converted experiments.
 
 This will launch the pipeline with the `docker` configuration profile. See below for more information about profiles.
 
