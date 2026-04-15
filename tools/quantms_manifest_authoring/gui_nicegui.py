@@ -17,14 +17,14 @@ quantms YAML manifests with real-time validation feedback.
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import List
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from nicegui import ui, app as nicegui_app
-import json
+from nicegui import ui
 from manifest_core import ManifestState, ChannelBuilder, validate_manifest
+from file_picker import MsFilePickerDialog
 
 
 class ManifestEditor:
@@ -58,16 +58,16 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
 
         # Create tabs and tab panels with proper structure
         with ui.tabs().classes("w-full") as tabs:
-            # Add tab labels first
+            # Start the workflow with raw/mzML files.
+            run_tab = ui.tab("Runs")
             exp_tab = ui.tab("Experiment")
             smp_tab = ui.tab("Samples")
             mix_tab = ui.tab("Mixtures")
-            run_tab = ui.tab("Runs")
 
         # Create tab panel content - store references for refresh
         tab_contents = {}
 
-        with ui.tab_panels(tabs, value="Experiment").classes("w-full"):
+        with ui.tab_panels(tabs, value="Runs").classes("w-full"):
             # Experiment tab panel
             with ui.tab_panel("Experiment"):
                 with ui.card().classes("w-full"):
@@ -98,7 +98,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
 
                     def update_experiment():
                         editor.manifest.set_experiment(
-                            acquisition_method=acq_method.value,
+                            acquisition_method=acq_method.value or "DDA",
                             enzyme=enzyme.value,
                             quantification_method=quant_method.value or None,
                             dissociation_method=dissociation.value or None,
@@ -202,7 +202,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                         channel_selects.clear()
                         channels_container.clear()
                         try:
-                            builder = ChannelBuilder(plex_type.value)
+                            builder = ChannelBuilder(plex_type.value or "TMT6")
                             channels = builder.get_available_channels()
 
                             if not editor.manifest.samples:
@@ -321,6 +321,31 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                         "Add Run",
                         on_click=add_run,
                     ).classes("w-full mt-4")
+
+                    async def pick_local_files():
+                        selected_files = await MsFilePickerDialog(multiple=True)
+                        if not selected_files:
+                            return
+                        added_files = 0
+                        for selected_file in selected_files:
+                            try:
+                                editor.manifest.add_run(file=selected_file)
+                                added_files += 1
+                            except Exception as e:
+                                ui.notify(f"Error adding {selected_file}: {e}", type="negative")
+                        if added_files:
+                            ui.notify(f"Added {added_files} local file(s)")
+                            refresh_entire_ui()
+
+                    ui.button(
+                        "Choose Local Files",
+                        on_click=pick_local_files,
+                        icon="folder",
+                    ).classes("w-full mt-2")
+
+                    ui.label(
+                        "Supported local formats: .raw, .mzML, .mzXML, .mgf, .ms2"
+                    ).classes("text-xs text-gray-500 mt-2")
 
                     # Display current runs
                     with ui.expansion(

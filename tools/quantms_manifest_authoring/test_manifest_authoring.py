@@ -1098,5 +1098,292 @@ class TestOntologyOptionProvider:
             pytest.skip(f"ontology_provider module not yet implemented: {e}")
 
 
+class TestRunSampleSerialization:
+    """Tests for run sample field serialization and deserialization (Phase 1)."""
+
+    def test_add_run_with_sample_for_lfq(self):
+        """Test adding a run with a sample for LFQ workflow."""
+        manifest = ManifestState()
+        manifest.add_sample(id="s1", organism="homo sapiens")
+        manifest.add_run(
+            file="file.raw",
+            sample="s1",
+            fraction=1,
+        )
+        assert len(manifest.runs) == 1
+        assert manifest.runs[0].file == "file.raw"
+        assert manifest.runs[0].sample == "s1"
+
+    def test_run_serializes_sample_field_to_dict(self):
+        """Test that run sample field is serialized in to_dict."""
+        manifest = ManifestState()
+        manifest.add_sample(id="s1", organism="homo sapiens")
+        manifest.add_run(
+            file="file.raw",
+            sample="s1",
+            fraction=1,
+        )
+        result = manifest.to_dict()
+        assert len(result["runs"]) == 1
+        assert result["runs"][0]["sample"] == "s1"
+
+    def test_run_with_sample_serializes_to_yaml(self):
+        """Test that run with sample serializes correctly to YAML."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1", organism="homo sapiens")
+        manifest.add_run(
+            file="file.raw",
+            sample="s1",
+            fraction=1,
+        )
+        yaml_str = manifest.to_yaml()
+        assert "sample: s1" in yaml_str or "sample:\n        s1" in yaml_str.replace(" ", "")
+
+    def test_load_run_with_sample_from_file(self):
+        """Test loading a manifest with run sample field from YAML file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_data = {
+                "experiment": {
+                    "acquisition_method": "DDA",
+                    "enzyme": "Trypsin",
+                },
+                "samples": [
+                    {
+                        "id": "s1",
+                        "organism": "homo sapiens",
+                    }
+                ],
+                "mixtures": [],
+                "runs": [
+                    {
+                        "file": "file.raw",
+                        "sample": "s1",
+                        "fraction": 1,
+                    }
+                ],
+            }
+
+            output_file = Path(tmpdir) / "test_sample.yml"
+            with open(output_file, "w") as f:
+                yaml.safe_dump(test_data, f)
+
+            manifest = ManifestState.load_from_file(output_file)
+            assert len(manifest.runs) == 1
+            assert manifest.runs[0].sample == "s1"
+
+    def test_run_without_sample_still_works(self):
+        """Test that runs without sample field still work (backward compatibility)."""
+        manifest = ManifestState()
+        manifest.add_run(
+            file="file.raw",
+            mixture="mix_1",
+            fraction=1,
+        )
+        assert len(manifest.runs) == 1
+        assert manifest.runs[0].sample is None
+        assert manifest.runs[0].mixture == "mix_1"
+
+    def test_run_with_both_sample_and_mixture_allowed(self):
+        """Test that a run can have both sample and mixture (though semantically unusual)."""
+        manifest = ManifestState()
+        manifest.add_sample(id="s1")
+        manifest.add_mixture(id="mix_1", channels={"TMT126": "s1"})
+        manifest.add_run(
+            file="file.raw",
+            sample="s1",
+            mixture="mix_1",
+            fraction=1,
+        )
+        assert manifest.runs[0].sample == "s1"
+        assert manifest.runs[0].mixture == "mix_1"
+
+
+class TestRunMutationAPIs:
+    """Tests for run mutation APIs (update, remove) (Phase 1)."""
+
+    def test_update_run_property(self):
+        """Test updating a run property."""
+        manifest = ManifestState()
+        manifest.add_run(file="file.raw", fraction=1)
+        manifest.update_run(0, fraction=2)
+        assert manifest.runs[0].fraction == 2
+
+    def test_update_run_sample(self):
+        """Test updating a run's sample assignment."""
+        manifest = ManifestState()
+        manifest.add_sample(id="s1")
+        manifest.add_sample(id="s2")
+        manifest.add_run(file="file.raw", sample="s1")
+        manifest.update_run(0, sample="s2")
+        assert manifest.runs[0].sample == "s2"
+
+    def test_update_run_multiple_fields(self):
+        """Test updating multiple run properties at once."""
+        manifest = ManifestState()
+        manifest.add_run(file="file.raw", fraction=1, instrument="Orbitrap")
+        manifest.update_run(0, fraction=3, instrument="Lumos")
+        assert manifest.runs[0].fraction == 3
+        assert manifest.runs[0].instrument == "Lumos"
+
+    def test_remove_run_by_index(self):
+        """Test removing a run by index."""
+        manifest = ManifestState()
+        manifest.add_run(file="file1.raw")
+        manifest.add_run(file="file2.raw")
+        manifest.add_run(file="file3.raw")
+        assert len(manifest.runs) == 3
+        manifest.remove_run(1)
+        assert len(manifest.runs) == 2
+        assert manifest.runs[0].file == "file1.raw"
+        assert manifest.runs[1].file == "file3.raw"
+
+    def test_remove_run_invalid_index(self):
+        """Test that removing a run with invalid index raises error."""
+        manifest = ManifestState()
+        manifest.add_run(file="file.raw")
+        with pytest.raises(IndexError):
+            manifest.remove_run(5)
+
+    def test_update_run_invalid_index(self):
+        """Test that updating a run with invalid index raises error."""
+        manifest = ManifestState()
+        manifest.add_run(file="file.raw")
+        with pytest.raises(IndexError):
+            manifest.update_run(5, fraction=2)
+
+
+class TestValidationWithSampleAndMixtureReferences:
+    """Tests for fallback semantic validation of run sample/mixture references (Phase 1)."""
+
+    def test_validate_invalid_run_sample_reference(self):
+        """Test that validation catches invalid run sample reference."""
+        from manifest_core import validate_manifest
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1")
+        manifest.add_run(file="file.raw", sample="invalid_sample")
+
+        errors = validate_manifest(manifest)
+        assert any(
+            "sample" in e.get("message", "").lower() and "invalid_sample" in e.get("message", "")
+            for e in errors
+        )
+
+    def test_validate_invalid_run_mixture_reference(self):
+        """Test that validation catches invalid run mixture reference."""
+        from manifest_core import validate_manifest
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1")
+        manifest.add_run(file="file.raw", mixture="invalid_mixture")
+
+        errors = validate_manifest(manifest)
+        assert any(
+            "mixture" in e.get("message", "").lower() and "invalid_mixture" in e.get("message", "")
+            for e in errors
+        )
+
+    def test_validate_valid_run_sample_reference(self):
+        """Test that validation passes for valid run sample reference."""
+        from manifest_core import validate_manifest
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1", organism="homo sapiens")
+        manifest.add_run(file="file.raw", sample="s1", fraction=1)
+
+        errors = validate_manifest(manifest)
+        # Should not have errors about invalid sample reference
+        assert not any(
+            "sample" in e.get("message", "").lower() and "invalid" in e.get("message", "").lower()
+            for e in errors
+        )
+
+    def test_validate_run_without_sample_or_mixture_allowed(self):
+        """Test that runs without sample or mixture are allowed."""
+        from manifest_core import validate_manifest
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1", organism="homo sapiens")
+        manifest.add_run(file="file.raw", fraction=1)  # No sample or mixture
+
+        errors = validate_manifest(manifest)
+        # Should not complain about missing sample/mixture
+        assert not any(
+            "file.raw" in e.get("message", "") and "sample" in e.get("message", "").lower()
+            for e in errors
+        )
+
+
+class TestWizardStateManifestCompatibility:
+    """Tests for wizard state to manifest state conversion compatibility (Phase 1)."""
+
+    def test_wizard_add_run_with_sample_converts_to_manifest(self):
+        """Test that wizard's add_run with sample converts correctly to manifest."""
+        from gui_wizard_state import WizardState
+        wizard = WizardState()
+        wizard.add_run(file="file.raw", sample="s1", fraction=1)
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+
+        manifest = wizard.to_manifest_state()
+        assert len(manifest.runs) == 1
+        assert manifest.runs[0].sample == "s1"
+
+    def test_wizard_assign_run_sample_converts_to_manifest(self):
+        """Test that wizard's assign_run sample conversion works correctly."""
+        from gui_wizard_state import WizardState
+        wizard = WizardState()
+        wizard.add_run(file="file.raw")
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.assign_run(0, sample="s1")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+
+        manifest = wizard.to_manifest_state()
+        assert len(manifest.runs) == 1
+        assert manifest.runs[0].sample == "s1"
+
+    def test_wizard_state_roundtrip_with_sample(self):
+        """Test wizard state to manifest and back maintains sample."""
+        from gui_wizard_state import WizardState
+        wizard = WizardState()
+        wizard.add_run(file="file.raw", sample="s1")
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+
+        manifest = wizard.to_manifest_state()
+
+        # Verify manifest has the sample
+        assert manifest.runs[0].sample == "s1"
+
+        # Verify serialization includes sample
+        manifest_dict = manifest.to_dict()
+        assert manifest_dict["runs"][0]["sample"] == "s1"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

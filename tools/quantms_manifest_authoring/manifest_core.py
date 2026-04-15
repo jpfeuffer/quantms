@@ -114,6 +114,7 @@ class Mixture:
 class Run:
     """Raw data run definition."""
     file: str
+    sample: Optional[str] = None
     mixture: Optional[str] = None
     fraction: Optional[int] = None
     instrument: Optional[str] = None
@@ -123,8 +124,11 @@ class Run:
         """Convert to dictionary, excluding None values."""
         result = {
             "file": self.file,
-            "mixture": self.mixture,
         }
+        if self.sample:
+            result["sample"] = self.sample
+        if self.mixture:
+            result["mixture"] = self.mixture
         if self.fraction:
             result["fraction"] = self.fraction
         if self.instrument:
@@ -272,6 +276,12 @@ def validate_manifest(manifest: "ManifestState") -> List[Dict[str, Any]]:
     mixture_ids = {m.id for m in manifest.mixtures}
 
     for idx, run in enumerate(manifest.runs):
+        if run.sample and run.sample not in sample_ids:
+            issues.append({
+                "level": "error",
+                "message": f"Run '{run.file}' references unknown sample '{run.sample}'",
+                "field": f"runs[{idx}].sample",
+            })
         if run.mixture and run.mixture not in mixture_ids:
             issues.append({
                 "level": "error",
@@ -381,6 +391,7 @@ class ManifestState:
     def add_run(
         self,
         file: str,
+        sample: Optional[str] = None,
         mixture: Optional[str] = None,
         fraction: Optional[int] = None,
         instrument: Optional[str] = None,
@@ -389,6 +400,7 @@ class ManifestState:
         """Add a raw data run to the manifest."""
         run = Run(
             file=file,
+            sample=sample,
             mixture=mixture,
             fraction=fraction,
             instrument=instrument,
@@ -421,6 +433,105 @@ class ManifestState:
             **kwargs,
         )
         self.modifications.append(modification)
+
+    def update_run(self, run_index: int, **kwargs) -> None:
+        """
+        Update properties of a run in the manifest.
+
+        Args:
+            run_index: Index of the run to update
+            **kwargs: Properties to update (file, sample, mixture, fraction, instrument, etc.)
+
+        Raises:
+            IndexError: If run_index is out of range
+        """
+        if run_index < 0 or run_index >= len(self.runs):
+            raise IndexError(f"Run index {run_index} out of range")
+
+        run = self.runs[run_index]
+        for key, value in kwargs.items():
+            if hasattr(run, key):
+                setattr(run, key, value)
+
+    def remove_run(self, run_index: int) -> None:
+        """
+        Remove a run from the manifest.
+
+        Args:
+            run_index: Index of the run to remove
+
+        Raises:
+            IndexError: If run_index is out of range
+        """
+        if run_index < 0 or run_index >= len(self.runs):
+            raise IndexError(f"Run index {run_index} out of range")
+        del self.runs[run_index]
+
+    def update_sample(self, sample_index: int, **kwargs) -> None:
+        """
+        Update properties of a sample in the manifest.
+
+        Args:
+            sample_index: Index of the sample to update
+            **kwargs: Properties to update (organism, organism_part, condition, etc.)
+
+        Raises:
+            IndexError: If sample_index is out of range
+        """
+        if sample_index < 0 or sample_index >= len(self.samples):
+            raise IndexError(f"Sample index {sample_index} out of range")
+
+        sample = self.samples[sample_index]
+        for key, value in kwargs.items():
+            if hasattr(sample, key):
+                setattr(sample, key, value)
+
+    def remove_sample(self, sample_index: int) -> None:
+        """
+        Remove a sample from the manifest.
+
+        Args:
+            sample_index: Index of the sample to remove
+
+        Raises:
+            IndexError: If sample_index is out of range
+        """
+        if sample_index < 0 or sample_index >= len(self.samples):
+            raise IndexError(f"Sample index {sample_index} out of range")
+        del self.samples[sample_index]
+
+    def update_mixture(self, mixture_index: int, **kwargs) -> None:
+        """
+        Update properties of a mixture in the manifest.
+
+        Args:
+            mixture_index: Index of the mixture to update
+            **kwargs: Properties to update (channels, description, etc.)
+
+        Raises:
+            IndexError: If mixture_index is out of range
+        """
+        if mixture_index < 0 or mixture_index >= len(self.mixtures):
+            raise IndexError(f"Mixture index {mixture_index} out of range")
+
+        mixture = self.mixtures[mixture_index]
+        for key, value in kwargs.items():
+            if hasattr(mixture, key):
+                setattr(mixture, key, value)
+
+    def remove_mixture(self, mixture_index: int) -> None:
+        """
+        Remove a mixture from the manifest.
+
+        Args:
+            mixture_index: Index of the mixture to remove
+
+        Raises:
+            IndexError: If mixture_index is out of range
+        """
+        if mixture_index < 0 or mixture_index >= len(self.mixtures):
+            raise IndexError(f"Mixture index {mixture_index} out of range")
+        del self.mixtures[mixture_index]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert manifest state to dictionary suitable for YAML serialization."""
@@ -522,6 +633,7 @@ class ManifestState:
             for run_data in data["runs"]:
                 manifest.add_run(
                     file=run_data.get("file"),
+                    sample=run_data.get("sample"),
                     mixture=run_data.get("mixture"),
                     fraction=run_data.get("fraction"),
                     instrument=run_data.get("instrument"),
