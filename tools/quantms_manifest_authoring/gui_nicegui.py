@@ -59,17 +59,17 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
         # Create tabs and tab panels with proper structure
         with ui.tabs().classes("w-full") as tabs:
             # Add tab labels first
-            exp_tab = tabs.add_tab("Experiment")
-            smp_tab = tabs.add_tab("Samples")
-            mix_tab = tabs.add_tab("Mixtures")
-            run_tab = tabs.add_tab("Runs")
+            exp_tab = ui.tab("Experiment")
+            smp_tab = ui.tab("Samples")
+            mix_tab = ui.tab("Mixtures")
+            run_tab = ui.tab("Runs")
 
         # Create tab panel content - store references for refresh
         tab_contents = {}
 
-        with ui.tab_panels(tabs, value=exp_tab.name).classes("w-full"):
+        with ui.tab_panels(tabs, value="Experiment").classes("w-full"):
             # Experiment tab panel
-            with ui.tab_panel(exp_tab.name):
+            with ui.tab_panel("Experiment"):
                 with ui.card().classes("w-full"):
                     acq_method = ui.select(
                         options={"DDA": "DDA", "DIA": "DIA"},
@@ -111,7 +111,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                     ).classes("w-full mt-4")
 
             # Samples tab panel
-            with ui.tab_panel(smp_tab.name):
+            with ui.tab_panel("Samples"):
                 with ui.card().classes("w-full"):
                     sample_id = ui.input(
                         label="Sample ID",
@@ -131,7 +131,6 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                     )
                     bio_rep = ui.input(
                         label="Biological Replicate",
-                        type="number",
                         value="1",
                     )
 
@@ -183,7 +182,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                         tab_contents['update_samples_func'] = update_samples_list
 
             # Mixtures tab panel
-            with ui.tab_panel(mix_tab.name):
+            with ui.tab_panel("Mixtures"):
                 with ui.card().classes("w-full"):
                     mixture_id = ui.input(
                         label="Mixture ID",
@@ -193,6 +192,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                         options={p: p for p in ChannelBuilder.get_supported_plex_types()},
                         value="TMT6",
                         label="Plex Type",
+                        on_change=lambda _: update_channels_ui(),
                     )
                     channels_container = ui.column().classes("w-full mt-4")
                     # Store references to channel select widgets so we can read their values
@@ -228,7 +228,6 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                             with channels_container:
                                 ui.label(f"Error: {e}")
 
-                    plex_type.on_change(lambda: update_channels_ui())
                     update_channels_ui()
 
                     def add_mixture():
@@ -285,7 +284,7 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                         tab_contents['update_mixtures_func'] = update_mixtures_list
 
             # Runs tab panel
-            with ui.tab_panel(run_tab.name):
+            with ui.tab_panel("Runs"):
                 with ui.card().classes("w-full"):
                     run_file = ui.input(
                         label="File Path",
@@ -297,7 +296,6 @@ def create_manifest_editor_ui(editor: ManifestEditor) -> None:
                     )
                     run_fraction = ui.input(
                         label="Fraction",
-                        type="number",
                         value="1",
                     )
 
@@ -439,8 +437,8 @@ def run_gui(port: int = 8080, host: str = "127.0.0.1") -> None:
     def main_page():
         create_manifest_editor_ui(editor)
 
-    ui.run(host=host, port=port, title="quantms Manifest Authoring")
+    ui.run(host=host, port=port, title="quantms Manifest Authoring", reload=False)
 
 
-if __name__ == "__main__":
+if __name__ in {"__main__", "__mp_main__"}:
     run_gui()

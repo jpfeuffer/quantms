@@ -1,12 +1,14 @@
 # quantms YAML Manifest Authoring Tool
 
 Python application with two interfaces for authoring quantms YAML manifests:
+
 1. **TUI** (Terminal User Interface) - Interactive Textual-based terminal application
 2. **GUI** (Web UI) - Interactive NiceGUI-based web application
 
 ## Overview
 
 The quantms pipeline requires configuration via YAML manifests that define:
+
 - **Experiment**: Acquisition method, enzyme, quantification approach, dissociation method
 - **Samples**: Biological samples with metadata (organism, tissue, condition, replicates)
 - **Mixtures**: Multiplex groupings (TMT, iTRAQ, SILAC) mapping channels to samples
@@ -65,6 +67,7 @@ python tools/quantms_manifest_authoring/cli.py --help
 **File**: `tui_textual.py`
 
 A full-featured terminal interface using the Textual framework:
+
 - Tab-based navigation (Experiment, Samples, Mixtures, Runs)
 - Form inputs for each section
 - Real-time YAML preview
@@ -72,6 +75,7 @@ A full-featured terminal interface using the Textual framework:
 - File save/load functionality
 
 **Keyboard shortcuts**:
+
 - `Ctrl+S`: Save manifest to file
 - `Ctrl+L`: Load manifest from file
 - `Ctrl+Q`: Quit application
@@ -84,6 +88,7 @@ A full-featured terminal interface using the Textual framework:
 **File**: `gui_nicegui.py`
 
 A modern web interface accessible via browser:
+
 - Tabbed interface (Experiment, Samples, Mixtures, Runs)
 - Interactive forms with validation
 - Real-time YAML preview
@@ -92,12 +97,14 @@ A modern web interface accessible via browser:
 - Expandable sections showing current state
 
 **Startup**:
+
 ```bash
 uv run tools/quantms_manifest_authoring/gui_nicegui.py
 # Opens browser to http://127.0.0.1:8080
 ```
 
 **Port customization**:
+
 ```bash
 python -c "
 import sys
@@ -185,6 +192,7 @@ loaded = ManifestState.load_from_file("my_manifest.yml")
 The ChannelBuilder supports the following plex types:
 
 ### TMT (Tandem Mass Tags)
+
 - **TMT2**: 2 channels (126, 127C)
 - **TMT6**: 6 channels
 - **TMT10**: 10 channels
@@ -193,22 +201,26 @@ The ChannelBuilder supports the following plex types:
 - **TMT18**: 18 channels
 
 ### iTRAQ (Isobaric Tags for Relative and Absolute Quantification)
+
 - **iTRAQ4**: 4 channels (113-116)
 - **iTRAQ8**: 8 channels (113-121)
 
 ### SILAC (Stable Isotope Labeling by Amino Acids in Cell Culture)
+
 - **SILAC_2plex**: Light / Heavy
 - **SILAC_3plex**: Light / Medium / Heavy
 
 ## Validation Feedback
 
 Both interfaces integrate with the `validate_manifest()` function to provide real-time feedback on:
+
 - Missing required sections (experiment, samples, runs)
 - Invalid field values
 - Missing ontology information
 - Reference integrity (mixture IDs, sample IDs)
 
 Validation issues are categorized as:
+
 - **Error**: Critical - must be fixed before saving
 - **Warning**: Informational - encourages best practices
 
@@ -228,6 +240,7 @@ python -m pytest tools/quantms_manifest_authoring/test_manifest_authoring.py --c
 ```
 
 **Test coverage**:
+
 - Manifest state creation and manipulation
 - YAML serialization/deserialization
 - File I/O operations
@@ -245,6 +258,7 @@ Once a valid manifest is created and saved:
 3. Run pipeline: `nextflow run . -params-file manifest.yml`
 
 The pipeline will consume the YAML manifest for:
+
 - Sample metadata and grouping
 - Multiplex channel assignments
 - Run-to-fraction mapping
@@ -255,6 +269,7 @@ The pipeline will consume the YAML manifest for:
 ### State Management
 
 `ManifestState` is the single source of truth for manifest content:
+
 - Holds experiment, samples, mixtures, runs, modifications
 - Provides high-level methods (`add_sample`, `add_mixture`, etc.)
 - Serializes to/from YAML via standard `to_dict()` and `to_yaml()` methods
@@ -263,6 +278,7 @@ The pipeline will consume the YAML manifest for:
 ### Validation
 
 `validate_manifest()` performs semantic validation:
+
 - Checks presence of required sections
 - Validates field relationships (mixture references, sample IDs)
 - Returns structured list of issues with severity levels
@@ -271,6 +287,7 @@ The pipeline will consume the YAML manifest for:
 ### UI Independence
 
 Core module is UI-agnostic:
+
 - TUI and GUI both use the same `ManifestState` class
 - Validation is shared
 - Both save/load to same YAML format
@@ -279,6 +296,7 @@ Core module is UI-agnostic:
 ## Phase 4 Scope
 
 This implementation provides:
+
 - ✅ Shared Python module for manifest state/serialization/validation
 - ✅ Two entrypoints: TUI (Textual) and GUI (NiceGUI)
 - ✅ Support for core sections: experiment, samples, mixtures, runs, modifications
@@ -290,6 +308,7 @@ This implementation provides:
 - ✅ Comprehensive test suite (28 passing tests)
 
 Not included (future phases):
+
 - YAML → runtime normalizer (phase 5)
 - Nextflow integration (phase 6)
 - SDRF removal (phase 7)
@@ -297,6 +316,7 @@ Not included (future phases):
 ## Future Enhancements
 
 Potential improvements for future phases:
+
 1. Modification profile editor UI for advanced users
 2. Channel-to-sample assignment UI in mixtures section
 3. Template/preset profiles for common experiments

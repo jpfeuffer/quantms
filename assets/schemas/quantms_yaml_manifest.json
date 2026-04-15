@@ -366,17 +366,21 @@
         },
         "runs": {
             "title": "Raw Data Runs",
-            "description": "List of raw spectrometry files (runs) with their metadata and mixture / fraction assignments.",
+            "description": "List of raw spectrometry files (runs) with their metadata and explicit sample or mixture links.",
             "type": "array",
             "minItems": 1,
             "items": {
                 "type": "object",
-                "required": ["file", "mixture"],
+                "required": ["file"],
                 "additionalProperties": false,
                 "properties": {
                     "file": {
                         "type": "string",
                         "description": "Path or URI to the raw spectrometry file."
+                    },
+                    "sample": {
+                        "type": "string",
+                        "description": "Explicit sample ID for LFQ or non-multiplexed runs. References a sample from the samples array."
                     },
                     "fraction": {
                         "type": "integer",
@@ -384,15 +388,8 @@
                         "description": "Fraction number for multi-fraction runs."
                     },
                     "mixture": {
-                        "oneOf": [
-                            {
-                                "type": "string"
-                            },
-                            {
-                                "type": "null"
-                            }
-                        ],
-                        "description": "Mixture ID this run belongs to. Null for LFQ runs."
+                        "type": "string",
+                        "description": "Explicit mixture ID for multiplexed runs (TMT, iTRAQ, SILAC). References a mixture from the mixtures array."
                     },
                     "instrument": {
                         "type": "string",
@@ -408,7 +405,26 @@
                         "type": "string",
                         "description": "Deprecated alias for modification_profile."
                     }
-                }
+                },
+                "allOf": [
+                    {
+                        "oneOf": [
+                            {
+                                "required": ["sample"],
+                                "not": {
+                                    "required": ["mixture"]
+                                }
+                            },
+                            {
+                                "required": ["mixture"],
+                                "not": {
+                                    "required": ["sample"]
+                                }
+                            }
+                        ],
+                        "errorMessage": "Each run must have either 'sample' (for LFQ) or 'mixture' (for multiplexed), but not both."
+                    }
+                ]
             }
         },
         "modifications": {

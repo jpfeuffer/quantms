@@ -16,10 +16,6 @@ ontology-backed semantic validation for dissociation methods and enzymes using O
 The schema defines the contract for experiment metadata, samples, mixtures, runs,
 and named modification profiles.
 
-IMPORTANT: This test validates the current, approved schema contract.
-Runtime consumption of YAML manifests is not yet implemented.
-The current pipeline still accepts SDRF format for data processing.
-
 Tests use jsonschema + PyYAML for standards-based validation, with optional OAK
 integration for ontology-based semantic validation when available.
 """
@@ -2332,14 +2328,14 @@ mixtures: []
 
 runs:
   - file: s3://bucket/control_1.raw
+    sample: sample_control_1
     fraction: 1
-    mixture: null
   - file: s3://bucket/treated_1.raw
+    sample: sample_treated_1
     fraction: 1
-    mixture: null
   - file: s3://bucket/treated_2.raw
+    sample: sample_treated_2
     fraction: 1
-    mixture: null
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2416,8 +2412,8 @@ mixtures: []
 
 runs:
   - file: data.raw
+    sample: sample1
     fraction: 1
-    mixture: null
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -2540,11 +2536,11 @@ mixtures: []
 
 runs:
   - file: data1.raw
+    sample: sample1
     fraction: 1
-    mixture: null
   - file: data2.raw
+    sample: sample2
     fraction: 1
-    mixture: null
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:

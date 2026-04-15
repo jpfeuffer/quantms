@@ -67,16 +67,17 @@ mixtures:
       iTRAQ119: treated_rep2
       iTRAQ121: control_rep2
 
-# Runs: raw spectrometry files with their fraction and mixture assignment
+# Runs: raw spectrometry files with explicit mixture references
+# Each multiplexed run explicitly links to a mixture
 runs:
   - file: s3://bucket/experiment/itraq8_batch1_fraction_1.raw
-    fraction: 1
     mixture: itraq8_batch1
+    fraction: 1
     instrument: Q_TOF
 
   - file: s3://bucket/experiment/itraq8_batch1_fraction_2.raw
-    fraction: 2
     mixture: itraq8_batch1
+    fraction: 2
     instrument: Q_TOF
 
 modifications:

@@ -37,27 +37,27 @@ samples:
 # No mixtures for DIA LFQ (empty array) - each sample measured independently
 mixtures: []
 
-# Runs: raw spectrometry files with their fraction assignment
-# Each run belongs to exactly one sample (no multiplexing)
+# Runs: raw spectrometry files with explicit sample references
+# Each DIA run explicitly links to one sample
 runs:
   - file: s3://bucket/experiment/control_rep1_fraction_1.raw
+    sample: control_rep1
     fraction: 1
-    mixture: null
     instrument: Orbitrap_Fusion
 
   - file: s3://bucket/experiment/control_rep1_fraction_2.raw
+    sample: control_rep1
     fraction: 2
-    mixture: null
     instrument: Orbitrap_Fusion
 
   - file: s3://bucket/experiment/treated_rep1_fraction_1.raw
+    sample: treated_rep1
     fraction: 1
-    mixture: null
     instrument: Orbitrap_Fusion
 
   - file: s3://bucket/experiment/treated_rep1_fraction_2.raw
+    sample: treated_rep1
     fraction: 2
-    mixture: null
     instrument: Orbitrap_Fusion
 
 modifications:

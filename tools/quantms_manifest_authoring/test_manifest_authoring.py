@@ -823,5 +823,280 @@ class TestModificationValidation:
         assert any("invalid kind" in msg.lower() for msg in error_msgs)
 
 
+class TestDissociationMethodExplicit:
+    """Tests for explicit dissociation method behavior - Phase 1."""
+
+    def test_dissociation_method_is_none_when_not_set(self):
+        """Test that dissociation_method starts as None."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        assert manifest.experiment.dissociation_method is None
+
+    def test_dissociation_method_is_none_for_dia_without_explicit_setting(self):
+        """Test that DIA manifests don't infer dissociation_method."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DIA",
+            enzyme="Trypsin",
+            quantification_method="LFQ",
+        )
+        # Should remain None - no inference
+        assert manifest.experiment.dissociation_method is None
+
+    def test_dissociation_method_preserved_when_explicitly_set(self):
+        """Test that explicitly set dissociation_method is preserved."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+        )
+        assert manifest.experiment.dissociation_method == "HCD"
+
+    def test_dissociation_method_preserved_when_loaded_from_yaml(self):
+        """Test that dissociation_method loaded from YAML is not inferred, just preserved."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_data = {
+                "experiment": {
+                    "acquisition_method": "DDA",
+                    "enzyme": "Trypsin",
+                    "dissociation_method": "ETD",
+                },
+                "samples": [{"id": "s1"}],
+                "mixtures": [],
+                "runs": [{"file": "file.raw"}],
+            }
+
+            output_file = Path(tmpdir) / "test.yml"
+            with open(output_file, "w") as f:
+                yaml.safe_dump(test_data, f)
+
+            manifest = ManifestState.load_from_file(output_file)
+            # Should be exactly what was in the YAML, not inferred
+            assert manifest.experiment.dissociation_method == "ETD"
+
+    def test_dissociation_method_serializes_when_set(self):
+        """Test that dissociation_method appears in YAML when explicitly set."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="CID",
+        )
+        manifest.add_sample(id="s1")
+        manifest.add_run(file="file.raw")
+
+        yaml_str = manifest.to_yaml()
+        assert "dissociation_method: CID" in yaml_str
+
+    def test_dissociation_method_does_not_serialize_when_none(self):
+        """Test that dissociation_method does not appear in YAML when None."""
+        manifest = ManifestState()
+        manifest.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+        )
+        manifest.add_sample(id="s1")
+        manifest.add_run(file="file.raw")
+
+        yaml_str = manifest.to_yaml()
+        # Should not appear in YAML
+        lines = [l.strip() for l in yaml_str.split('\n') if 'dissociation_method' in l]
+        assert len(lines) == 0
+
+
+class TestOntologyOptionProvider:
+    """Tests for ontology/CV option provider - Phase 1."""
+
+    def test_option_provider_module_exists(self):
+        """Test that ontology_provider module can be imported."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            assert OntologyOptionProvider is not None
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_returns_enzyme_choices(self):
+        """Test that option provider returns enzyme choices."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+            enzymes = provider.get_options("enzyme")
+            assert isinstance(enzymes, list)
+            assert len(enzymes) > 0
+            # Should include common enzymes
+            enzyme_names = [e if isinstance(e, str) else e.get("label", "") for e in enzymes]
+            common_enzymes = ["trypsin", "pepsin", "chymotrypsin", "lys-c"]
+            assert any(enzyme.lower() in str(enzyme_names).lower() for enzyme in common_enzymes)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_returns_dissociation_method_choices(self):
+        """Test that option provider returns dissociation method choices."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+            methods = provider.get_options("dissociation_method")
+            assert isinstance(methods, list)
+            assert len(methods) > 0
+            # Should include common dissociation methods
+            method_names = [m if isinstance(m, str) else m.get("label", "") for m in methods]
+            common_methods = ["hcd", "cid", "etd"]
+            assert any(method.lower() in str(method_names).lower() for method in common_methods)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_graceful_fallback_when_oaklib_unavailable(self):
+        """Test that option provider returns fallback defaults when Oaklib is unavailable."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+
+            # Should not crash even if Oaklib is not available
+            enzymes = provider.get_options("enzyme")
+            assert isinstance(enzymes, list)
+            assert len(enzymes) > 0
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_supports_organism_field(self):
+        """Test that option provider supports organism field."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+
+            organisms = provider.get_options("organism")
+            assert isinstance(organisms, list)
+            # Should have fallback options available
+            assert len(organisms) > 0
+            # All options should be dicts with label and value keys
+            for option in organisms:
+                assert isinstance(option, dict)
+                assert "label" in option
+                assert "value" in option
+            # Should contain expected common organisms in fallback
+            organism_labels = [o["label"] for o in organisms]
+            assert any("sapiens" in label.lower() or "homo" in label.lower() for label in organism_labels)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_returns_consistent_format(self):
+        """Test that option provider returns consistent option format."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+
+            # All returned options should be either strings or dicts with 'label' and 'value'
+            for field in ["enzyme", "dissociation_method"]:
+                options = provider.get_options(field)
+                for option in options:
+                    if isinstance(option, dict):
+                        assert "label" in option
+                        assert "value" in option
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_handles_unknown_field(self):
+        """Test that option provider gracefully handles unknown field."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            provider = OntologyOptionProvider()
+
+            # Should return empty list or raise appropriate error for unknown field
+            unknown_options = provider.get_options("unknown_field_xyz")
+            assert isinstance(unknown_options, list)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_accepts_injectable_oak_adapter(self):
+        """Test that option provider accepts injectable Oaklib adapter for testing."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+            # Mock adapter that returns test data
+            class MockOakAdapter:
+                def get_label(self, curie):
+                    """Return mock labels for test CURIEs."""
+                    mock_data = {
+                        "CHEBI:9025": "Enzyme Type A",
+                        "CHEBI:9026": "Enzyme Type B",
+                    }
+                    return mock_data.get(curie)
+
+                def search(self, term, limit=None):
+                    """Return mock search results."""
+                    mock_results = {
+                        "protease": ["CHEBI:9025", "CHEBI:9026"],
+                        "enzyme": ["CHEBI:9025", "CHEBI:9026"],
+                    }
+                    return mock_results.get(term, [])
+
+            mock_adapter = MockOakAdapter()
+            provider = OntologyOptionProvider(oak_adapter=mock_adapter)
+            # Provider should be created successfully with injected adapter
+            assert provider._oak_adapter is mock_adapter
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_oaklib_branch_is_reachable(self):
+        """Test that Oaklib code path is actually reachable and used when adapter is provided."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            # Create a mock adapter that returns distinct options from fallback
+            class MockOakAdapter:
+                def __init__(self):
+                    self.search_called = False
+                    self.get_label_called = False
+
+                def search(self, term, limit=None):
+                    """Return mock enzyme CURIEs."""
+                    self.search_called = True
+                    # Return distinct mock values that won't appear in fallback
+                    if term in ["protease", "enzyme"]:
+                        return ["CHEBI:9025", "CHEBI:9026"]
+                    return []
+
+                def get_label(self, curie):
+                    """Return mock enzyme labels distinct from fallback."""
+                    self.get_label_called = True
+                    # Use distinctive labels that are NOT in fallback enzyme list
+                    mock_data = {
+                        "CHEBI:9025": "MOCK_OAKLIB_PROTEASE_A",
+                        "CHEBI:9026": "MOCK_OAKLIB_PROTEASE_B",
+                    }
+                    return mock_data.get(curie)
+
+            mock_adapter = MockOakAdapter()
+            provider = OntologyOptionProvider(oak_adapter=mock_adapter)
+
+            # Get options using the mock adapter
+            # This should call _get_options_from_oaklib which uses the adapter
+            enzymes = provider.get_options("enzyme")
+
+            # Verify we got options from the Oaklib branch
+            assert isinstance(enzymes, list)
+            assert len(enzymes) > 0, "Should have enzyme options from mock adapter"
+
+            # All options should have label and value keys
+            for option in enzymes:
+                assert isinstance(option, dict)
+                assert "label" in option
+                assert "value" in option
+
+            # Prove mock adapter was used: options contain mock values, not fallback
+            enzyme_labels = [o["label"] for o in enzymes]
+            assert any("MOCK_OAKLIB" in label for label in enzyme_labels), \
+                f"Expected mock Oaklib values in labels, got: {enzyme_labels}"
+
+            # Prove the adapter methods were called
+            assert mock_adapter.search_called, "search() method was not called"
+            assert mock_adapter.get_label_called, "get_label() method was not called"
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

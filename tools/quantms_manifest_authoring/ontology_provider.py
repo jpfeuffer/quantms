@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""
+Shared ontology/CV option provider for authoring fields.
+
+Provides controlled dropdown options for ontology-backed authoring fields using
+Oaklib for ontology-based lookups, with graceful fallback to local definitions
+when Oaklib is unavailable.
+
+Supported fields:
+- enzyme: proteolytic enzymes (Oaklib + fallback)
+- dissociation_method: MS dissociation methods (Oaklib + fallback)
+- instrument: MS instruments (Oaklib + fallback)
+- organism: biological organisms (Oaklib + fallback)
+- organism_part: tissue/cellular compartments (Oaklib + fallback)
+- disease: disease states (Oaklib + fallback)
+- cell_type: cell types (Oaklib + fallback)
+"""
+
+from typing import List, Union, Dict, Any, Optional
+
+try:
+    from oaklib import get_adapter as _oak_get_adapter
+    OAK_AVAILABLE = True
+except ImportError:
+    OAK_AVAILABLE = False
+
+
+# Local fallback definitions for when Oaklib is unavailable
+FALLBACK_ENZYME_OPTIONS = [
+    {"label": "Trypsin", "value": "Trypsin"},
+    {"label": "Pepsin", "value": "Pepsin"},
+    {"label": "Chymotrypsin", "value": "Chymotrypsin"},
+    {"label": "Lys-C", "value": "Lys-C"},
+    {"label": "Arg-C", "value": "Arg-C"},
+    {"label": "Asp-N", "value": "Asp-N"},
+    {"label": "Glu-C", "value": "Glu-C"},
+    {"label": "Semi-tryptic", "value": "Semi-tryptic"},
+    {"label": "Elastase", "value": "Elastase"},
+    {"label": "Thermolysin", "value": "Thermolysin"},
+    {"label": "Cyanogen bromide", "value": "Cyanogen bromide"},
+]
+
+FALLBACK_DISSOCIATION_METHOD_OPTIONS = [
+    {"label": "HCD", "value": "HCD"},
+    {"label": "CID", "value": "CID"},
+    {"label": "ETD", "value": "ETD"},
+    {"label": "UVPD", "value": "UVPD"},
+    {"label": "ECD", "value": "ECD"},
+    {"label": "IRMPD", "value": "IRMPD"},
+    {"label": "PSD", "value": "PSD"},
+    {"label": "LIFT", "value": "LIFT"},
+]
+
+FALLBACK_INSTRUMENT_OPTIONS = [
+    {"label": "Q-TOF", "value": "Q-TOF"},
+    {"label": "Orbitrap", "value": "Orbitrap"},
+    {"label": "Ion Trap", "value": "Ion Trap"},
+    {"label": "MALDI-TOF", "value": "MALDI-TOF"},
+    {"label": "Tribrid", "value": "Tribrid"},
+]
+
+FALLBACK_ORGANISM_OPTIONS = [
+    {"label": "Homo sapiens", "value": "Homo sapiens"},
+    {"label": "Mus musculus", "value": "Mus musculus"},
+    {"label": "Arabidopsis thaliana", "value": "Arabidopsis thaliana"},
+    {"label": "Caenorhabditis elegans", "value": "Caenorhabditis elegans"},
+    {"label": "Drosophila melanogaster", "value": "Drosophila melanogaster"},
+    {"label": "Saccharomyces cerevisiae", "value": "Saccharomyces cerevisiae"},
+    {"label": "Escherichia coli", "value": "Escherichia coli"},
+    {"label": "Chlorocebus aethiops", "value": "Chlorocebus aethiops"},
+]
+
+FALLBACK_ORGANISM_PART_OPTIONS = [
+    {"label": "Liver", "value": "Liver"},
+    {"label": "Brain", "value": "Brain"},
+    {"label": "Heart", "value": "Heart"},
+    {"label": "Kidney", "value": "Kidney"},
+    {"label": "Muscle", "value": "Muscle"},
+    {"label": "Blood", "value": "Blood"},
+    {"label": "Serum", "value": "Serum"},
+    {"label": "Plasma", "value": "Plasma"},
+]
+
+FALLBACK_DISEASE_OPTIONS = [
+    {"label": "Normal", "value": "Normal"},
+    {"label": "Diabetes", "value": "Diabetes"},
+    {"label": "Cancer", "value": "Cancer"},
+    {"label": "Alzheimer's disease", "value": "Alzheimer's disease"},
+    {"label": "Parkinson's disease", "value": "Parkinson's disease"},
+]
+
+FALLBACK_CELL_TYPE_OPTIONS = [
+    {"label": "Neuron", "value": "Neuron"},
+    {"label": "Fibroblast", "value": "Fibroblast"},
+    {"label": "Hepatocyte", "value": "Hepatocyte"},
+    {"label": "T cell", "value": "T cell"},
+    {"label": "B cell", "value": "B cell"},
+    {"label": "Macrophage", "value": "Macrophage"},
+]
+
+# Mapping of field names to their corresponding fallback options
+FALLBACK_OPTIONS_MAP = {
+    "enzyme": FALLBACK_ENZYME_OPTIONS,
+    "dissociation_method": FALLBACK_DISSOCIATION_METHOD_OPTIONS,
+    "instrument": FALLBACK_INSTRUMENT_OPTIONS,
+    "organism": FALLBACK_ORGANISM_OPTIONS,
+    "organism_part": FALLBACK_ORGANISM_PART_OPTIONS,
+    "disease": FALLBACK_DISEASE_OPTIONS,
+    "cell_type": FALLBACK_CELL_TYPE_OPTIONS,
+}
+
+
+class OntologyOptionProvider:
+    """
+    Provides ontology-backed option choices for authoring fields.
+
+    Falls back to local definitions when Oaklib is unavailable.
+    Supports injectable Oaklib adapter for testing and flexibility.
+    """
+
+    def __init__(self, oak_adapter=None):
+        """
+        Initialize the option provider.
+
+        Args:
+            oak_adapter: Optional Oaklib adapter instance for ontology lookups.
+                        If None, will attempt to create one if OAK_AVAILABLE.
+                        Can be injected for testing purposes.
+        """
+        self._oak_adapter = oak_adapter
+
+    def get_options(
+        self, field: str
+    ) -> List[Union[str, Dict[str, str]]]:
+        """
+        Get available options for a given field.
+
+        Args:
+            field: Field name (e.g., 'enzyme', 'dissociation_method')
+
+        Returns:
+            List of options, each as a string or dict with 'label' and 'value' keys.
+            Returns empty list if field is unknown.
+        """
+        if field not in FALLBACK_OPTIONS_MAP:
+            # Unknown field - return empty list
+            return []
+
+        # Try to load from Oaklib first (injected adapter or OAK_AVAILABLE)
+        # Fall back to local definitions if no Oaklib path is available
+        try:
+            options = self._get_options_from_oaklib(field)
+            if options:
+                return options
+        except Exception:
+            # Fall back to local options if Oaklib lookup fails
+            pass
+
+        # Return fallback options
+        return FALLBACK_OPTIONS_MAP.get(field, []).copy()
+
+    def _get_options_from_oaklib(
+        self, field: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """
+        Attempt to load options from Oaklib.
+
+        Uses the injected adapter or creates a new one if OAK_AVAILABLE.
+        Works with injected adapters even if Oaklib is not installed globally.
+        Maps field names to ontology term collections and queries for curated terms.
+
+        Args:
+            field: Field name to look up in ontology
+
+        Returns:
+            List of dicts with 'label' and 'value' keys, or None if lookup fails.
+        """
+        try:
+            # Use injected adapter or initialize if needed
+            adapter = self._oak_adapter
+            if adapter is None:
+                # Only attempt to create adapter if OAK_AVAILABLE
+                if not OAK_AVAILABLE:
+                    return None
+                # Attempt to create adapter for PSI-MS ontology (minimal production path)
+                adapter = _oak_get_adapter("sqlite:obo:psi-ms")
+                self._oak_adapter = adapter
+
+            # Map field names to ontology search patterns or term collections
+            # For now, use simple field-based lookup - can be extended with more
+            # sophisticated ontology queries in future phases
+            field_mapping = {
+                "enzyme": ["protease", "enzyme"],
+                "dissociation_method": ["dissociation", "ionization"],
+                "instrument": ["instrument", "mass spectrometer"],
+                "organism": ["organism", "species"],
+                "organism_part": ["tissue", "organ", "cellular component"],
+                "disease": ["disease", "disorder"],
+                "cell_type": ["cell type", "cell"],
+            }
+
+            if field not in field_mapping:
+                return None
+
+            options = []
+            search_terms = field_mapping.get(field, [])
+
+            # For each search term, try to find matching ontology terms
+            for search_term in search_terms:
+                try:
+                    # Basic term search using adapter's search capabilities
+                    # This performs a minimal real Oaklib lookup
+                    if hasattr(adapter, "search"):
+                        # Query ontology for terms matching the search pattern
+                        # Try with limit parameter first, fall back without if unsupported
+                        try:
+                            matches = list(adapter.search(search_term, limit=5))
+                        except TypeError:
+                            # Adapter doesn't support limit parameter
+                            matches = list(adapter.search(search_term))
+
+                        for curie in matches:
+                            label = adapter.get_label(curie)
+                            if label:
+                                options.append({
+                                    "label": label,
+                                    "value": label,
+                                })
+                except Exception:
+                    # Continue with next search term if one fails
+                    continue
+
+            # Return options if we found any, otherwise None to trigger fallback
+            return options if options else None
+
+        except Exception:
+            # If anything goes wrong (adapter creation, search, etc), return None
+            # to gracefully fall back to local definitions
+            return None
+
+    def get_supported_fields(self) -> List[str]:
+        """
+        Get list of supported field names.
+
+        Returns:
+            List of field names that have option providers.
+        """
+        return list(FALLBACK_OPTIONS_MAP.keys())

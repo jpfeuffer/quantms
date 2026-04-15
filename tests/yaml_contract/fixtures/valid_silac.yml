@@ -44,16 +44,17 @@ mixtures:
       medium_R6K4: treated_sample # Medium isotope label
       heavy_R10K8: control_sample # Heavy isotope label (for normalization)
 
-# Runs: raw spectrometry files
+# Runs: raw spectrometry files with explicit mixture references
+# SILAC runs explicitly link to mixtures
 runs:
   - file: s3://bucket/experiment/silac_3plex_fraction_1.raw
-    fraction: 1
     mixture: silac_3plex_mix1
+    fraction: 1
     instrument: Orbitrap_Fusion
 
   - file: s3://bucket/experiment/silac_3plex_fraction_2.raw
-    fraction: 2
     mixture: silac_3plex_mix1
+    fraction: 2
     instrument: Orbitrap_Fusion
 
 modifications:

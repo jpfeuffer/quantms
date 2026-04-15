@@ -56,27 +56,27 @@ samples:
 # Each sample is measured independently without multiplexing
 mixtures: []
 
-# Runs: raw spectrometry files with their fraction assignment
-# Each run belongs to exactly one sample (no multiplexing)
+# Runs: raw spectrometry files with explicit sample references
+# Each LFQ run explicitly links to exactly one sample
 runs:
   - file: s3://bucket/experiment/control_rep1.raw
+    sample: control_rep1
     fraction: 1
-    mixture: null
     instrument: Q_TOF
 
   - file: s3://bucket/experiment/control_rep2.raw
+    sample: control_rep2
     fraction: 1
-    mixture: null
     instrument: Q_TOF
 
   - file: s3://bucket/experiment/treated_rep1.raw
+    sample: treated_rep1
     fraction: 1
-    mixture: null
     instrument: Q_TOF
 
   - file: s3://bucket/experiment/treated_rep2.raw
+    sample: treated_rep2
     fraction: 1
-    mixture: null
     instrument: Q_TOF
 
 modifications:
