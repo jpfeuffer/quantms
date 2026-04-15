@@ -805,3 +805,190 @@ class TestWizardStateRowMutations:
 
         with pytest.raises(IndexError):
             wizard.remove_mixture(5)
+
+
+class TestGuiWizardShellLockedProgression:
+    """Tests for GUI-level locked wizard progression."""
+
+    def test_wizard_gui_starts_at_runs_step(self):
+        """Test that GUI wizard always starts at RUNS step."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        assert wizard.get_current_step() == WizardStep.RUNS
+        assert wizard.current_step_index == 0
+
+    def test_wizard_gui_cannot_skip_forward_without_runs(self):
+        """Test that GUI cannot advance past RUNS without adding runs."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        # No runs added
+        with pytest.raises(ValueError, match="At least one run"):
+            wizard.next_step()
+
+    def test_wizard_gui_can_advance_with_run(self):
+        """Test that GUI can advance RUNS after adding a run."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        wizard.add_run(file="test.raw")
+        # Should not raise
+        wizard.next_step()
+        assert wizard.get_current_step() == WizardStep.SAMPLES
+
+    def test_wizard_gui_back_button_disabled_on_first_step(self):
+        """Test that back button is disabled on first (RUNS) step."""
+        from gui_wizard_state import WizardState
+        wizard = WizardState()
+        assert wizard.current_step_index == 0
+        with pytest.raises(ValueError, match="Cannot go back"):
+            wizard.previous_step()
+
+    def test_wizard_gui_back_navigation_works_from_second_step(self):
+        """Test that back navigation works from second step."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        wizard.add_run(file="test.raw")
+        wizard.next_step()
+        assert wizard.get_current_step() == WizardStep.SAMPLES
+        wizard.previous_step()
+        assert wizard.get_current_step() == WizardStep.RUNS
+
+    def test_wizard_gui_sequential_forward_progression(self):
+        """Test complete sequential forward progression."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        steps = WizardStep.ordered_steps()
+        expected_order = [
+            WizardStep.RUNS, WizardStep.SAMPLES, WizardStep.MIXTURES,
+            WizardStep.ASSIGNMENTS, WizardStep.EXPERIMENT, WizardStep.REVIEW
+        ]
+        assert steps == expected_order
+
+    def test_wizard_gui_next_button_disabled_on_last_step(self):
+        """Test that next button is disabled on last (REVIEW) step."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        # Populate and reach REVIEW
+        wizard.add_run(file="test.raw")
+        wizard.next_step()  # SAMPLES
+        wizard.next_step()  # MIXTURES
+        wizard.next_step()  # ASSIGNMENTS
+        wizard.next_step()  # EXPERIMENT
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
+        wizard.next_step()  # REVIEW
+        assert wizard.get_current_step() == WizardStep.REVIEW
+        with pytest.raises(ValueError, match="Cannot advance"):
+            wizard.next_step()
+
+    def test_wizard_gui_review_step_allows_validation(self):
+        """Test that REVIEW step can validate manifest state."""
+        from gui_wizard_state import WizardState, WizardStep
+        wizard = WizardState()
+        wizard.add_run(file="test.raw")
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.next_step()  # SAMPLES
+        wizard.next_step()  # MIXTURES
+        wizard.next_step()  # ASSIGNMENTS
+        wizard.next_step()  # EXPERIMENT
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
+        wizard.next_step()  # REVIEW
+        assert wizard.get_current_step() == WizardStep.REVIEW
+        # Should be able to convert to manifest for validation
+        manifest = wizard.to_manifest_state()
+        assert manifest is not None
+
+
+class TestManifestEditingWizardCanGoForward:
+    """Tests for the can_go_forward button logic."""
+
+    def test_can_go_forward_blocked_without_runs(self):
+        """Test that can_go_forward is False on RUNS step without any runs."""
+        from gui_nicegui import ManifestEditingWizard
+        editor = ManifestEditingWizard()
+        # At RUNS step with no runs - cannot go forward
+        assert not editor.can_go_forward()
+
+    def test_can_go_forward_allowed_with_runs(self):
+        """Test that can_go_forward is True on RUNS step with at least one run."""
+        from gui_nicegui import ManifestEditingWizard
+        from gui_wizard_state import WizardStep
+        editor = ManifestEditingWizard()
+        editor.wizard.add_run(file="test.raw")
+        # At RUNS step with a run - should be able to go forward
+        assert editor.wizard.get_current_step() == WizardStep.RUNS
+        assert editor.can_go_forward()
+
+    def test_can_go_forward_allowed_on_samples_step(self):
+        """Test that can_go_forward is True on SAMPLES step (always allows forward)."""
+        from gui_nicegui import ManifestEditingWizard
+        from gui_wizard_state import WizardStep
+        editor = ManifestEditingWizard()
+        editor.wizard.add_run(file="test.raw")
+        editor.wizard.next_step()
+        assert editor.wizard.get_current_step() == WizardStep.SAMPLES
+        # Should be able to go forward even without adding samples
+        assert editor.can_go_forward()
+
+    def test_can_go_forward_blocked_without_experiment_settings(self):
+        """Test that can_go_forward is False on EXPERIMENT step without saved settings."""
+        from gui_nicegui import ManifestEditingWizard
+        from gui_wizard_state import WizardStep
+        editor = ManifestEditingWizard()
+        # Prepare by reaching EXPERIMENT step
+        editor.wizard.add_run(file="test.raw")
+        editor.wizard.next_step()  # SAMPLES
+        editor.wizard.next_step()  # MIXTURES
+        editor.wizard.next_step()  # ASSIGNMENTS
+        editor.wizard.next_step()  # EXPERIMENT
+        assert editor.wizard.get_current_step() == WizardStep.EXPERIMENT
+        # Without experiment settings saved, cannot go forward
+        assert not editor.can_go_forward()
+
+    def test_can_go_forward_allowed_with_experiment_settings(self):
+        """Test that can_go_forward is True on EXPERIMENT step with saved settings."""
+        from gui_nicegui import ManifestEditingWizard
+        from gui_wizard_state import WizardStep
+        editor = ManifestEditingWizard()
+        # Prepare by reaching EXPERIMENT step
+        editor.wizard.add_run(file="test.raw")
+        editor.wizard.next_step()  # SAMPLES
+        editor.wizard.next_step()  # MIXTURES
+        editor.wizard.next_step()  # ASSIGNMENTS
+        editor.wizard.next_step()  # EXPERIMENT
+        assert editor.wizard.get_current_step() == WizardStep.EXPERIMENT
+        # Set experiment settings
+        editor.wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
+        # Now should be able to go forward
+        assert editor.can_go_forward()
+
+    def test_can_go_forward_blocked_on_review_step(self):
+        """Test that can_go_forward is False on REVIEW (last) step."""
+        from gui_nicegui import ManifestEditingWizard
+        from gui_wizard_state import WizardStep
+        editor = ManifestEditingWizard()
+        # Populate and reach REVIEW
+        editor.wizard.add_run(file="test.raw")
+        editor.wizard.next_step()  # SAMPLES
+        editor.wizard.next_step()  # MIXTURES
+        editor.wizard.next_step()  # ASSIGNMENTS
+        editor.wizard.next_step()  # EXPERIMENT
+        editor.wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
+        editor.wizard.next_step()  # REVIEW
+        assert editor.wizard.get_current_step() == WizardStep.REVIEW
+        # Cannot go forward from REVIEW (last step)
+        assert not editor.can_go_forward()
