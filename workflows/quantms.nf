@@ -39,15 +39,12 @@ workflow QUANTMS {
     ch_versions = channel.empty()
 
     //
-    // SUBWORKFLOW: Read in samplesheet, validate and stage input files
+    // SUBWORKFLOW: Validate and stage YAML manifest input file
     //
     INPUT_CHECK(
         file(params.input)
     )
     ch_versions = ch_versions.mix(INPUT_CHECK.out.versions)
-    // TODO: OPTIONAL, you can use nf-validation plugin to create an input channel from the samplesheet with channel.fromSamplesheet("input")
-    // See the documentation https://nextflow-io.github.io/nf-validation/samplesheets/fromSamplesheet/
-    // ! There is currently no tooling to help you write a sample sheet schema
 
     //
     // SUBWORKFLOW: Create input channel
@@ -69,7 +66,7 @@ workflow QUANTMS {
     FILE_PREPARATION.out.results
         .branch { item ->
             dia: item[0].acquisition_method.contains("dia")
-            iso: item[0].labelling_type.contains("tmt") || item[0].labelling_type.contains("itraq")
+            iso: item[0].labelling_type.contains("tmt") || item[0].labelling_type.contains("itraq") || item[0].labelling_type.contains("silac")
             lfq: item[0].labelling_type.contains("label free")
         }
         .set { ch_fileprep_result }

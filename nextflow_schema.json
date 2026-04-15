@@ -16,9 +16,9 @@
                     "type": "string",
                     "format": "file-path",
                     "exists": true,
-                    "pattern": "^\\S+\\.(?:csv|tsv|sdrf)$",
-                    "description": "Path to an input metadata file in SDRF format (.sdrf, .tsv, or .csv). YAML format (.yml/.yaml) support is planned for a future release.",
-                    "help_text": "Input is specified by using a path or URI to a PRIDE Sample to Data Relation Format file (SDRF), e.g. as part of a submitted and annotated PRIDE experiment (see [here](https://github.com/bigbio/proteomics-metadata-standard/tree/master/annotated-projects) for examples). Input files will be downloaded and cached from the URIs specified in the SDRF file.\n\nThe SDRF file can have .sdrf, .tsv, or .csv extensions. An OpenMS-style experimental design will be generated based on the factor columns of the SDRF.\n\n**Note on quantms YAML format:**\n\nA YAML manifest specification is available as the standard format for quantms experiments. The schema and validation tools are ready at `assets/schemas/quantms_yaml_manifest.json`. However, **runtime consumption of YAML manifests is not yet implemented**. You can prepare and validate YAML files using the schema and test suite, but for now, use SDRF format for actual pipeline execution. YAML runtime support will be available in a future release.\n\nThe following parameters are read **exclusively** from the SDRF file (required columns):\n\n    * `acquisition_method` (from 'Proteomics Data Acquisition Method' column),\n    * `labelling_type` (from 'Label' column),\n    * `enzyme` (from 'Enzyme' column),\n    * `fixed_mods` (from 'FixedModifications' column)\n\nThe following parameters are read from SDRF but can be **overridden via command line**:\n\n    * `precursor_mass_tolerance` (from 'PrecursorMassTolerance' column),\n    * `precursor_mass_tolerance_unit` (from 'PrecursorMassToleranceUnit' column),\n    * `fragment_mass_tolerance` (from 'FragmentMassTolerance' column),\n    * `fragment_mass_tolerance_unit` (from 'FragmentMassToleranceUnit' column),\n    * `variable_mods` (from 'VariableModifications' column)",
+                    "pattern": "^\\S+\\.(?:yml|yaml)$",
+                    "description": "Path to an input YAML manifest file (.yml or .yaml).",
+                    "help_text": "A YAML manifest following the quantms specification. The schema is defined at `assets/schemas/quantms_yaml_manifest.json`.",
                     "fa_icon": "fas fa-file-csv"
                 },
                 "outdir": {
@@ -40,19 +40,6 @@
                     "description": "MultiQC report title. Printed as page header, used for filename if not otherwise specified.",
                     "fa_icon": "fas fa-file-signature"
                 },
-                "root_folder": {
-                    "type": "string",
-                    "description": "Root folder in which the spectrum files specified in the SDRF are searched",
-                    "fa_icon": "fas fa-folder",
-                    "help_text": "This optional parameter can be used to specify a root folder in which the spectrum files specified in the SDRF are searched.\nIt is usually used if you have a local version of the experiment already. Note that this option does not support recursive\nsearching yet."
-                },
-                "local_input_type": {
-                    "type": "string",
-                    "description": "Overwrite the file type/extension of the filename as specified in the SDRF",
-                    "fa_icon": "fas fa-file-invoice",
-                    "default": "mzML",
-                    "help_text": "If the above [`--root_folder`](#root_folder) was given to load local input files, this overwrites the file type/extension of\nthe filename as specified in the SDRF. Usually used in case you have an mzML-converted version of the files already. Needs to be\none of 'mzML', 'raw', 'd', or 'dia' (the letter cases should match your files exactly). Compressed variants (.gz, .tar, .tar.gz, .zip) are supported for 'mzML', 'raw', and 'd' formats."
-                },
                 "id_only": {
                     "type": "boolean",
                     "description": "Only perform identification subworkflow.",
@@ -65,47 +52,20 @@
                     "fa_icon": "far fa-check-square",
                     "help_text": "Whether export PSM from decoy in final identification results for dda_id subworkflow for specific cases.",
                     "default": true
-                }
-            }
-        },
-        "sdrf_validation": {
-            "title": "SDRF validation",
-            "type": "object",
-            "description": "Settings for validating the input SDRF file.",
-            "default": "",
-            "properties": {
-                "validate_ontologies": {
-                    "type": "boolean",
-                    "description": "Check that ontology terms in an input SDRF file exist.",
-                    "fa_icon": "far fa-check-square",
-                    "help_text": "If false, only a basic readability check is performed on an input SDRF file. This option is useful when ontology providers are inaccessible.",
-                    "default": true
                 },
-                "skip_ms_validation": {
-                    "type": "boolean",
-                    "description": "Skip validation of mass spectrometry files.",
-                    "fa_icon": "far fa-check-square",
-                    "help_text": "Skip validation of mass spectrometry metadata, including PTMs, tolerances or enzymes. Only useful if your metadata is correct but the terms are not in ontologies."
+                "root_folder": {
+                    "type": "string",
+                    "description": "Path to a local directory for remapping YAML manifest file paths.",
+                    "fa_icon": "fas fa-folder",
+                    "format": "directory-path",
+                    "help_text": "When specified, file paths declared in the YAML manifest will be resolved relative to this directory. This allows you to run the pipeline with local files instead of remote URIs. Example: `--root_folder /path/to/local/data`"
                 },
-                "skip_factor_validation": {
-                    "type": "boolean",
-                    "description": "Skip validation of factor columns.",
-                    "fa_icon": "far fa-check-square",
-                    "help_text": "Skip validation of factor columns in the SDRF. Only useful if your factor values are correct but the sdrf-validation library does not recognize them.",
-                    "default": true
-                },
-                "skip_experimental_design_validation": {
-                    "type": "boolean",
-                    "description": "Skip validation of experimental design.",
-                    "fa_icon": "far fa-check-square",
-                    "help_text": "Skip validation of experimental design in the SDRF. Only useful if your experimental design is correct but the sdrf-validation library does not recognize it."
-                },
-                "use_ols_cache_only": {
-                    "type": "boolean",
-                    "description": "Use cached version of the Ontology Lookup Service (OLS).",
-                    "fa_icon": "far fa-check-square",
-                    "help_text": "Use only the cached version of the Ontology Lookup Service (OLS) for ontology term validation. This is useful if you don't want the pipeline to query internet services.",
-                    "default": true
+                "local_input_type": {
+                    "type": "string",
+                    "description": "File extension to remap file types declared in the YAML manifest.",
+                    "default": "mzML",
+                    "fa_icon": "fas fa-file-alt",
+                    "help_text": "When used with `--root_folder`, this parameter remaps the file extensions of files in the YAML manifest. For example, if the manifest declares `.raw` files but you have `.mzML` files available locally, set `--local_input_type mzML` to automatically remap them. Should be specified without the leading dot."
                 }
             }
         },
@@ -123,7 +83,7 @@
                     "pattern": "^\\S+\\.(?:fasta|fa)$",
                     "description": "The `fasta` protein database used during database search. *Note:* For DIA data, it must not contain decoys.",
                     "fa_icon": "fas fa-file",
-                    "help_text": "Since the database is not included in an SDRF, this parameter always needs to be given to specify the input protein database\nwhen you run the pipeline. Remember to include contaminants (and decoys if not in DIA mode and if not added in the pipeline with [`--add_decoys`](#add_decoys))\n\n```bash\n--database '[path to fasta protein database]'\n```"
+                    "help_text": "This parameter must be given to specify the input protein database. Remember to include contaminants (and decoys if not in DIA mode and if not added in the pipeline with [`--add_decoys`](#add_decoys))\n\n```bash\n--database '[path to fasta protein database]'\n```"
                 },
                 "add_decoys": {
                     "type": "boolean",
@@ -273,7 +233,7 @@
                     "description": "Precursor mass tolerance used for database search. For High-Resolution instruments a precursor mass tolerance value of 5 ppm is recommended (i.e. 5). See also [`--precursor_mass_tolerance_unit`](#precursor_mass_tolerance_unit).",
                     "default": 5,
                     "fa_icon": "fas fa-sliders-h",
-                    "help_text": "This value can be overridden via command line. If not specified, the value from the SDRF file will be used."
+                    "help_text": "This value can be overridden via command line. If not specified, the value from the YAML manifest will be used."
                 },
                 "precursor_mass_tolerance_unit": {
                     "type": "string",
@@ -281,21 +241,21 @@
                     "default": "ppm",
                     "fa_icon": "fas fa-sliders-h",
                     "enum": ["Da", "ppm"],
-                    "help_text": "This value can be overridden via command line. If not specified, the value from the SDRF file will be used."
+                    "help_text": "This value can be overridden via command line. If not specified, the value from the YAML manifest will be used."
                 },
                 "fragment_mass_tolerance": {
                     "type": "number",
                     "description": "Fragment mass tolerance used for database search. The default of 0.03 Da is for high-resolution instruments.",
                     "default": 0.03,
                     "fa_icon": "fas fa-sliders-h",
-                    "help_text": "Caution: for Comet we are estimating the `fragment_bin_tolerance` parameter based on this automatically. This value can be overridden via command line. If not specified, the value from the SDRF file will be used."
+                    "help_text": "Caution: for Comet we are estimating the `fragment_bin_tolerance` parameter based on this automatically. This value can be overridden via command line. If not specified, the value from the YAML manifest will be used."
                 },
                 "fragment_mass_tolerance_unit": {
                     "type": "string",
                     "description": "Fragment mass tolerance unit used for database search. Possible values are 'ppm' and 'Da' (default).",
                     "default": "Da",
                     "fa_icon": "fas fa-list-ol",
-                    "help_text": "Caution: for Comet we are estimating the `fragment_bin_tolerance` parameter based on this automatically. This value can be overridden via command line. If not specified, the value from the SDRF file will be used.",
+                    "help_text": "Caution: for Comet we are estimating the `fragment_bin_tolerance` parameter based on this automatically. This value can be overridden via command line. If not specified, the value from the YAML manifest will be used.",
                     "enum": ["Da", "ppm"]
                 },
                 "variable_mods": {
@@ -304,7 +264,7 @@
                     "default": "Oxidation (M)",
                     "fa_icon": "fas fa-tasks",
                     "hidden": true,
-                    "help_text": "Specify which variable modifications should be applied to the database search (eg. '' or 'Oxidation (M)', see Unimod modifications in the style '({unimod name} ({optional term specificity} {optional origin})'). All possible modifications can be found in the restrictions mentioned in the command line documentation of e.g. [CometAdapter](https://abibuilder.cs.uni-tuebingen.de/archive/openms/Documentation/release/latest/html/TOPP_CometAdapter.html). Multiple variable modifications can be specified comma separated (e.g. 'Carbamidomethyl (C),Oxidation (M)'). This value can be overridden via command line. If not specified, the value from the SDRF file will be used."
+                    "help_text": "Specify which variable modifications should be applied to the database search (eg. '' or 'Oxidation (M)', see Unimod modifications in the style '({unimod name} ({optional term specificity} {optional origin})'). All possible modifications can be found in the restrictions mentioned in the command line documentation of e.g. [CometAdapter](https://abibuilder.cs.uni-tuebingen.de/archive/openms/Documentation/release/latest/html/TOPP_CometAdapter.html). Multiple variable modifications can be specified comma separated (e.g. 'Carbamidomethyl (C),Oxidation (M)'). This value can be overridden via command line. If not specified, the value from the YAML manifest will be used."
                 },
                 "ms2_fragment_method": {
                     "type": "string",
@@ -624,8 +584,8 @@
                 },
                 "ms2features_tolerance": {
                     "type": "number",
-                    "description": "Fragment mass tolerance for MS2Features (fallback when SDRF values are incompatible)",
-                    "help_text": "Fallback tolerance value used when SDRF fragment tolerance cannot be used (e.g., ppm values with ms2pip). Should match your instrument's fragment mass accuracy. Typical values: 0.02-0.05 Da for high-resolution instruments, 0.1-0.5 Da for low-resolution instruments.",
+                    "description": "Fragment mass tolerance for MS2Features (fallback when YAML manifest values are incompatible)",
+                    "help_text": "Fallback tolerance value used when YAML manifest fragment tolerance cannot be used (e.g., ppm values with ms2pip). Should match your instrument's fragment mass accuracy. Typical values: 0.02-0.05 Da for high-resolution instruments, 0.1-0.5 Da for low-resolution instruments.",
                     "default": 0.05,
                     "fa_icon": "fas fa-sliders-h"
                 },
@@ -1549,9 +1509,6 @@
         },
         {
             "$ref": "#/$defs/protein_database"
-        },
-        {
-            "$ref": "#/$defs/sdrf_validation"
         },
         {
             "$ref": "#/$defs/spectrum_preprocessing"

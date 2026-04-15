@@ -1,8 +1,6 @@
 //
-// Check input SDRF and get read channels
+// Check input YAML and stage the file
 //
-
-include { SAMPLESHEET_CHECK } from '../../../modules/local/samplesheet_check'
 
 workflow INPUT_CHECK {
     take:
@@ -12,10 +10,8 @@ workflow INPUT_CHECK {
 
     ch_software_versions = channel.empty()
 
-    SAMPLESHEET_CHECK ( input_file, params.validate_ontologies )
-    ch_software_versions = ch_software_versions.mix(SAMPLESHEET_CHECK.out.versions)
-
+    // Stage the YAML input file and pass it through
     emit:
-    ch_input_file   = SAMPLESHEET_CHECK.out.checked_file
-    versions	    = ch_software_versions
+    ch_input_file   = input_file
+    versions        = ch_software_versions
 }

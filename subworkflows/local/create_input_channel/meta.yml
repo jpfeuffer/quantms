@@ -1,22 +1,15 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/subworkflows/yaml-schema.json
 name: "create_input_channel"
-description: Subworkflow to create input channels from validated input files
+description: Subworkflow to create input channels from validated YAML manifests
 keywords:
   - input
   - channel
-  - validation
-components:
-  - sdrf/parsing
-  - preprocess/expdesign
+  - YAML
 input:
-  - ch_input_file:
+  - ch_input:
       type: file
       description: |
-        Channel containing validated input files
-  - is_sdrf:
-      type: boolean
-      description: |
-        Whether the input is in SDRF format
+        Channel containing the input YAML manifest file
 output:
   - ch_meta_config_iso:
       type: file
