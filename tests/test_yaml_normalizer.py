@@ -92,6 +92,65 @@ class TestManifestValidation:
         with pytest.raises(SystemExit):
             validate_manifest(manifest)
 
+    def test_validate_run_references_missing_sample(self):
+        """Test validation fails when run references non-existent sample."""
+        manifest_path = (
+            Path(__file__).parent
+            / "yaml_contract"
+            / "fixtures"
+            / "invalid_missing_run_sample.yml"
+        )
+        manifest = load_manifest(str(manifest_path))
+        with pytest.raises(SystemExit):
+            validate_manifest(manifest)
+
+    def test_validate_run_references_missing_mixture(self):
+        """Test validation fails when run references non-existent mixture."""
+        manifest_path = (
+            Path(__file__).parent
+            / "yaml_contract"
+            / "fixtures"
+            / "invalid_missing_run_mixture.yml"
+        )
+        manifest = load_manifest(str(manifest_path))
+        with pytest.raises(SystemExit):
+            validate_manifest(manifest)
+
+    def test_validate_mixture_channel_references_missing_sample(self):
+        """Test validation fails when mixture channel references non-existent sample."""
+        manifest_path = (
+            Path(__file__).parent
+            / "yaml_contract"
+            / "fixtures"
+            / "invalid_mixture_channel_missing_sample.yml"
+        )
+        manifest = load_manifest(str(manifest_path))
+        with pytest.raises(SystemExit):
+            validate_manifest(manifest)
+
+    def test_validate_empty_mixture(self):
+        """Test validation fails when mixture has all empty channels."""
+        manifest_path = (
+            Path(__file__).parent
+            / "yaml_contract"
+            / "fixtures"
+            / "invalid_empty_mixture.yml"
+        )
+        manifest = load_manifest(str(manifest_path))
+        with pytest.raises(SystemExit):
+            validate_manifest(manifest)
+
+    def test_validate_invalid_acquisition_method(self):
+        """Test validation fails for unsupported acquisition_method."""
+        manifest = {
+            "experiment": {"acquisition_method": "SRM", "enzyme": "Trypsin"},
+            "samples": [{"id": "s1"}],
+            "mixtures": [],
+            "runs": [{"file": "test.raw", "sample": "s1"}],
+        }
+        with pytest.raises(SystemExit):
+            validate_manifest(manifest)
+
 
 class TestModifications:
     """Test modification handling."""

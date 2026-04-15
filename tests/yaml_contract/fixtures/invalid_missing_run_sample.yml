@@ -1,0 +1,26 @@
+# Invalid: Run references a sample that does not exist in samples list
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+  quantification_method: LFQ
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+samples:
+  - id: sample_1
+    organism: homo sapiens
+    condition: control
+    biological_replicate: 1
+
+mixtures: []
+
+runs:
+  - file: test1.raw
+    sample: sample_1
+    fraction: 1
+  - file: test2.raw
+    sample: nonexistent_sample
+    fraction: 1
+
+modifications: []

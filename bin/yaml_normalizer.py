@@ -43,11 +43,27 @@ def load_manifest(manifest_path: str) -> Dict[str, Any]:
 
 
 def validate_manifest(manifest: Dict[str, Any]) -> None:
-    """Basic validation of manifest structure."""
+    """Strict validation of manifest structure and cross-references.
+
+    Validates:
+    - All required keys are present
+    - Acquisition method is supported (DDA or DIA)
+    - All samples have unique IDs
+    - All mixtures have unique IDs and non-empty channels
+    - All runs reference existing samples or mixtures
+    - All mixture channels reference valid samples
+    - All mixtures have at least one non-empty channel
+    """
     required_keys = ["experiment", "samples", "mixtures", "runs"]
     missing = [k for k in required_keys if k not in manifest]
     if missing:
         print(f"ERROR: Missing required keys in manifest: {', '.join(missing)}")
+        sys.exit(1)
+
+    # Fail fast on unsupported acquisition method
+    acq_method = manifest.get("experiment", {}).get("acquisition_method", "DDA").upper()
+    if acq_method not in ["DDA", "DIA"]:
+        print(f"ERROR: Unsupported acquisition_method '{acq_method}'. Supported values: DDA, DIA")
         sys.exit(1)
 
     if not manifest.get("samples"):
@@ -57,6 +73,10 @@ def validate_manifest(manifest: Dict[str, Any]) -> None:
     if not manifest.get("runs"):
         print("ERROR: Manifest must contain at least one run")
         sys.exit(1)
+
+    # Build maps for cross-reference validation
+    samples_map = build_samples_map(manifest)
+    mixtures_map = build_mixtures_map(manifest)
 
     # Validate all samples have IDs
     for i, sample in enumerate(manifest["samples"]):
@@ -73,6 +93,22 @@ def validate_manifest(manifest: Dict[str, Any]) -> None:
             print(f"ERROR: Mixture '{mixture.get('id')}' is missing required 'channels' field")
             sys.exit(1)
 
+        # Validate mixture has at least one non-empty channel
+        channels = mixture.get("channels", {})
+        non_empty_channels = {k: v for k, v in channels.items() if v}
+        if not non_empty_channels:
+            print(f"ERROR: Mixture '{mixture.get('id')}' has no non-empty channels")
+            sys.exit(1)
+
+        # Validate all non-empty channels reference valid samples
+        for channel_label, sample_id in channels.items():
+            if sample_id and sample_id not in samples_map:
+                print(
+                    f"ERROR: Mixture '{mixture.get('id')}' channel '{channel_label}' "
+                    f"references non-existent sample '{sample_id}'"
+                )
+                sys.exit(1)
+
     # Validate all runs have file, sample, or mixture
     for i, run in enumerate(manifest["runs"]):
         if not run.get("file"):
@@ -86,6 +122,26 @@ def validate_manifest(manifest: Dict[str, Any]) -> None:
         if has_sample and has_mixture:
             print(f"ERROR: Run at index {i} (file '{run.get('file')}') cannot have both 'sample' and 'mixture'")
             sys.exit(1)
+
+        # Validate run references valid sample if sample is specified
+        if has_sample:
+            sample_id = run.get("sample")
+            if sample_id not in samples_map:
+                print(
+                    f"ERROR: Run at index {i} (file '{run.get('file')}') "
+                    f"references non-existent sample '{sample_id}'"
+                )
+                sys.exit(1)
+
+        # Validate run references valid mixture if mixture is specified
+        if has_mixture:
+            mixture_id = run.get("mixture")
+            if mixture_id not in mixtures_map:
+                print(
+                    f"ERROR: Run at index {i} (file '{run.get('file')}') "
+                    f"references non-existent mixture '{mixture_id}'"
+                )
+                sys.exit(1)
 
 
 def extract_modifications(manifest: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, str]]:
@@ -370,18 +426,20 @@ def generate_openms_experimental_design(manifest: Dict[str, Any]) -> str:
                     # Skip empty channels
                     continue
 
-                if channel_sample_id in samples_map:
-                    sample_info = samples_map[channel_sample_id]
-                    sample_name = channel_sample_id
-                    condition = sample_info.get("condition", "unknown")
-                    bio_rep = sample_info.get("biological_replicate", 1)
-                    tech_rep = sample_info.get("technical_replicate", 1)
-                    replicate_id = f"{bio_rep}_{tech_rep}"
-                else:
-                    # Sample not found in samples_map but referenced in channel
-                    sample_name = channel_sample_id
-                    condition = "unknown"
-                    replicate_id = "1"
+                if channel_sample_id not in samples_map:
+                    # This should have been caught by validate_manifest
+                    print(
+                        f"ERROR: Mixture '{mixture_id}' channel '{channel_label}' "
+                        f"references non-existent sample '{channel_sample_id}'"
+                    )
+                    sys.exit(1)
+
+                sample_info = samples_map[channel_sample_id]
+                sample_name = channel_sample_id
+                condition = sample_info.get("condition", "unknown")
+                bio_rep = sample_info.get("biological_replicate", 1)
+                tech_rep = sample_info.get("technical_replicate", 1)
+                replicate_id = f"{bio_rep}_{tech_rep}"
 
                 # FIXED: Include mixture_id to ensure uniqueness across batches/mixtures
                 # This prevents collisions when the same channel label appears in different mixtures
@@ -398,23 +456,12 @@ def generate_openms_experimental_design(manifest: Dict[str, Any]) -> str:
                 ]
                 rows.append(row)
         else:
-            # Fallback for runs without sample or mixture reference
-            sample_name = "unknown"
-            condition = "unknown"
-            replicate_id = "1"
-
-            fraction_group = sample_name
-            fraction_id = str(fraction)
-
-            row = [
-                fraction_group,
-                fraction_id,
-                file_path,
-                sample_name,
-                condition,
-                replicate_id,
-            ]
-            rows.append(row)
+            # This should never be reached if validate_manifest() was called
+            print(
+                f"ERROR: Run with file '{file_path}' has neither valid sample nor valid mixture. "
+                "This indicates invalid manifest state (validate_manifest should have caught this)."
+            )
+            sys.exit(1)
 
     # Build TSV
     tsv_lines = ["\t".join(headers)]
