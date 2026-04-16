@@ -168,7 +168,7 @@ class JSpreadsheetEditor:
 
     def render(self) -> None:
         """Render the spreadsheet editor in NiceGUI into proper container."""
-        self.container = ui.element('div').classes('w-full min-h-96 overflow-hidden rounded border border-gray-200 bg-white')
+        self.container = ui.element('div').classes('w-full min-h-96 overflow-auto rounded border border-gray-200 bg-white')
 
         self._get_registry('_instances', dict)[self.widget_id] = self
         self.prepare_client_runtime()
@@ -248,19 +248,36 @@ class JSpreadsheetEditor:
                     return false;
                 }}
 
-                const columns = headers.map(header => {{
-                    const title = header
-                        .replace(/_/g, ' ')
-                        .replace(/\\b\\w/g, letter => letter.toUpperCase());
-                    const width = header === 'file' ? 320 : 140;
-                    return {{ title, width }};
-                }});
-
+                // Lookup container first, before calculating widths
                 const container = document.getElementById(containerId);
                 if (!container) {{
                     console.error('Container element not found:', containerId);
                     return false;
                 }}
+
+                // Calculate responsive column widths based on container width
+                const containerWidth = container.offsetWidth || container.clientWidth || 800;
+                const minFileColWidth = 200;  // Minimum width for file column
+                const minOtherColWidth = 100;  // Minimum width for other columns
+
+                const numCols = headers.length;
+                const fileColsCount = 1;  // 'file' column
+                const otherColsCount = numCols - fileColsCount;
+
+                // Reserve space for file column, distribute remainder equally
+                const remainingWidth = Math.max(0, containerWidth - minFileColWidth - (otherColsCount * minOtherColWidth));
+                const additionalFileWidth = remainingWidth * 0.6;  // File column gets 60% of extra space
+                const additionalOtherWidth = remainingWidth * 0.4 / Math.max(1, otherColsCount);
+
+                const columns = headers.map(header => {{
+                    const title = header
+                        .replace(/_/g, ' ')
+                        .replace(/\\b\\w/g, letter => letter.toUpperCase());
+                    const width = header === 'file'
+                        ? Math.max(minFileColWidth, minFileColWidth + additionalFileWidth)
+                        : Math.max(minOtherColWidth, minOtherColWidth + additionalOtherWidth);
+                    return {{ title, width }};
+                }});
 
                 if (window.jspreadsheet && typeof window.jspreadsheet.destroy === 'function' && container.spreadsheet) {{
                     try {{

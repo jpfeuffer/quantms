@@ -43,16 +43,16 @@ class TestBrowserValidationRuns:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         refresh_ui_called = False
-        
+
         def refresh_ui():
             nonlocal refresh_ui_called
             refresh_ui_called = True
-        
+
         # Verify the function is callable
         assert callable(create_runs_step)
-        
+
         # Verify it accepts the right parameters
         import inspect
         sig = inspect.signature(create_runs_step)
@@ -67,13 +67,13 @@ class TestBrowserValidationRuns:
         """
         wizard1 = WizardState()
         wizard1.add_run(file="/data/test1.raw")
-        
+
         wizard2 = WizardState()
         wizard2.add_run(file="/data/test2.raw")
-        
+
         editor1 = JSpreadsheetEditor(wizard1, MagicMock())
         editor2 = JSpreadsheetEditor(wizard2, MagicMock())
-        
+
         # Each editor should have unique widget_id
         assert editor1.widget_id != editor2.widget_id
         assert editor1.widget_id.startswith('jse_')
@@ -87,22 +87,22 @@ class TestBrowserValidationRuns:
         wizard = WizardState()
         wizard.add_run(file="/data/test1.raw", sample="sample1", fraction=1)
         wizard.add_run(file="/data/test2.raw", sample="sample2", fraction=2)
-        
+
         editor = JSpreadsheetEditor(wizard, MagicMock())
         data = editor.bridge.get_spreadsheet_data()
-        
+
         # Should have headers and data
         assert "headers" in data
         assert "data" in data
-        
+
         # Headers should be list of field names
         assert isinstance(data["headers"], list)
         assert len(data["headers"]) > 0
-        
+
         # Data should be list of rows
         assert isinstance(data["data"], list)
         assert len(data["data"]) == 2
-        
+
         # Each row should be a list matching header count
         for row in data["data"]:
             assert len(row) == len(data["headers"])
@@ -114,33 +114,33 @@ class TestBrowserValidationRuns:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         editor = JSpreadsheetEditor(wizard, MagicMock())
-        
+
         # Check widget_id is properly generated
         assert editor.widget_id is not None
         assert len(editor.widget_id) > 0
-        
+
         # The JavaScript should reference this widget_id
         # and use getElementById with the container_id
-        
+
         from unittest.mock import patch
-        
+
         with patch('jspreadsheet_editor.ui.run_javascript') as mock_run_js:
             with patch('jspreadsheet_editor.ui.element') as mock_element:
                 mock_container = MagicMock()
                 mock_container.id = 'c67890'
                 mock_container.classes = MagicMock(return_value=mock_container)
                 mock_element.return_value = mock_container
-                
+
                 editor.render()
-                
+
                 # Get all JavaScript calls
                 js_calls = [call_args[0][0] for call_args in mock_run_js.call_args_list]
-                
+
                 # Container ID should be referenced in the initialization
                 assert any('c67890' in call for call in js_calls)
-                
+
                 # Widget ID should be used for scoping
                 assert any(editor.widget_id in call for call in js_calls)
 
@@ -151,20 +151,20 @@ class TestBrowserValidationRuns:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         editor = JSpreadsheetEditor(wizard, MagicMock())
-        
+
         # Should have handler methods
         assert hasattr(editor, 'handle_cell_edit')
         assert callable(editor.handle_cell_edit)
-        
+
         assert hasattr(editor, 'handle_row_delete')
         assert callable(editor.handle_row_delete)
-        
+
         # These should work without errors
         editor.handle_cell_edit(0, 0, "new_value")
         assert wizard.runs[0]["file"] == "new_value"
-        
+
         # Can't delete if only one row, so add another first
         wizard.add_run(file="/data/test2.raw")
         editor.handle_row_delete(0)
@@ -180,17 +180,17 @@ class TestRunsTableVisibility:
         label indicating the spreadsheet widget should be visible.
         """
         wizard = WizardState()
-        
+
         # No runs - table label should not appear
         assert len(wizard.runs) == 0
-        
+
         # Add runs
         wizard.add_run(file="/data/test1.raw")
         wizard.add_run(file="/data/test2.raw")
-        
+
         # Now table label should appear
         assert len(wizard.runs) == 2
-        
+
         # The create_runs_step would show:
         # "Runs Table (2 file(s))"
         label_text = f"Runs Table ({len(wizard.runs)} file(s))"
@@ -210,16 +210,16 @@ class TestWidgetIDScoping:
         wizards = [WizardState() for _ in range(3)]
         editors = []
         widget_ids = set()
-        
+
         for wizard in wizards:
             wizard.add_run(file="/data/test.raw")
             editor = JSpreadsheetEditor(wizard, MagicMock())
             editors.append(editor)
             widget_ids.add(editor.widget_id)
-        
+
         # All widget IDs should be unique
         assert len(widget_ids) == 3
-        
+
         # Each should have proper format
         for widget_id in widget_ids:
             assert widget_id.startswith('jse_')
@@ -231,23 +231,23 @@ class TestWidgetIDScoping:
         """
         wizard1 = WizardState()
         wizard1.add_run(file="/data/test1.raw", sample="sample1")
-        
+
         wizard2 = WizardState()
         wizard2.add_run(file="/data/test2.raw", sample="sample2")
-        
+
         editor1 = JSpreadsheetEditor(wizard1, MagicMock())
         editor2 = JSpreadsheetEditor(wizard2, MagicMock())
-        
+
         # Simulate edit in editor1
         editor1.handle_cell_edit(0, 1, "new_sample1")
-        
+
         # Verify wizard1 changed but wizard2 didn't
         assert wizard1.runs[0]["sample"] == "new_sample1"
         assert wizard2.runs[0]["sample"] == "sample2"
-        
+
         # Simulate edit in editor2
         editor2.handle_cell_edit(0, 1, "new_sample2")
-        
+
         # Verify wizard2 changed
         assert wizard2.runs[0]["sample"] == "new_sample2"
         assert wizard1.runs[0]["sample"] == "new_sample1"  # Unchanged

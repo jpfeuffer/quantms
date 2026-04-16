@@ -49,12 +49,12 @@ class TestJSpreadsheetBridge:
         assert "headers" in data
         assert "data" in data
         assert data["headers"] == ["file", "fraction", "instrument"]
-        
+
         # Verify data rows
         assert len(data["data"]) == 2
         assert data["data"][0][0] == "/data/s1.raw"  # file column
         assert data["data"][0][1] == 1  # fraction column
-        
+
         assert data["data"][1][0] == "/data/s2.raw"
         assert data["data"][1][1] == 2  # fraction column
         assert data["data"][1][2] == "Orbitrap"  # instrument column
@@ -112,7 +112,7 @@ class TestJSpreadsheetBridge:
         wizard = WizardState()
         wizard.add_run(file="/data/s1.raw")
         wizard.add_run(file="/data/s2.raw")
-        
+
         assert len(wizard.runs) == 2
 
         bridge = JSpreadsheetBridge(wizard)
@@ -162,7 +162,7 @@ class TestJSpreadsheetBridge:
 
         # Clear instrument field (column 2)
         bridge.handle_cell_edit(row_index=0, col_index=2, new_value="")
-        
+
         # Verify field was removed (not in the dict)
         assert "instrument" not in wizard.runs[0] or wizard.runs[0]["instrument"] is None
 

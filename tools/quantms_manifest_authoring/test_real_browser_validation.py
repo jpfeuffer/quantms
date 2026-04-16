@@ -206,4 +206,3 @@ def test_nicegui_startup():
 if __name__ == "__main__":
     success = test_nicegui_startup()
     sys.exit(0 if success else 1)
-

@@ -28,7 +28,7 @@ from gui_nicegui import create_runs_step
 
 class MockUIElements:
     """Mock NiceGUI UI elements for testing."""
-    
+
     def __init__(self):
         self.cards = []
         self.labels = []
@@ -131,7 +131,7 @@ class TestRunsStepRuntimeValidation:
             mock_editor_ui.run_javascript = MagicMock()
             mock_editor_ui.notify = MagicMock()
             mock_app.add_head_html = MagicMock()
-            
+
             create_runs_step(wizard, refresh_ui)
 
             # Verify spreadsheet label was created
@@ -254,7 +254,7 @@ class TestRunsStepRuntimeValidation:
 
             # Check key UI elements are present
             labels_text = " ".join(str(l) for l in mock_ui.labels)
-            
+
             assert "Add Raw" in labels_text or "Step 1" in labels_text, "Title/step not found"
             assert "Supported formats" in labels_text, "Format info not found"
 

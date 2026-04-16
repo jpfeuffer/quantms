@@ -36,10 +36,10 @@ class TestJSpreadsheetEditor:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
-        
+
         # Verify initialization
         assert editor.wizard is wizard
         assert editor.bridge is not None
@@ -53,12 +53,12 @@ class TestJSpreadsheetEditor:
         wizard = WizardState()
         wizard.add_run(file="/data/s1.raw", fraction=1)
         wizard.add_run(file="/data/s2.raw", fraction=2)
-        
+
         editor = JSpreadsheetEditor(wizard, MagicMock())
-        
+
         # Get initialization data
         data = editor.bridge.get_spreadsheet_data()
-        
+
         assert "headers" in data
         assert "data" in data
         assert len(data["data"]) == 2
@@ -70,16 +70,16 @@ class TestJSpreadsheetEditor:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw", fraction=1)
-        
+
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
-        
+
         # Simulate cell edit: change fraction from 1 to 5
         editor.handle_cell_edit(row_index=0, col_index=1, new_value="5")
-        
+
         # Verify wizard was updated
         assert wizard.runs[0]["fraction"] == 5
-        
+
         # Spreadsheet edits should not rerender the full page
         on_change.assert_not_called()
 
@@ -89,14 +89,14 @@ class TestJSpreadsheetEditor:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
-        
+
         # Try to edit with invalid value (empty required field)
         with patch("jspreadsheet_editor.ui.notify") as mock_notify:
             editor.handle_cell_edit(row_index=0, col_index=0, new_value="")
-            
+
             # Verify error notification
             mock_notify.assert_called()
             assert "Error" in str(mock_notify.call_args)
@@ -108,17 +108,17 @@ class TestJSpreadsheetEditor:
         wizard = WizardState()
         wizard.add_run(file="/data/s1.raw")
         wizard.add_run(file="/data/s2.raw")
-        
+
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
-        
+
         # Delete first row
         editor.handle_row_delete(row_index=0)
-        
+
         # Verify deletion
         assert len(wizard.runs) == 1
         assert wizard.runs[0]["file"] == "/data/s2.raw"
-        
+
         # Verify callback
         on_change.assert_called_once()
 
@@ -128,18 +128,18 @@ class TestJSpreadsheetEditor:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/existing.raw")
-        
+
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
-        
+
         # Append new file
         with patch.object(editor, "refresh"):
             editor.append_row("/data/new.raw")
-        
+
         # Verify addition
         assert len(wizard.runs) == 2
         assert wizard.runs[1]["file"] == "/data/new.raw"
-        
+
         # Verify callbacks
         on_change.assert_called_once()
 
@@ -149,7 +149,7 @@ class TestJSpreadsheetEditor:
         """
         wizard = WizardState()
         editor = JSpreadsheetEditor(wizard, MagicMock())
-        
+
         vendor_root = Path(__file__).parent / "assets" / "vendor"
 
         assert editor is not None

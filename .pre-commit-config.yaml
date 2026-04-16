@@ -5,6 +5,10 @@ repos:
       - id: prettier
         additional_dependencies:
           - prettier@3.6.2
+        exclude: |
+          (?x)^(
+              tools/quantms_manifest_authoring/assets/vendor/.*
+          )$
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -15,6 +19,7 @@ repos:
               .*ro-crate-metadata.json$|
               modules/nf-core/.*|
               subworkflows/nf-core/.*|
+              tools/quantms_manifest_authoring/assets/vendor/.*|
               .*\.snap$
           )$
       - id: end-of-file-fixer
@@ -23,5 +28,6 @@ repos:
               .*ro-crate-metadata.json$|
               modules/nf-core/.*|
               subworkflows/nf-core/.*|
+              tools/quantms_manifest_authoring/assets/vendor/.*|
               .*\.snap$
           )$
