@@ -384,6 +384,30 @@ class WizardState:
         for key, value in kwargs.items():
             self.runs[run_index][key] = value
 
+    def clear_run_field(self, run_index: int, field: str) -> None:
+        """
+        Remove a specific field from a run.
+
+        This respects encapsulation by providing an explicit public API
+        for field removal. Use for clearing optional fields that were previously set.
+
+        Args:
+            run_index: Index of the run to modify
+            field: Field name to remove (should not be 'file')
+
+        Raises:
+            IndexError: If run_index is out of range
+            ValueError: If trying to remove the required 'file' field
+        """
+        if run_index < 0 or run_index >= len(self.runs):
+            raise IndexError(f"Run index {run_index} out of range")
+
+        if field == "file":
+            raise ValueError("Cannot remove required field 'file'")
+
+        if field in self.runs[run_index]:
+            del self.runs[run_index][field]
+
     def remove_run(self, run_index: int) -> None:
         """
         Remove a run from the wizard state.

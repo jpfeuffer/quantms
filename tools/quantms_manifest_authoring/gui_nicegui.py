@@ -166,17 +166,17 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
             ui.label(f"Runs Table ({len(wizard.runs)} file(s))").classes("text-md font-semibold mt-6")
 
             # Build table headers
-            with ui.row().classes("w-full gap-2 items-center bg-gray-100 p-3 rounded font-semibold"):
-                ui.label("#").classes("w-12 text-sm")
-                ui.label("File").classes("flex-grow text-sm")
-                ui.label("Fraction").classes("w-24 text-sm")
-                ui.label("Actions").classes("w-32 text-sm")
+            with ui.row().classes("w-full gap-2 items-center bg-gray-100 p-3 rounded font-semibold border-b-2 border-gray-400"):
+                ui.label("#").classes("w-12 text-sm font-bold")
+                ui.label("File").classes("flex-grow text-sm font-bold")
+                ui.label("Fraction").classes("w-28 text-sm font-bold")
+                ui.label("Actions").classes("w-auto text-sm font-bold")
 
             # Build table rows
             for idx, run in enumerate(wizard.runs):
-                with ui.row().classes("w-full gap-2 items-center p-2 border-b"):
+                with ui.row().classes("w-full gap-2 items-center p-3 border-b hover:bg-gray-50"):
                     # Row number
-                    ui.label(f"{idx + 1}").classes("w-12 text-sm")
+                    ui.label(f"{idx + 1}").classes("w-12 text-sm font-medium")
 
                     # File path (editable)
                     file_input = ui.input(
@@ -188,9 +188,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
                     fraction_value = run.get("fraction")
                     fraction_input = ui.input(
                         value=str(fraction_value) if fraction_value is not None else "",
-                        placeholder="Fraction",
-                        type="number",
-                    ).classes("w-24")
+                        placeholder="Fraction (number)",
+                    ).classes("w-28")
 
                     # Edit and Delete buttons
                     def save_row_edit(row_idx=idx, file_inp=file_input, frac_inp=fraction_input):
@@ -227,13 +226,13 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
                         "Save",
                         on_click=save_row_edit,
                         icon="save",
-                    ).classes("px-3 py-1 text-sm")
+                    ).classes("px-4 py-2 text-sm")
 
                     ui.button(
                         "Delete",
                         on_click=delete_row,
                         icon="delete",
-                    ).classes("px-3 py-1 text-sm")
+                    ).classes("px-4 py-2 text-sm")
 
         else:
             ui.label("No runs added yet. Use 'Choose Local Files' to add MS data files.").classes(
