@@ -104,35 +104,12 @@ class ManifestEditingWizard(WizardEditor):
 
 
 def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the RUNS step UI."""
+    """Create the RUNS step UI with file-first editable table."""
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
-        ui.label("File-first approach: Add your raw data files here.").classes("text-sm text-gray-600")
+        ui.label("File-first approach: Add your raw data files and edit details in the table below.").classes("text-sm text-gray-600")
 
-        with ui.row().classes("w-full gap-4"):
-            run_file = ui.input(
-                label="File Path or S3 URI",
-                placeholder="e.g., s3://bucket/file.raw or /path/to/file.raw",
-            ).classes("flex-grow")
-
-            def add_run():
-                if not run_file.value:
-                    ui.notify("File path is required")
-                    return
-                try:
-                    wizard.add_run(file=run_file.value)
-                    ui.notify(f"Run '{run_file.value}' added")
-                    run_file.value = ""
-                    refresh_ui()
-                except Exception as e:
-                    ui.notify(f"Error: {e}", type="negative")
-
-            ui.button(
-                "Add Run",
-                on_click=add_run,
-                icon="add",
-            ).classes("px-4")
-
+        # File picker button at the top
         async def pick_local_files():
             selected_files = await MsFilePickerDialog(multiple=True)
             if not selected_files:
@@ -151,31 +128,117 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
         ui.button(
             "Choose Local Files",
             on_click=pick_local_files,
-            icon="folder",
-        ).classes("w-full mt-2")
+            icon="folder_open",
+        ).classes("w-full mt-4")
 
         ui.label("Supported formats: .raw, .mzML, .mzXML, .mgf, .ms2").classes(
             "text-xs text-gray-500 mt-2"
         )
 
-        # Display current runs
+        # Manual path entry section
+        with ui.row().classes("w-full gap-2 items-end mt-4"):
+            manual_path_input = ui.input(
+                label="Or enter file path manually",
+                placeholder="e.g., /path/to/file.raw or s3://bucket/file.raw",
+            ).classes("flex-grow")
+
+            def add_manual_path():
+                path = manual_path_input.value.strip()
+                if not path:
+                    ui.notify("Please enter a file path", type="warning")
+                    return
+                try:
+                    wizard.add_run(file=path)
+                    ui.notify(f"Added: {path}")
+                    manual_path_input.value = ""
+                    refresh_ui()
+                except Exception as e:
+                    ui.notify(f"Error adding file: {e}", type="negative")
+
+            ui.button(
+                "Add",
+                on_click=add_manual_path,
+                icon="add",
+            ).classes("px-4 py-0.5")
+
+        # Runs table: the single source of truth for run rows
         if wizard.runs:
-            with ui.expansion(
-                text=f"Current Runs ({len(wizard.runs)})",
-                icon="list",
-            ).classes("w-full mt-4"):
-                for idx, run in enumerate(wizard.runs):
-                    with ui.row().classes("w-full gap-2 items-center"):
-                        ui.label(f"#{idx + 1}: {run['file']}").classes("flex-grow text-sm")
-                        def remove_run(run_idx=idx):
-                            try:
-                                wizard.remove_run(run_idx)
-                                refresh_ui()
-                            except Exception as e:
-                                ui.notify(f"Error: {e}", type="negative")
-                        ui.button("Remove", on_click=remove_run, icon="delete").classes("px-2 py-1")
+            ui.label(f"Runs Table ({len(wizard.runs)} file(s))").classes("text-md font-semibold mt-6")
+
+            # Build table headers
+            with ui.row().classes("w-full gap-2 items-center bg-gray-100 p-3 rounded font-semibold"):
+                ui.label("#").classes("w-12 text-sm")
+                ui.label("File").classes("flex-grow text-sm")
+                ui.label("Fraction").classes("w-24 text-sm")
+                ui.label("Actions").classes("w-32 text-sm")
+
+            # Build table rows
+            for idx, run in enumerate(wizard.runs):
+                with ui.row().classes("w-full gap-2 items-center p-2 border-b"):
+                    # Row number
+                    ui.label(f"{idx + 1}").classes("w-12 text-sm")
+
+                    # File path (editable)
+                    file_input = ui.input(
+                        value=run.get("file", ""),
+                        placeholder="File path",
+                    ).classes("flex-grow")
+
+                    # Fraction (editable)
+                    fraction_value = run.get("fraction")
+                    fraction_input = ui.input(
+                        value=str(fraction_value) if fraction_value is not None else "",
+                        placeholder="Fraction",
+                        type="number",
+                    ).classes("w-24")
+
+                    # Edit and Delete buttons
+                    def save_row_edit(row_idx=idx, file_inp=file_input, frac_inp=fraction_input):
+                        try:
+                            new_file = file_inp.value
+                            if not new_file:
+                                ui.notify("File path cannot be empty", type="warning")
+                                return
+                            # Parse fraction: empty field becomes None, otherwise parse as int
+                            if frac_inp.value == "":
+                                fraction = None
+                            else:
+                                try:
+                                    fraction = int(frac_inp.value)
+                                except ValueError:
+                                    ui.notify("Fraction must be a number", type="warning")
+                                    return
+                            # Single update call with both file and fraction
+                            wizard.update_run(row_idx, file=new_file, fraction=fraction)
+                            ui.notify(f"Row {row_idx + 1} updated")
+                            refresh_ui()
+                        except Exception as e:
+                            ui.notify(f"Error: {e}", type="negative")
+
+                    def delete_row(row_idx=idx):
+                        try:
+                            wizard.remove_run(row_idx)
+                            ui.notify(f"Row {row_idx + 1} removed")
+                            refresh_ui()
+                        except Exception as e:
+                            ui.notify(f"Error: {e}", type="negative")
+
+                    ui.button(
+                        "Save",
+                        on_click=save_row_edit,
+                        icon="save",
+                    ).classes("px-3 py-1 text-sm")
+
+                    ui.button(
+                        "Delete",
+                        on_click=delete_row,
+                        icon="delete",
+                    ).classes("px-3 py-1 text-sm")
+
         else:
-            ui.label("No runs added yet").classes("text-sm text-gray-500 italic mt-4")
+            ui.label("No runs added yet. Use 'Choose Local Files' to add MS data files.").classes(
+                "text-sm text-gray-500 italic mt-6"
+            )
 
 
 def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> None:
