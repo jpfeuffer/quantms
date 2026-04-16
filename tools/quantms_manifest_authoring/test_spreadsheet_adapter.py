@@ -33,13 +33,12 @@ class TestRunFieldInfo:
     """Tests for RunFieldInfo metadata about columns."""
 
     def test_run_field_info_has_all_standard_fields(self):
-        """Test that RunFieldInfo provides all standard run fields."""
+        """Test that RunFieldInfo provides all standard run fields for the spreadsheet."""
         fields = RunFieldInfo.get_all_fields()
         assert "file" in fields
-        assert "sample" in fields
-        assert "mixture" in fields
         assert "fraction" in fields
         assert "instrument" in fields
+        # Sample and mixture are not in spreadsheet schema
 
     def test_run_field_info_file_is_required(self):
         """Test that file field is marked as required."""
@@ -47,8 +46,8 @@ class TestRunFieldInfo:
         assert field_info["required"] is True
 
     def test_run_field_info_optional_fields_not_required(self):
-        """Test that optional run fields are not required."""
-        for field in ["sample", "mixture", "fraction", "instrument"]:
+        """Test that optional run fields are not required in spreadsheet."""
+        for field in ["fraction", "instrument"]:
             field_info = RunFieldInfo.get_field_info(field)
             assert field_info["required"] is False
 
@@ -75,23 +74,17 @@ class TestSpreadsheetRow:
         row = SpreadsheetRow.from_wizard_run(run, row_index=0)
         assert row.file == "/data/sample1.raw"
         assert row.fraction == 1
-        assert row.sample is None
-        assert row.mixture is None
         assert row.instrument is None
 
     def test_spreadsheet_row_with_all_fields(self):
         """Test spreadsheet row with all fields filled."""
         run = {
             "file": "/data/sample1.raw",
-            "sample": "sample_1",
-            "mixture": "mix_1",
             "fraction": 2,
             "instrument": "Q Exactive",
         }
         row = SpreadsheetRow.from_wizard_run(run, row_index=0)
         assert row.file == "/data/sample1.raw"
-        assert row.sample == "sample_1"
-        assert row.mixture == "mix_1"
         assert row.fraction == 2
         assert row.instrument == "Q Exactive"
 
@@ -99,29 +92,27 @@ class TestSpreadsheetRow:
         """Test converting spreadsheet row back to dict."""
         original = {
             "file": "test.raw",
-            "sample": "s1",
             "fraction": 1,
         }
         row = SpreadsheetRow.from_wizard_run(original, row_index=0)
         result = row.to_dict()
         assert result["file"] == "test.raw"
-        assert result["sample"] == "s1"
         assert result["fraction"] == 1
 
     def test_spreadsheet_row_to_dict_excludes_none_values(self):
         """Test that to_dict strictly excludes None values."""
         run = {
             "file": "test.raw",
-            "sample": None,
-            "mixture": None,
+            "fraction": None,
+            "instrument": None,
         }
         row = SpreadsheetRow.from_wizard_run(run, row_index=0)
         result = row.to_dict()
         assert "file" in result
         assert result["file"] == "test.raw"
         # Must not have these keys at all
-        assert "sample" not in result
-        assert "mixture" not in result
+        assert "fraction" not in result
+        assert "instrument" not in result
 
     def test_spreadsheet_row_update(self):
         """Test updating spreadsheet row fields."""
@@ -163,7 +154,7 @@ class TestSpreadsheetAdapterBasics:
         """Test converting multiple wizard runs to spreadsheet rows."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample1.raw", fraction=1)
-        wizard.add_run(file="/data/sample2.raw", sample="sample_1", fraction=2)
+        wizard.add_run(file="/data/sample2.raw", fraction=2, instrument="Orbitrap")
         wizard.add_run(file="/data/sample3.raw")
 
         adapter = SpreadsheetAdapter(wizard)
@@ -173,7 +164,8 @@ class TestSpreadsheetAdapterBasics:
         assert rows[0].file == "/data/sample1.raw"
         assert rows[0].fraction == 1
         assert rows[1].file == "/data/sample2.raw"
-        assert rows[1].sample == "sample_1"
+        assert rows[1].fraction == 2
+        assert rows[1].instrument == "Orbitrap"
         assert rows[2].file == "/data/sample3.raw"
         assert rows[2].fraction is None
 
@@ -182,8 +174,6 @@ class TestSpreadsheetAdapterBasics:
         adapter = SpreadsheetAdapter(WizardState())
         row = SpreadsheetRow(
             file="/data/sample1.raw",
-            sample=None,
-            mixture=None,
             fraction=1,
             instrument=None,
             row_index=0,
@@ -191,8 +181,7 @@ class TestSpreadsheetAdapterBasics:
         result = adapter.spreadsheet_row_to_wizard_run(row)
         assert result["file"] == "/data/sample1.raw"
         assert result["fraction"] == 1
-        assert "sample" not in result
-        assert "mixture" not in result
+        assert "instrument" not in result
 
 
 class TestSpreadsheetAdapterSyncEdits:
@@ -225,34 +214,34 @@ class TestSpreadsheetAdapterSyncEdits:
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Get rows and add a sample
+        # Get rows and add fraction and instrument
         rows = adapter.wizard_to_spreadsheet()
-        rows[0].sample = "sample_1"
+        rows[0].instrument = "Q Exactive"
         rows[0].fraction = 1
 
         # Sync back
         adapter.spreadsheet_to_wizard(rows)
 
         # Verify
-        assert wizard.runs[0]["sample"] == "sample_1"
+        assert wizard.runs[0]["instrument"] == "Q Exactive"
         assert wizard.runs[0]["fraction"] == 1
 
     def test_adapter_remove_field_from_run(self):
         """Test removing a field from a run."""
         wizard = WizardState()
-        wizard.add_run(file="/data/sample1.raw", sample="sample_1", fraction=1)
+        wizard.add_run(file="/data/sample1.raw", instrument="Q Exactive", fraction=1)
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Get rows and clear the sample field
+        # Get rows and clear the instrument field
         rows = adapter.wizard_to_spreadsheet()
-        rows[0].sample = None
+        rows[0].instrument = None
 
         # Sync back
         adapter.spreadsheet_to_wizard(rows)
 
         # Verify
-        assert "sample" not in wizard.runs[0]
+        assert "instrument" not in wizard.runs[0]
         assert wizard.runs[0]["fraction"] == 1  # Not affected
 
     def test_adapter_update_multiple_runs(self):
@@ -266,17 +255,17 @@ class TestSpreadsheetAdapterSyncEdits:
 
         # Modify multiple rows
         rows = adapter.wizard_to_spreadsheet()
-        rows[0].sample = "s1"
-        rows[1].sample = "s2"
-        rows[2].instrument = "Q Exactive"
+        rows[0].instrument = "Q Exactive"
+        rows[1].instrument = "Orbitrap"
+        rows[2].fraction = 5
 
         # Sync back
         adapter.spreadsheet_to_wizard(rows)
 
         # Verify
-        assert wizard.runs[0]["sample"] == "s1"
-        assert wizard.runs[1]["sample"] == "s2"
-        assert wizard.runs[2]["instrument"] == "Q Exactive"
+        assert wizard.runs[0]["instrument"] == "Q Exactive"
+        assert wizard.runs[1]["instrument"] == "Orbitrap"
+        assert wizard.runs[2]["fraction"] == 5
 
     def test_adapter_sync_with_row_deletion_raises_error(self):
         """Test that syncing with fewer rows raises an error (prevent accidental deletions)."""
@@ -357,14 +346,13 @@ class TestSpreadsheetAdapterSyncEdits:
         adapter = SpreadsheetAdapter(WizardState())
         columns = adapter.get_column_headers()
 
-        # Should be ordered logically
+        # Should be ordered logically (run-level fields only)
         assert columns[0] == "file"
-        assert "sample" in columns
-        assert "mixture" in columns
         assert "fraction" in columns
         assert "instrument" in columns
         # file must be first, order of others should be consistent
         assert columns.index("file") == 0
+        assert columns == ["file", "fraction", "instrument"]
 
 
 class TestSpreadsheetAdapterEdgeCases:
@@ -381,8 +369,8 @@ class TestSpreadsheetAdapterEdgeCases:
         # Should have exactly 1 row with only file set
         assert len(rows) == 1
         assert rows[0].file == "/data/sample1.raw"
-        assert rows[0].sample is None
-        assert rows[0].mixture is None
+        assert rows[0].fraction is None
+        assert rows[0].instrument is None
 
     def test_adapter_handles_empty_string_as_none(self):
         """Test that empty strings are treated as None for optional fields."""
@@ -393,16 +381,16 @@ class TestSpreadsheetAdapterEdgeCases:
         rows = adapter.wizard_to_spreadsheet()
 
         # Set empty strings
-        rows[0].sample = ""
-        rows[0].mixture = ""
+        rows[0].fraction = ""
+        rows[0].instrument = ""
 
         # Sync
         adapter.spreadsheet_to_wizard(rows)
 
         # Empty strings should not be added to wizard - keys should not exist
         result = wizard.runs[0]
-        assert "sample" not in result
-        assert "mixture" not in result
+        assert "fraction" not in result
+        assert "instrument" not in result
 
     def test_adapter_coerces_fraction_to_int(self):
         """Test that fraction is coerced to int."""
@@ -448,19 +436,19 @@ class TestDragCopyFillDown:
     def test_copy_field_down_basic(self):
         """Test copying a field value down from one row to subsequent rows."""
         wizard = WizardState()
-        wizard.add_run(file="/data/s1.raw", sample="s1", fraction=1)
+        wizard.add_run(file="/data/s1.raw", fraction=1)
         wizard.add_run(file="/data/s2.raw", fraction=2)
         wizard.add_run(file="/data/s3.raw", fraction=3)
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Copy sample from row 0 to rows 1 and 2
-        adapter.copy_field_down("sample", from_row_index=0, to_row_index=2)
+        # Copy fraction from row 0 to rows 1 and 2
+        adapter.copy_field_down("fraction", from_row_index=0, to_row_index=2)
 
         # Verify
-        assert wizard.runs[0]["sample"] == "s1"
-        assert wizard.runs[1]["sample"] == "s1"
-        assert wizard.runs[2]["sample"] == "s1"
+        assert wizard.runs[0]["fraction"] == 1
+        assert wizard.runs[1]["fraction"] == 1
+        assert wizard.runs[2]["fraction"] == 1
 
     def test_copy_field_down_partial_range(self):
         """Test copying field to a specific range."""
@@ -484,36 +472,36 @@ class TestDragCopyFillDown:
     def test_copy_field_down_to_end_implicit(self):
         """Test that to_row_index=None copies to end of rows."""
         wizard = WizardState()
-        wizard.add_run(file="/data/s1.raw", mixture="mix_1")
+        wizard.add_run(file="/data/s1.raw", instrument="Q Exactive")
         wizard.add_run(file="/data/s2.raw")
         wizard.add_run(file="/data/s3.raw")
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Copy mixture from row 0 to end (None = last row)
-        adapter.copy_field_down("mixture", from_row_index=0, to_row_index=None)
+        # Copy instrument from row 0 to end (None = last row)
+        adapter.copy_field_down("instrument", from_row_index=0, to_row_index=None)
 
         # Verify
-        assert wizard.runs[0]["mixture"] == "mix_1"
-        assert wizard.runs[1]["mixture"] == "mix_1"
-        assert wizard.runs[2]["mixture"] == "mix_1"
+        assert wizard.runs[0]["instrument"] == "Q Exactive"
+        assert wizard.runs[1]["instrument"] == "Q Exactive"
+        assert wizard.runs[2]["instrument"] == "Q Exactive"
 
     def test_copy_field_down_with_none_value_clears_target(self):
         """Test that copying None value clears field in target rows."""
         wizard = WizardState()
         wizard.add_run(file="/data/s1.raw")
-        wizard.add_run(file="/data/s2.raw", sample="s2")
-        wizard.add_run(file="/data/s3.raw", sample="s3")
+        wizard.add_run(file="/data/s2.raw", fraction=2)
+        wizard.add_run(file="/data/s3.raw", fraction=3)
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Copy None sample from row 0 to rows 1-2
-        adapter.copy_field_down("sample", from_row_index=0, to_row_index=2)
+        # Copy None fraction from row 0 to rows 1-2
+        adapter.copy_field_down("fraction", from_row_index=0, to_row_index=2)
 
-        # Verify that sample was removed
-        assert "sample" not in wizard.runs[0]
-        assert "sample" not in wizard.runs[1]
-        assert "sample" not in wizard.runs[2]
+        # Verify that fraction was removed
+        assert "fraction" not in wizard.runs[0]
+        assert "fraction" not in wizard.runs[1]
+        assert "fraction" not in wizard.runs[2]
 
     def test_copy_field_down_invalid_field_raises_error(self):
         """Test that copying invalid field raises ValueError."""
@@ -536,31 +524,31 @@ class TestDragCopyFillDown:
 
         # to_row_index < from_row_index
         with pytest.raises(ValueError, match="must be >="):
-            adapter.copy_field_down("sample", from_row_index=1, to_row_index=0)
+            adapter.copy_field_down("fraction", from_row_index=1, to_row_index=0)
 
         # from_row_index out of range
         with pytest.raises(ValueError, match="out of range"):
-            adapter.copy_field_down("sample", from_row_index=5, to_row_index=1)
+            adapter.copy_field_down("fraction", from_row_index=5, to_row_index=1)
 
         # to_row_index out of range
         with pytest.raises(ValueError, match="out of range"):
-            adapter.copy_field_down("sample", from_row_index=0, to_row_index=5)
+            adapter.copy_field_down("fraction", from_row_index=0, to_row_index=5)
 
     def test_copy_field_down_single_row_no_op(self):
         """Test that copying within same row (no dest rows) doesn't fail."""
         wizard = WizardState()
-        wizard.add_run(file="/data/s1.raw", sample="s1")
+        wizard.add_run(file="/data/s1.raw", fraction=1)
         wizard.add_run(file="/data/s2.raw")
 
         adapter = SpreadsheetAdapter(wizard)
 
-        # Copy sample from row 0 to row 0 (should be no-op, no rows after it)
+        # Copy fraction from row 0 to row 0 (should be no-op, no rows after it)
         # Actually this is technically a no-op since from_row_index+1 > to_row_index
-        adapter.copy_field_down("sample", from_row_index=0, to_row_index=0)
+        adapter.copy_field_down("fraction", from_row_index=0, to_row_index=0)
 
         # Verify original row unchanged (and s2 unchanged)
-        assert wizard.runs[0]["sample"] == "s1"
-        assert "sample" not in wizard.runs[1]
+        assert wizard.runs[0]["fraction"] == 1
+        assert "fraction" not in wizard.runs[1]
 
     def test_copy_field_down_respects_wizard_authority(self):
         """Test that copy_field_down updates wizard state only."""
@@ -634,15 +622,15 @@ class TestWizardStateClearField:
     def test_clear_run_field_affects_spreadsheet_view(self):
         """Test that clearing field is reflected in spreadsheet view."""
         wizard = WizardState()
-        wizard.add_run(file="/data/s1.raw", sample="s1", mixture="m1")
+        wizard.add_run(file="/data/s1.raw", fraction=1, instrument="Q Exactive")
 
         adapter = SpreadsheetAdapter(wizard)
 
         # Clear via wizard API
-        wizard.clear_run_field(0, "mixture")
+        wizard.clear_run_field(0, "instrument")
 
         # Verify in spreadsheet view
         rows = adapter.wizard_to_spreadsheet()
         assert rows[0].file == "/data/s1.raw"
-        assert rows[0].sample == "s1"
-        assert rows[0].mixture is None
+        assert rows[0].fraction == 1
+        assert rows[0].instrument is None

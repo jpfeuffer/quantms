@@ -32,6 +32,41 @@ from gui_wizard_state import WizardState
 from gui_nicegui import create_runs_step
 
 
+class MockContextClient:
+    """Mock for context.client with on_connect lifecycle hook."""
+
+    def __init__(self):
+        self.on_connect_handlers = []
+        self.javascript_calls = []
+
+    def on_connect(self, handler):
+        """Register a handler to be called when client connects (mock version)."""
+        self.on_connect_handlers.append(handler)
+
+    def run_javascript(self, script):
+        """Mock implementation of run_javascript."""
+        self.javascript_calls.append(script)
+
+
+class MockContext:
+    """Mock for nicegui context module."""
+
+    def __init__(self):
+        self.client = MockContextClient()
+
+
+class MockElement:
+    """Mock for ui.element."""
+
+    def __init__(self):
+        self.html_id = "c12345"  # Simulate NiceGUI's container ID format
+        self._classes = []
+
+    def classes(self, *args):
+        self._classes.extend(args)
+        return self
+
+
 class MockUIInput:
     """Mock for ui.input that captures set/get of value."""
 
@@ -169,6 +204,18 @@ class MockUIContext:
         """Create a mock expansion (deprecated in new design)."""
         return MockUICard()
 
+    def element(self, tag):
+        """Create a mock element (container div)."""
+        return MockElement()
+
+    def on(self, event, handler):
+        """Register event handler (no-op in test context)."""
+        pass
+
+    def add_head_html(self, html):
+        """Mock add_head_html (no-op in test context)."""
+        pass
+
 
 class TestRunsStepCallbacks:
     """Tests that invoke real callback code in create_runs_step."""
@@ -201,7 +248,12 @@ class TestRunsStepCallbacks:
 
         # Keep patches active throughout the test (including callback execution)
         with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
              patch("gui_nicegui.MsFilePickerDialog", side_effect=mock_file_picker_dialog_class):
+
+            # Set up context mocks
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
 
             # Call create_runs_step with mocked UI
             create_runs_step(wizard, refresh_ui=mock_refresh_ui)
@@ -243,8 +295,13 @@ class TestRunsStepCallbacks:
 
         # Monkeypatch ui to capture the UI structure
         mock_ui_ctx = MockUIContext()
-        with patch("gui_nicegui.ui", mock_ui_ctx):
-            # Call create_runs_step with mocked UI
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor:
+
+            # Set up context mocks
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
             create_runs_step(wizard, refresh_ui=mock_refresh_ui)
 
         # Find the manual path input and the Add button
@@ -280,58 +337,10 @@ class TestRunsStepCallbacks:
         # Verify refresh_ui was called
         assert len(refresh_ui_calls) > 0
 
-    def test_save_button_callback_clears_fraction_to_none(self):
-        """
-        AC6.2: Test that the Save button callback (save_row_edit) correctly
-        handles empty fraction field as None, not "None" string.
-        """
-        wizard = WizardState()
-        wizard.add_run(file="data.raw", fraction=5)
-
-        refresh_ui_calls = []
-
-        def mock_refresh_ui():
-            refresh_ui_calls.append(True)
-
-        # Monkeypatch ui to capture the UI structure
-        mock_ui_ctx = MockUIContext()
-        with patch("gui_nicegui.ui", mock_ui_ctx):
-            create_runs_step(wizard, refresh_ui=mock_refresh_ui)
-
-        # Find the fraction input (should be created for the first run)
-        # Find inputs that look like the fraction input (placeholder="Fraction (number)")
-        fraction_inputs = [inp for inp in mock_ui_ctx.inputs if inp.placeholder == "Fraction (number)"]
-        assert len(fraction_inputs) > 0, "No fraction inputs found"
-
-        fraction_input = fraction_inputs[0]
-        # Initial value should be "5"
-        assert fraction_input.value == "5"
-
-        # Find the Save button for the first row
-        save_buttons = [btn for btn in mock_ui_ctx.buttons if btn.text == "Save"]
-        assert len(save_buttons) > 0, "No Save button found"
-
-        save_button = save_buttons[0]
-
-        # Simulate user clearing the fraction field
-        fraction_input.value = ""
-        file_inputs = [inp for inp in mock_ui_ctx.inputs if inp.placeholder == "File path"]
-        assert len(file_inputs) > 0
-        file_input = file_inputs[0]
-        file_input.value = "data.raw"
-
-        # Trigger the Save button callback
-        save_button.trigger_click()
-
-        # Verify fraction was set to None, not "None"
-        assert wizard.runs[0]["fraction"] is None
-        assert wizard.runs[0]["fraction"] != "None"
-        assert wizard.runs[0]["fraction"] != ""
-
     def test_delete_button_callback_removes_run_and_refreshes(self):
         """
-        AC6.3: Test that the Delete button callback (delete_row) correctly
-        removes the run from wizard and calls refresh_ui.
+        AC6.3: Test that when there are runs, the spreadsheet UI is created
+        with the spreadsheet editor being initialized after client connect.
         """
         wizard = WizardState()
         wizard.add_run(file="file1.raw", fraction=1)
@@ -344,47 +353,26 @@ class TestRunsStepCallbacks:
 
         # Monkeypatch ui to capture the UI structure
         mock_ui_ctx = MockUIContext()
-        with patch("gui_nicegui.ui", mock_ui_ctx):
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor:
+
+            # Set up context mocks
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
             create_runs_step(wizard, refresh_ui=mock_refresh_ui)
 
-        # Find the first Delete button
-        delete_buttons = [btn for btn in mock_ui_ctx.buttons if btn.text == "Delete"]
-        assert len(delete_buttons) > 0, "No Delete button found"
+        # Verify that the Runs Table label was created
+        runs_table_labels = [lbl for lbl in mock_ui_ctx.labels if "Runs Table" in lbl.text]
+        assert len(runs_table_labels) > 0, "Runs Table label not found"
 
-        delete_button = delete_buttons[0]
+        # Verify that the on_connect handler was registered (spreadsheet init deferred)
+        mock_context_obj = mock_context_editor.client
+        assert len(mock_context_obj.on_connect_handlers) > 0, "on_connect handler was not registered"
 
-        # Trigger the first Delete button callback
-        initial_runs = len(wizard.runs)
-        delete_button.trigger_click()
-
-        # Verify run was removed
-        assert len(wizard.runs) == initial_runs - 1
-        assert wizard.runs[0]["file"] == "file2.raw"
-
-        # Verify refresh_ui was called
-        assert len(refresh_ui_calls) > 0
-
-    def test_fraction_input_initialization_renders_none_as_empty_string(self):
-        """
-        AC6.4: Test that the fraction input initializer renders None fraction
-        as empty string, not "None" string (the fix in gui_nicegui.py).
-        """
-        wizard = WizardState()
-        wizard.add_run(file="data.raw", fraction=None)
-
-        mock_ui_ctx = MockUIContext()
-        with patch("gui_nicegui.ui", mock_ui_ctx):
-            create_runs_step(wizard, refresh_ui=lambda: None)
-
-        # Find the fraction input
-        fraction_inputs = [inp for inp in mock_ui_ctx.inputs if inp.placeholder == "Fraction (number)"]
-        assert len(fraction_inputs) > 0
-
-        fraction_input = fraction_inputs[0]
-
-        # Verify it's initialized as empty string, not "None"
-        assert fraction_input.value == ""
-        assert fraction_input.value != "None"
+        # Verify that the help/instruction label exists
+        help_labels = [lbl for lbl in mock_ui_ctx.labels if "Right-click rows to delete" in lbl.text]
+        assert len(help_labels) > 0, "Help text with delete instruction not found"
 
     def test_manual_path_entry_clears_input_after_add(self):
         """
@@ -419,45 +407,3 @@ class TestRunsStepCallbacks:
         # After successful add, input should be cleared
         # (This is done by add_manual_path callback: manual_path_input.value = "")
         assert manual_path_input.value == ""
-
-    def test_multiple_runs_edit_independent_rows(self):
-        """
-        Test that editing one run doesn't affect other runs.
-        """
-        wizard = WizardState()
-        wizard.add_run(file="file1.raw", fraction=1)
-        wizard.add_run(file="file2.raw", fraction=2)
-        wizard.add_run(file="file3.raw", fraction=3)
-
-        mock_ui_ctx = MockUIContext()
-        with patch("gui_nicegui.ui", mock_ui_ctx):
-            create_runs_step(wizard, refresh_ui=lambda: None)
-
-        # Find file inputs and fraction inputs
-        file_inputs = [inp for inp in mock_ui_ctx.inputs if inp.placeholder == "File path"]
-        fraction_inputs = [inp for inp in mock_ui_ctx.inputs if inp.placeholder == "Fraction (number)"]
-        save_buttons = [btn for btn in mock_ui_ctx.buttons if btn.text == "Save"]
-
-        assert len(file_inputs) >= 3
-        assert len(fraction_inputs) >= 3
-        assert len(save_buttons) >= 3
-
-        # Verify initial state
-        assert wizard.runs[0]["fraction"] == 1
-        assert wizard.runs[1]["fraction"] == 2
-        assert wizard.runs[2]["fraction"] == 3
-
-        # Edit second row: change fraction to None
-        fraction_inputs[1].value = ""
-        file_inputs[1].value = "file2_edited.raw"
-        save_buttons[1].trigger_click()
-
-        # Verify only second row changed
-        assert wizard.runs[0]["fraction"] == 1
-        assert wizard.runs[0]["file"] == "file1.raw"
-
-        assert wizard.runs[1]["fraction"] is None
-        assert wizard.runs[1]["file"] == "file2_edited.raw"
-
-        assert wizard.runs[2]["fraction"] == 3
-        assert wizard.runs[2]["file"] == "file3.raw"

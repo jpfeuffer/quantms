@@ -26,16 +26,6 @@ class RunFieldInfo:
             "required": True,
             "description": "Path or URI to raw/mzML file",
         },
-        "sample": {
-            "type": "str",
-            "required": False,
-            "description": "Sample ID (for LFQ)",
-        },
-        "mixture": {
-            "type": "str",
-            "required": False,
-            "description": "Mixture ID (for labeled)",
-        },
         "fraction": {
             "type": "int",
             "required": False,
@@ -75,8 +65,6 @@ class SpreadsheetRow:
     """Represents a single spreadsheet row corresponding to a run."""
 
     file: Optional[str] = None
-    sample: Optional[str] = None
-    mixture: Optional[str] = None
     fraction: Optional[int] = None
     instrument: Optional[str] = None
     row_index: int = 0
@@ -95,8 +83,6 @@ class SpreadsheetRow:
         """
         return cls(
             file=run.get("file"),
-            sample=run.get("sample"),
-            mixture=run.get("mixture"),
             fraction=run.get("fraction"),
             instrument=run.get("instrument"),
             row_index=row_index,
@@ -112,10 +98,6 @@ class SpreadsheetRow:
         result = {}
         if self.file is not None:
             result["file"] = self.file
-        if self.sample is not None:
-            result["sample"] = self.sample
-        if self.mixture is not None:
-            result["mixture"] = self.mixture
         if self.fraction is not None:
             result["fraction"] = self.fraction
         if self.instrument is not None:
@@ -141,7 +123,10 @@ class SpreadsheetRow:
 
         # Type coercion and validation
         if self.fraction is not None:
-            if isinstance(self.fraction, str):
+            # Treat empty string as None
+            if isinstance(self.fraction, str) and self.fraction.strip() == "":
+                self.fraction = None
+            elif isinstance(self.fraction, str):
                 try:
                     self.fraction = int(self.fraction)
                 except (ValueError, TypeError):
@@ -172,13 +157,13 @@ class SpreadsheetAdapter:
 
     def get_column_headers(self) -> List[str]:
         """
-        Get column headers in predictable order.
+        Get column headers in predictable order (run-level fields only).
 
         Returns:
             List of field names representing columns
         """
         # Always put 'file' first, then others in consistent order
-        return ["file", "sample", "mixture", "fraction", "instrument"]
+        return ["file", "fraction", "instrument"]
 
     def wizard_to_spreadsheet(self) -> List[SpreadsheetRow]:
         """

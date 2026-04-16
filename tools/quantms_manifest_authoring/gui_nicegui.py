@@ -25,7 +25,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nicegui import ui
 from manifest_core import ManifestState, ChannelBuilder, validate_manifest
 from gui_wizard_state import WizardState, WizardStep
+from spreadsheet_adapter import SpreadsheetAdapter, SpreadsheetRow
 from file_picker import MsFilePickerDialog
+from jspreadsheet_editor import JSpreadsheetEditor
 
 
 class WizardEditor:
@@ -104,10 +106,10 @@ class ManifestEditingWizard(WizardEditor):
 
 
 def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the RUNS step UI with file-first editable table."""
+    """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
-        ui.label("File-first approach: Add your raw data files and edit details in the table below.").classes("text-sm text-gray-600")
+        ui.label("Edit runs in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
 
         # File picker button at the top
         async def pick_local_files():
@@ -161,79 +163,23 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
                 icon="add",
             ).classes("px-4 py-0.5")
 
-        # Runs table: the single source of truth for run rows
+        JSpreadsheetEditor.prepare_client_runtime()
+
+        # Embedded jspreadsheet-ce widget
         if wizard.runs:
             ui.label(f"Runs Table ({len(wizard.runs)} file(s))").classes("text-md font-semibold mt-6")
 
-            # Build table headers
-            with ui.row().classes("w-full gap-2 items-center bg-gray-100 p-3 rounded font-semibold border-b-2 border-gray-400"):
-                ui.label("#").classes("w-12 text-sm font-bold")
-                ui.label("File").classes("flex-grow text-sm font-bold")
-                ui.label("Fraction").classes("w-28 text-sm font-bold")
-                ui.label("Actions").classes("w-auto text-sm font-bold")
+            # Create and render the spreadsheet editor
+            editor = JSpreadsheetEditor(wizard, refresh_ui)
+            editor.render()
 
-            # Build table rows
-            for idx, run in enumerate(wizard.runs):
-                with ui.row().classes("w-full gap-2 items-center p-3 border-b hover:bg-gray-50"):
-                    # Row number
-                    ui.label(f"{idx + 1}").classes("w-12 text-sm font-medium")
-
-                    # File path (editable)
-                    file_input = ui.input(
-                        value=run.get("file", ""),
-                        placeholder="File path",
-                    ).classes("flex-grow")
-
-                    # Fraction (editable)
-                    fraction_value = run.get("fraction")
-                    fraction_input = ui.input(
-                        value=str(fraction_value) if fraction_value is not None else "",
-                        placeholder="Fraction (number)",
-                    ).classes("w-28")
-
-                    # Edit and Delete buttons
-                    def save_row_edit(row_idx=idx, file_inp=file_input, frac_inp=fraction_input):
-                        try:
-                            new_file = file_inp.value
-                            if not new_file:
-                                ui.notify("File path cannot be empty", type="warning")
-                                return
-                            # Parse fraction: empty field becomes None, otherwise parse as int
-                            if frac_inp.value == "":
-                                fraction = None
-                            else:
-                                try:
-                                    fraction = int(frac_inp.value)
-                                except ValueError:
-                                    ui.notify("Fraction must be a number", type="warning")
-                                    return
-                            # Single update call with both file and fraction
-                            wizard.update_run(row_idx, file=new_file, fraction=fraction)
-                            ui.notify(f"Row {row_idx + 1} updated")
-                            refresh_ui()
-                        except Exception as e:
-                            ui.notify(f"Error: {e}", type="negative")
-
-                    def delete_row(row_idx=idx):
-                        try:
-                            wizard.remove_run(row_idx)
-                            ui.notify(f"Row {row_idx + 1} removed")
-                            refresh_ui()
-                        except Exception as e:
-                            ui.notify(f"Error: {e}", type="negative")
-
-                    ui.button(
-                        "Save",
-                        on_click=save_row_edit,
-                        icon="save",
-                    ).classes("px-4 py-2 text-sm")
-
-                    ui.button(
-                        "Delete",
-                        on_click=delete_row,
-                        icon="delete",
-                    ).classes("px-4 py-2 text-sm")
-
+            # Footer with instructions
+            ui.label(
+                "• Click cells to edit (file, fraction, instrument)\n"
+                "• Right-click rows to delete\n"
+                "• Drag-copy is supported when dragging cell borders\n"
+                "* File is required"
+            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
         else:
             ui.label("No runs added yet. Use 'Choose Local Files' to add MS data files.").classes(
                 "text-sm text-gray-500 italic mt-6"
