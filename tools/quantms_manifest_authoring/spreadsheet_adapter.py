@@ -165,6 +165,21 @@ class SpreadsheetAdapter:
         # Always put 'file' first, then others in consistent order
         return ["file", "fraction", "instrument"]
 
+    def get_field_info(self, field: str) -> Dict[str, Any]:
+        """
+        Get metadata for a field.
+
+        Args:
+            field: Field name (e.g., 'file', 'fraction', 'instrument')
+
+        Returns:
+            Dictionary with field metadata including 'type' and 'required'
+
+        Raises:
+            ValueError: If field is unknown
+        """
+        return RunFieldInfo.get_field_info(field)
+
     def wizard_to_spreadsheet(self) -> List[SpreadsheetRow]:
         """
         Convert WizardState.runs to spreadsheet rows.

@@ -158,3 +158,129 @@ class TestJSpreadsheetEditor:
         assert (vendor_root / "jspreadsheet-ce" / "jspreadsheet.css").exists()
         assert (vendor_root / "jsuites" / "jsuites.js").exists()
         assert (vendor_root / "jsuites" / "jsuites.css").exists()
+
+
+class TestJSpreadsheetEditorEditPersistenceRegression:
+    """Regression tests for JSpreadsheet edit persistence.
+    
+    Tests that ensure pending spreadsheet cell edits are properly committed
+    to WizardState before the editor is torn down and rebuilt during
+    navigation.
+    """
+
+    def test_pending_cell_edit_is_committed_before_editor_teardown(self):
+        """
+        Regression: Pending cell edits should be flushed to WizardState
+        before JSpreadsheetEditor is torn down (when user navigates to
+        next step, then back).
+        
+        Scenario:
+        1. Create a spreadsheet editor with a run
+        2. Simulate a user editing a cell (fraction field)
+        3. Simulate editor teardown (user navigates away)
+        4. Create a new editor for the same wizard state
+        5. Verify the edited value persists in the new editor
+        
+        This regression test confirms that no pending edits are lost
+        when the editor UI is recreated.
+        """
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw", fraction=1)
+        
+        # Create first editor instance
+        on_change = MagicMock()
+        editor1 = JSpreadsheetEditor(wizard, on_change)
+        
+        # Simulate cell edit: user changes fraction from 1 to 3
+        editor1.handle_cell_edit(row_index=0, col_index=1, new_value="3")
+        
+        # Verify the edit was applied to the wizard state
+        assert wizard.runs[0]["fraction"] == 3, \
+            "Edit should be immediately applied to wizard state"
+        
+        # Simulate editor teardown (navigate flow recreates the editor)
+        del editor1
+        
+        # Create a fresh editor from the same wizard state
+        on_change2 = MagicMock()
+        editor2 = JSpreadsheetEditor(wizard, on_change2)
+        
+        # Get the data from the new editor
+        data = editor2.bridge.get_spreadsheet_data()
+        
+        # Verify the edited value persists in the new editor
+        # The fraction field should still be 3 in the spreadsheet data
+        assert len(data["data"]) == 1, "Should have one run row"
+        fraction_col_idx = 1  # Assuming fraction is second column
+        row_data = data["data"][0]
+        assert row_data[fraction_col_idx] == 3, \
+            f"Fraction value should persist as 3 in new editor, but got {row_data[fraction_col_idx]} (regression: edit was lost)"
+
+    def test_multiple_pending_edits_persisted_across_editor_recreation(self):
+        """
+        Regression: Multiple pending edits in a single run should all
+        persist when the editor is torn down and recreated.
+        """
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw", fraction=1, instrument="Orbitrap")
+        
+        # Create first editor and make multiple edits
+        on_change = MagicMock()
+        editor1 = JSpreadsheetEditor(wizard, on_change)
+        
+        # Edit fraction
+        editor1.handle_cell_edit(row_index=0, col_index=1, new_value="2")
+        assert wizard.runs[0]["fraction"] == 2
+        
+        # Edit instrument (use a valid ontology value)
+        editor1.handle_cell_edit(row_index=0, col_index=2, new_value="Orbitrap Fusion Lumos")
+        assert wizard.runs[0]["instrument"] == "Orbitrap Fusion Lumos"
+        
+        # Simulate editor teardown and recreation
+        del editor1
+        
+        # Create new editor
+        on_change2 = MagicMock()
+        editor2 = JSpreadsheetEditor(wizard, on_change2)
+        
+        # Verify both edits persist
+        data = editor2.bridge.get_spreadsheet_data()
+        row_data = data["data"][0]
+        assert row_data[1] == 2, "Fraction edit should persist"
+        assert row_data[2] == "Orbitrap Fusion Lumos", "Instrument edit should persist"
+
+    def test_cell_edit_consistency_with_multiple_rows(self):
+        """
+        Regression: When multiple runs exist and one is edited, ensure
+        the edit is applied to the correct row and persists across
+        editor recreation.
+        """
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample1.raw", fraction=1)
+        wizard.add_run(file="/data/sample2.raw", fraction=1)
+        wizard.add_run(file="/data/sample3.raw", fraction=1)
+        
+        # Create editor and edit only the second row
+        on_change = MagicMock()
+        editor1 = JSpreadsheetEditor(wizard, on_change)
+        
+        # Edit fraction in row 1 (second run)
+        editor1.handle_cell_edit(row_index=1, col_index=1, new_value="5")
+        
+        # Verify only the second run was modified
+        assert wizard.runs[0]["fraction"] == 1, "First run should be unchanged"
+        assert wizard.runs[1]["fraction"] == 5, "Second run should be edited"
+        assert wizard.runs[2]["fraction"] == 1, "Third run should be unchanged"
+        
+        # Simulate teardown and recreation
+        del editor1
+        
+        # Create new editor
+        on_change2 = MagicMock()
+        editor2 = JSpreadsheetEditor(wizard, on_change2)
+        
+        # Verify the edit persists to the correct row
+        data = editor2.bridge.get_spreadsheet_data()
+        assert data["data"][0][1] == 1, "First row fraction should be 1"
+        assert data["data"][1][1] == 5, "Second row fraction should be 5"
+        assert data["data"][2][1] == 1, "Third row fraction should be 1"

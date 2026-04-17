@@ -57,6 +57,12 @@ FALLBACK_INSTRUMENT_OPTIONS = [
     {"label": "Ion Trap", "value": "Ion Trap"},
     {"label": "MALDI-TOF", "value": "MALDI-TOF"},
     {"label": "Tribrid", "value": "Tribrid"},
+    {"label": "Q Exactive", "value": "Q Exactive"},
+    {"label": "Orbitrap Exploris 480", "value": "Orbitrap Exploris 480"},
+    {"label": "Orbitrap Fusion Lumos", "value": "Orbitrap Fusion Lumos"},
+    {"label": "LTQ Orbitrap Velos", "value": "LTQ Orbitrap Velos"},
+    {"label": "TripleTOF 6600", "value": "TripleTOF 6600"},
+    {"label": "timsTOF Pro", "value": "timsTOF Pro"},
 ]
 
 FALLBACK_ORGANISM_OPTIONS = [
@@ -108,6 +114,8 @@ FALLBACK_OPTIONS_MAP = {
     "disease": FALLBACK_DISEASE_OPTIONS,
     "cell_type": FALLBACK_CELL_TYPE_OPTIONS,
 }
+
+PSI_MS_INSTRUMENT_ROOT = "MS:1000463"
 
 
 class OntologyOptionProvider:
@@ -186,13 +194,13 @@ class OntologyOptionProvider:
                 adapter = _oak_get_adapter("sqlite:obo:psi-ms")
                 self._oak_adapter = adapter
 
-            # Map field names to ontology search patterns or term collections
-            # For now, use simple field-based lookup - can be extended with more
-            # sophisticated ontology queries in future phases
+            if field == "instrument":
+                return self._get_instrument_options_from_subtree(adapter)
+
+            # Other fields still use a simple lexical fallback path for now.
             field_mapping = {
                 "enzyme": ["protease", "enzyme"],
-                "dissociation_method": ["dissociation", "ionization"],
-                "instrument": ["instrument", "mass spectrometer"],
+                "dissociation_method": ["dissociation method"],
                 "organism": ["organism", "species"],
                 "organism_part": ["tissue", "organ", "cellular component"],
                 "disease": ["disease", "disorder"],
@@ -203,40 +211,65 @@ class OntologyOptionProvider:
                 return None
 
             options = []
-            search_terms = field_mapping.get(field, [])
-
-            # For each search term, try to find matching ontology terms
-            for search_term in search_terms:
+            seen_labels = set()
+            for search_term in field_mapping[field]:
+                if not hasattr(adapter, "search"):
+                    continue
                 try:
-                    # Basic term search using adapter's search capabilities
-                    # This performs a minimal real Oaklib lookup
-                    if hasattr(adapter, "search"):
-                        # Query ontology for terms matching the search pattern
-                        # Try with limit parameter first, fall back without if unsupported
-                        try:
-                            matches = list(adapter.search(search_term, limit=5))
-                        except TypeError:
-                            # Adapter doesn't support limit parameter
-                            matches = list(adapter.search(search_term))
-
-                        for curie in matches:
-                            label = adapter.get_label(curie)
-                            if label:
-                                options.append({
-                                    "label": label,
-                                    "value": label,
-                                })
+                    try:
+                        matches = list(adapter.search(search_term, limit=50))
+                    except TypeError:
+                        matches = list(adapter.search(search_term))
                 except Exception:
-                    # Continue with next search term if one fails
                     continue
 
-            # Return options if we found any, otherwise None to trigger fallback
+                for curie in matches:
+                    label = adapter.get_label(curie)
+                    if label and label not in seen_labels:
+                        options.append({"label": label, "value": label})
+                        seen_labels.add(label)
+
             return options if options else None
 
         except Exception:
             # If anything goes wrong (adapter creation, search, etc), return None
             # to gracefully fall back to local definitions
             return None
+
+    def _get_instrument_options_from_subtree(self, adapter) -> Optional[List[Dict[str, str]]]:
+        """
+        Get PSI-MS instrument options from the instrument subtree.
+
+        Uses the PSI-MS root term `MS:1000463` (instrument) and walks descendants
+        instead of performing a broad keyword search.
+        Values remain human-readable labels because the rest of the authoring
+        flow stores instrument names, not CURIEs.
+        """
+        if not hasattr(adapter, "descendants"):
+            return None
+
+        try:
+            descendants = list(adapter.descendants(PSI_MS_INSTRUMENT_ROOT, reflexive=False))
+        except TypeError:
+            descendants = list(adapter.descendants(PSI_MS_INSTRUMENT_ROOT))
+            descendants = [curie for curie in descendants if curie != PSI_MS_INSTRUMENT_ROOT]
+
+        options = []
+        seen_labels = set()
+        for curie in descendants:
+            try:
+                label = adapter.get_label(curie)
+            except Exception:
+                continue
+
+            if not label or label in seen_labels:
+                continue
+
+            options.append({"label": label, "value": label})
+            seen_labels.add(label)
+
+        options.sort(key=lambda option: option["label"].lower())
+        return options if options else None
 
     def get_supported_fields(self) -> List[str]:
         """

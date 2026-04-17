@@ -195,9 +195,11 @@ class JSpreadsheetEditor:
         spreadsheet_data = self.bridge.get_spreadsheet_data()
         headers = spreadsheet_data["headers"]
         data = spreadsheet_data["data"]
+        column_config = spreadsheet_data.get("column_config", {})
         container_id = self.container.html_id if self.container else None
         headers_json = json.dumps(headers)
         data_json = json.dumps(data)
+        column_config_json = json.dumps(column_config)
         widget_id_json = json.dumps(self.widget_id)
         container_id_json = json.dumps(container_id)
 
@@ -206,6 +208,7 @@ class JSpreadsheetEditor:
             window.__quantmsSpreadsheetData[{widget_id_json}] = {{
                 headers: {headers_json},
                 data: {data_json},
+                column_config: {column_config_json},
                 widget_id: {widget_id_json},
                 container_id: {container_id_json}
             }};
@@ -240,6 +243,7 @@ class JSpreadsheetEditor:
 
                 const headers = spreadsheetData.headers || [];
                 const data = spreadsheetData.data || [];
+                const columnConfig = spreadsheetData.column_config || {{}};
                 const containerId = spreadsheetData.container_id;
                 const widgetId = spreadsheetData.widget_id;
 
@@ -277,6 +281,18 @@ class JSpreadsheetEditor:
                         ? Math.max(minFileColWidth, minFileColWidth + additionalFileWidth)
                         : Math.max(minOtherColWidth, minOtherColWidth + additionalOtherWidth);
                     return {{ title, width }};
+                }});
+
+                // Merge dropdown configuration from columnConfig into columns
+                headers.forEach((header, index) => {{
+                    if (columnConfig[header]) {{
+                        const config = columnConfig[header];
+                        if (config.type === 'dropdown' && config.source) {{
+                            // Merge dropdown properties into column definition
+                            columns[index].type = 'dropdown';
+                            columns[index].source = config.source;
+                        }}
+                    }}
                 }});
 
                 if (window.jspreadsheet && typeof window.jspreadsheet.destroy === 'function' && container.spreadsheet) {{

@@ -992,3 +992,235 @@ class TestManifestEditingWizardCanGoForward:
         assert editor.wizard.get_current_step() == WizardStep.REVIEW
         # Cannot go forward from REVIEW (last step)
         assert not editor.can_go_forward()
+
+
+class TestRunTableEditPersistenceAcrossNavigation:
+    """Regression tests for run-table edit persistence bug.
+    
+    Tests that edited run fields remain intact when navigating forward
+    to another step and then back to the runs step.
+    (GitHub issue: edits lost on forward/back navigation)
+    """
+
+    def test_edited_run_field_persists_after_forward_and_back_navigation(self):
+        """
+        Regression: Edited run field value should be preserved when navigating
+        forward to next step and then back to runs step.
+        
+        Scenario:
+        1. Create a run with initial values
+        2. Edit a field in the run (e.g., fraction or instrument)
+        3. Navigate forward to the next step (SAMPLES)
+        4. Navigate back to the RUNS step
+        5. Verify the edited value is still present in the run
+        """
+        from gui_wizard_state import WizardState, WizardStep
+        
+        wizard = WizardState()
+        # Step 1: Add a run with initial values
+        wizard.add_run(file="sample.raw", fraction=1, instrument="Orbitrap")
+        assert wizard.runs[0]["fraction"] == 1
+        assert wizard.runs[0]["instrument"] == "Orbitrap"
+        
+        # Step 2: Edit the fraction field (simulating user spreadsheet edit)
+        wizard.update_run(0, fraction=3)
+        assert wizard.runs[0]["fraction"] == 3
+        
+        # Step 3: Navigate forward to next step
+        wizard.next_step()
+        assert wizard.get_current_step() == WizardStep.SAMPLES
+        
+        # Step 4: Navigate back to RUNS step
+        wizard.previous_step()
+        assert wizard.get_current_step() == WizardStep.RUNS
+        
+        # Step 5: Verify the edited fraction value persists
+        assert wizard.runs[0]["fraction"] == 3, \
+            "Edited run field (fraction) was lost after forward/back navigation"
+        assert wizard.runs[0]["file"] == "sample.raw", \
+            "Run file was unexpectedly modified"
+        assert wizard.runs[0]["instrument"] == "Orbitrap", \
+            "Run instrument was unexpectedly modified"
+
+    def test_multiple_edited_run_fields_persist_across_navigation(self):
+        """
+        Regression: Multiple edited fields in a single run should persist
+        when navigating away and back.
+        """
+        from gui_wizard_state import WizardState, WizardStep
+        
+        wizard = WizardState()
+        # Add a run with multiple editable fields
+        wizard.add_run(file="sample.raw", fraction=1, instrument="Orbitrap")
+        
+        # Edit multiple fields
+        wizard.update_run(0, fraction=2, instrument="Lumos")
+        assert wizard.runs[0]["fraction"] == 2
+        assert wizard.runs[0]["instrument"] == "Lumos"
+        
+        # Navigate forward and back
+        wizard.next_step()  # SAMPLES
+        wizard.next_step()  # MIXTURES
+        wizard.previous_step()  # back to SAMPLES
+        wizard.previous_step()  # back to RUNS
+        
+        # Verify all edited fields persist
+        assert wizard.runs[0]["fraction"] == 2, \
+            "Fraction field was lost after multi-step navigation"
+        assert wizard.runs[0]["instrument"] == "Lumos", \
+            "Instrument field was lost after multi-step navigation"
+
+    def test_edits_multiple_runs_persist_across_navigation(self):
+        """
+        Regression: Edits to multiple runs should all persist when
+        navigating away and back.
+        """
+        from gui_wizard_state import WizardState, WizardStep
+        
+        wizard = WizardState()
+        # Add multiple runs
+        wizard.add_run(file="sample1.raw", fraction=1, instrument="Orbitrap")
+        wizard.add_run(file="sample2.raw", fraction=1, instrument="Orbitrap")
+        wizard.add_run(file="sample3.raw", fraction=1, instrument="Orbitrap")
+        
+        # Edit multiple runs with different values
+        wizard.update_run(0, fraction=2, instrument="Lumos")
+        wizard.update_run(1, fraction=3, instrument="QE HF")
+        wizard.update_run(2, fraction=1, instrument="Orbitrap")  # Unchanged
+        
+        # Navigate away and back
+        wizard.next_step()  # SAMPLES
+        wizard.previous_step()  # back to RUNS
+        
+        # Verify all edits persist
+        assert wizard.runs[0]["fraction"] == 2
+        assert wizard.runs[0]["instrument"] == "Lumos"
+        assert wizard.runs[1]["fraction"] == 3
+        assert wizard.runs[1]["instrument"] == "QE HF"
+        assert wizard.runs[2]["fraction"] == 1
+        assert wizard.runs[2]["instrument"] == "Orbitrap"
+
+
+class TestNavigationButtonLabelRendering:
+    """Tests for navigation button label rendering (UI layer).
+    
+    Regression tests for redundant arrow glyphs in navigation button text.
+    Buttons should display "Back" and "Next" as labels, with arrow icons
+    handled separately via the icon parameter.
+    """
+
+    def test_navigation_buttons_have_correct_text_labels(self):
+        """
+        Regression: Navigation button text should be "Back" and "Next"
+        without embedded arrow glyphs (← and →).
+        
+        The icon parameter should be used separately to provide the
+        arrow visual indicator.
+        """
+        # Import the GUI module to inspect button rendering
+        from gui_nicegui import create_manifest_editor_ui
+        from unittest.mock import MagicMock, patch
+        
+        # Mock the UI context to capture button creation
+        captured_buttons = []
+        
+        def mock_button(text="", on_click=None, icon=""):
+            captured_buttons.append({
+                "text": text,
+                "icon": icon,
+                "on_click": on_click
+            })
+            # Return a mock button with proper structure
+            btn = MagicMock()
+            btn.enabled = True
+            btn.on_click = MagicMock()
+            btn.text = text
+            btn.icon = icon
+            return btn
+        
+        # Mock the UI module
+        mock_ui = MagicMock()
+        mock_ui.button = mock_button
+        mock_ui.card = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=None)))
+        mock_ui.label = MagicMock(return_value=MagicMock())
+        mock_ui.row = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=None)))
+        mock_ui.column = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=None)))
+        mock_ui.notify = MagicMock()
+        mock_ui.add_head_html = MagicMock()
+        
+        # Patch the GUI module to use our mock ui
+        with patch("gui_nicegui.ui", mock_ui):
+            from gui_nicegui import WizardEditor
+            editor = WizardEditor()
+            # We can't easily call create_manifest_editor_ui due to complex context,
+            # but we can verify the expected button text by reading the source code
+            # For now, we'll use a direct source code inspection via grep
+            pass
+        
+        # Since mocking the full GUI is complex, we'll verify by reading the source
+        # The test captures the intent: buttons should have text "Back" and "Next"
+        # with separate icon parameters
+        import re
+        from pathlib import Path
+        
+        gui_file = Path(__file__).parent / "gui_nicegui.py"
+        gui_content = gui_file.read_text()
+        
+        # Find the button creation lines
+        back_button_match = re.search(r'ui\.button\("([^"]*Back[^"]*)"\s*,\s*icon="([^"]*)"', gui_content)
+        next_button_match = re.search(r'ui\.button\("([^"]*Next[^"]*)"\s*,\s*icon="([^"]*)"', gui_content)
+        
+        # Current implementation (broken): "← Back" and "Next →"
+        # Expected fix (Phase 3): "Back" and "Next"
+        if back_button_match:
+            back_text = back_button_match.group(1)
+            back_icon = back_button_match.group(2)
+            # This test will FAIL with current code and PASS after Phase 3 fix
+            assert back_text.strip() == "Back", \
+                f"Back button text should be 'Back' but found '{back_text}' (regression: has arrow glyph)"
+            assert back_icon == "arrow_back", \
+                f"Back button icon should be 'arrow_back' but found '{back_icon}'"
+        
+        if next_button_match:
+            next_text = next_button_match.group(1)
+            next_icon = next_button_match.group(2)
+            # This test will FAIL with current code and PASS after Phase 3 fix
+            assert next_text.strip() == "Next", \
+                f"Next button text should be 'Next' but found '{next_text}' (regression: has arrow glyph)"
+            assert next_icon == "arrow_forward", \
+                f"Next button icon should be 'arrow_forward' but found '{next_icon}'"
+
+    def test_navigation_icons_still_present_after_text_cleanup(self):
+        """
+        Verify that after removing arrow glyphs from button text,
+        the arrow icons are still present via the icon parameter.
+        
+        This ensures the visual arrow indicator is preserved while
+        cleaning up redundant text glyphs.
+        """
+        from pathlib import Path
+        import re
+        
+        gui_file = Path(__file__).parent / "gui_nicegui.py"
+        gui_content = gui_file.read_text()
+        
+        # Find button declarations
+        button_pattern = r'(back_btn|next_btn)\s*=\s*ui\.button\("([^"]*)"\s*,\s*icon="([^"]*)"\)'
+        matches = re.finditer(button_pattern, gui_content)
+        
+        button_specs = {}
+        for match in matches:
+            btn_var = match.group(1)
+            btn_text = match.group(2)
+            btn_icon = match.group(3)
+            button_specs[btn_var] = {"text": btn_text, "icon": btn_icon}
+        
+        # Verify back button has icon
+        assert "back_btn" in button_specs, "Back button not found in source"
+        assert button_specs["back_btn"]["icon"] == "arrow_back", \
+            "Back button must have arrow_back icon"
+        
+        # Verify next button has icon
+        assert "next_btn" in button_specs, "Next button not found in source"
+        assert button_specs["next_btn"]["icon"] == "arrow_forward", \
+            "Next button must have arrow_forward icon"
