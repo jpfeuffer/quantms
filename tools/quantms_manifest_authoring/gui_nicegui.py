@@ -110,6 +110,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
         ui.label("Edit runs in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
+        ui.label("(Sample and mixture assignment happens in the Assignments step)").classes("text-xs text-gray-500 italic")
 
         # File picker button at the top
         async def pick_local_files():
@@ -360,7 +361,7 @@ def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> None:
     """Create the ASSIGNMENTS step UI."""
     with ui.card().classes("w-full"):
         ui.label("Step 4: Assign Runs to Samples/Mixtures").classes("text-lg font-semibold")
-        ui.label("Link each run to its corresponding sample or mixture.").classes("text-sm text-gray-600")
+        ui.label("This is where you link each run to its corresponding sample (for LFQ) or mixture (for isobaric labeling).").classes("text-sm text-gray-600")
 
         if not wizard.runs:
             ui.label("No runs to assign").classes("text-sm text-gray-500 italic mt-4")
@@ -382,26 +383,13 @@ def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> None:
                         value=run.get("mixture"),
                         label="Assign to Mixture (isobaric)",
                     )
-                    fraction = ui.input(
-                        label="Fraction Number (optional)",
-                        value=str(run.get("fraction", "")),
-                        placeholder="e.g., 1",
-                    )
-                    instrument = ui.input(
-                        label="Instrument (optional)",
-                        value=run.get("instrument", ""),
-                        placeholder="e.g., Orbitrap Exploris",
-                    )
 
                     def save_assignment(idx=run_idx):
                         try:
-                            frac = int(fraction.value) if fraction.value else None
                             wizard.assign_run(
                                 run_index=idx,
                                 sample=sample_sel.value or None,
                                 mixture=mixture_sel.value or None,
-                                fraction=frac,
-                                instrument=instrument.value or None,
                             )
                             ui.notify(f"Run {idx + 1} updated")
                             refresh_ui()
