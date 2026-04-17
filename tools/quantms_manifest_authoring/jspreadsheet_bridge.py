@@ -3,15 +3,15 @@
 jspreadsheet bridge for translating between JavaScript spreadsheet events and WizardState.
 
 This bridge handles:
-- Converting WizardState to jspreadsheet-ce data format
+- Converting WizardState to jspreadsheet-ce data format for multiple entity types (runs, samples, mixtures)
 - Syncing cell edits back to wizard via the adapter
 - Handling row deletions and appends
 - Providing column configuration for dropdown support
 """
 
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Literal
 from gui_wizard_state import WizardState
-from spreadsheet_adapter import SpreadsheetAdapter
+from spreadsheet_adapter import SpreadsheetAdapter, SampleFieldInfo, MixtureFieldInfo, RunFieldInfo
 from spreadsheet_column_config import ColumnConfigBuilder
 from ontology_provider import OntologyOptionProvider
 
@@ -21,18 +21,21 @@ class JSpreadsheetBridge:
     Bridge between jspreadsheet-ce (JavaScript) and WizardState (Python).
 
     Handles initialization of spreadsheet data from wizard state and
-    synchronization of edits/deletions back to the wizard.
+    synchronization of edits/deletions back to the wizard for multiple entity types
+    (runs, samples, mixtures).
     """
 
-    def __init__(self, wizard: WizardState, column_config_builder=None):
+    def __init__(self, wizard: WizardState, column_config_builder=None, entity_type: Literal["runs", "samples", "mixtures"] = "runs"):
         """Initialize bridge with wizard state.
 
         Args:
             wizard: WizardState instance
             column_config_builder: Optional ColumnConfigBuilder for dropdown config.
                                   If None, creates a new one.
+            entity_type: Type of entity ('runs', 'samples', or 'mixtures'). Default is 'runs'.
         """
         self.wizard = wizard
+        self.entity_type = entity_type
         self.adapter = SpreadsheetAdapter(wizard)
         self.column_config_builder = column_config_builder or ColumnConfigBuilder()
         self.option_provider = OntologyOptionProvider()
@@ -46,19 +49,33 @@ class JSpreadsheetBridge:
             Dict with 'headers', 'data', and 'column_config' keys for use in JS initialization.
             column_config describes which columns are dropdowns and their options.
         """
-        headers = self.adapter.get_column_headers()
-        rows = self.adapter.wizard_to_spreadsheet()
-
-        # Convert rows to nested lists for jspreadsheet format
-        data = []
-        for row in rows:
-            row_data = [getattr(row, field) for field in headers]
-            data.append(row_data)
+        if self.entity_type == "runs":
+            headers = self.adapter.get_column_headers()
+            rows = self.adapter.wizard_to_spreadsheet()
+            data = [[getattr(row, field, None) for field in headers] for row in rows]
+        elif self.entity_type == "samples":
+            headers = self.adapter.get_column_headers_samples()
+            rows = self.adapter.wizard_samples_to_spreadsheet()
+            data = [[getattr(row, field, None) for field in headers] for row in rows]
+        elif self.entity_type == "mixtures":
+            headers = self.adapter.get_column_headers_mixtures()
+            rows = self.adapter.wizard_mixtures_to_spreadsheet()
+            # For mixtures, flatten channels into individual columns
+            data = []
+            for row in rows:
+                row_data = [row.id]  # First column is always id
+                # Then add channel values in order of headers (skipping 'id')
+                for channel in headers[1:]:
+                    row_data.append(row.channels.get(channel, None))
+                data.append(row_data)
+        else:
+            raise ValueError(f"Unknown entity type: {self.entity_type}")
 
         # Build column configuration with dropdown support
         column_config = self.column_config_builder.build_column_config(
             headers,
-            field_info_getter=self.adapter.get_field_info,
+            field_info_getter=lambda field: self._get_field_info(field),
+            dropdown_sources=self._get_dropdown_sources(headers),
         )
 
         return {
@@ -66,6 +83,105 @@ class JSpreadsheetBridge:
             "data": data,
             "column_config": column_config,
         }
+
+
+    def _get_field_info(self, field: str) -> Dict[str, Any]:
+        """Get field info for the current entity type."""
+        if self.entity_type == "runs":
+            return RunFieldInfo.get_field_info(field)
+        elif self.entity_type == "samples":
+            return SampleFieldInfo.get_field_info(field)
+        elif self.entity_type == "mixtures":
+            if field == "id":
+                return MixtureFieldInfo.get_field_info(field)
+            return {
+                "type": "str",
+                "required": False,
+                "description": f"Sample assigned to channel {field}",
+            }
+        else:
+            raise ValueError(f"Unknown entity type: {self.entity_type}")
+
+    def _get_dropdown_sources(self, headers: list[str]) -> Dict[str, list[dict[str, str]]]:
+        """Get explicit dropdown sources for entity-specific columns."""
+        if self.entity_type != "mixtures":
+            return {}
+
+        sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
+        return {header: sample_options for header in headers if header != "id"}
+
+    def get_row_count(self) -> int:
+        """Return the number of rows managed by the current bridge."""
+        if self.entity_type == "runs":
+            return len(self.wizard.runs)
+        if self.entity_type == "samples":
+            return len(self.wizard.samples)
+        if self.entity_type == "mixtures":
+            return len(self.wizard.mixtures)
+        raise ValueError(f"Unknown entity type: {self.entity_type}")
+
+    def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
+        """Synchronize a full worksheet snapshot back into wizard state."""
+        if not isinstance(spreadsheet_data, list):
+            return
+
+        if self.entity_type == "runs":
+            rows = self.adapter.wizard_to_spreadsheet()
+            headers = self.adapter.get_column_headers()
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    if field_name == "fraction" and isinstance(value, str) and value.strip() != "":
+                        value = int(value)
+                    if field_name != "file" and value == "":
+                        value = None
+                    row.update(**{field_name: value})
+            self.adapter.spreadsheet_to_wizard(rows)
+            return
+
+        if self.entity_type == "samples":
+            rows = self.adapter.wizard_samples_to_spreadsheet()
+            headers = self.adapter.get_column_headers_samples()
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    if field_name in {"biological_replicate", "technical_replicate"}:
+                        if value == "":
+                            value = None
+                        elif isinstance(value, str):
+                            value = int(value)
+                    elif value == "":
+                        value = None
+                    row.update(**{field_name: value})
+            self.adapter.sync_sample_edits(rows)
+            return
+
+        if self.entity_type == "mixtures":
+            rows = self.adapter.wizard_mixtures_to_spreadsheet()
+            headers = self.adapter.get_column_headers_mixtures()
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                channels = {}
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    if field_name == "id":
+                        row.id = value
+                    elif value not in (None, ""):
+                        channels[field_name] = value
+                row.channels = channels
+            self.adapter.sync_mixture_edits(rows)
+            return
+
+        raise ValueError(f"Unknown entity type: {self.entity_type}")
+
 
     def handle_cell_edit(self, row_index: int, col_index: int, new_value: Any) -> None:
         """
@@ -79,6 +195,17 @@ class JSpreadsheetBridge:
         Raises:
             ValueError: If validation fails
         """
+        if self.entity_type == "runs":
+            self._handle_cell_edit_runs(row_index, col_index, new_value)
+        elif self.entity_type == "samples":
+            self._handle_cell_edit_samples(row_index, col_index, new_value)
+        elif self.entity_type == "mixtures":
+            self._handle_cell_edit_mixtures(row_index, col_index, new_value)
+        else:
+            raise ValueError(f"Unknown entity type: {self.entity_type}")
+
+    def _handle_cell_edit_runs(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for runs."""
         headers = self.adapter.get_column_headers()
         field_name = headers[col_index]
 
@@ -115,6 +242,77 @@ class JSpreadsheetBridge:
         # Sync back to wizard
         current_rows[row_index] = edited_row
         self.adapter.spreadsheet_to_wizard(current_rows)
+
+    def _handle_cell_edit_samples(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for samples."""
+        headers = self.adapter.get_column_headers_samples()
+        field_name = headers[col_index]
+
+        # Get current rows and update the edited cell
+        current_rows = self.adapter.wizard_samples_to_spreadsheet()
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        # Convert value type based on field
+        if field_name in ("biological_replicate", "technical_replicate") and new_value is not None:
+            if isinstance(new_value, str) and new_value.strip() == "":
+                new_value = None
+            elif new_value is not None:
+                try:
+                    new_value = int(new_value)
+                except (ValueError, TypeError):
+                    raise ValueError(f"{field_name} must be an integer, got: {new_value}")
+        elif field_name == "id" and (new_value is None or new_value == ""):
+            raise ValueError("Sample ID is required")
+
+        # Update the row
+        edited_row.update(**{field_name: new_value})
+
+        # Validate
+        edited_row.validate()
+
+        # Sync back to wizard
+        current_rows[row_index] = edited_row
+        self.adapter.sync_sample_edits(current_rows)
+
+    def _handle_cell_edit_mixtures(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for mixtures."""
+        headers = self.adapter.get_column_headers_mixtures()
+        field_name = headers[col_index]
+
+        # Get current rows and update the edited cell
+        current_rows = self.adapter.wizard_mixtures_to_spreadsheet()
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        if field_name == "id" and (new_value is None or new_value == ""):
+            raise ValueError("Mixture ID is required")
+
+        # If field_name is a channel, update the channels dict
+        if field_name != "id":
+            # It's a channel - update channels dict
+            if edited_row.channels is None:
+                edited_row.channels = {}
+            if new_value is None or (isinstance(new_value, str) and new_value.strip() == ""):
+                edited_row.channels.pop(field_name, None)
+            else:
+                edited_row.channels[field_name] = new_value
+        else:
+            # Regular field update
+            edited_row.update(**{field_name: new_value})
+
+        # Validate
+        edited_row.validate()
+
+        # Sync back to wizard
+        current_rows[row_index] = edited_row
+        self.adapter.sync_mixture_edits(current_rows)
 
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
@@ -177,7 +375,14 @@ class JSpreadsheetBridge:
         Raises:
             IndexError: If row index is out of range
         """
-        self.wizard.remove_run(row_index)
+        if self.entity_type == "runs":
+            self.wizard.remove_run(row_index)
+        elif self.entity_type == "samples":
+            self.wizard.remove_sample(row_index)
+        elif self.entity_type == "mixtures":
+            self.wizard.remove_mixture(row_index)
+        else:
+            raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def handle_row_append(self, file_path: str) -> None:
         """
@@ -189,4 +394,8 @@ class JSpreadsheetBridge:
         Raises:
             ValueError: If file path is invalid
         """
+        if self.entity_type != "runs":
+            raise NotImplementedError(
+                f"row append is only supported for runs, not {self.entity_type}"
+            )
         self.wizard.add_run(file=file_path)

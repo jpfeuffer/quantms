@@ -28,6 +28,7 @@ from gui_wizard_state import WizardState, WizardStep
 from spreadsheet_adapter import SpreadsheetAdapter, SpreadsheetRow
 from file_picker import MsFilePickerDialog
 from jspreadsheet_editor import JSpreadsheetEditor
+from jspreadsheet_bridge import JSpreadsheetBridge
 
 
 class WizardEditor:
@@ -172,6 +173,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
 
             # Create and render the spreadsheet editor
             editor = JSpreadsheetEditor(wizard, refresh_ui)
+            # Register the editor as the active editor for pre-navigation flush
+            wizard.set_active_editor(editor)
             editor.render()
 
             # Footer with instructions
@@ -188,81 +191,89 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
 
 
 def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the SAMPLES step UI."""
+    """Create the SAMPLES step UI with spreadsheet-native table editing."""
     with ui.card().classes("w-full"):
         ui.label("Step 2: Define Biological Samples").classes("text-lg font-semibold")
         ui.label("Create sample definitions for LFQ quantification.").classes("text-sm text-gray-600")
 
+        # Quick add form
         with ui.column().classes("w-full gap-4"):
-            sample_id = ui.input(
-                label="Sample ID",
-                placeholder="e.g., treated_rep1",
-            )
-            organism = ui.input(
-                label="Organism (optional)",
-                placeholder="e.g., homo sapiens",
-            )
-            organism_part = ui.input(
-                label="Organism Part (optional)",
-                placeholder="e.g., liver",
-            )
-            condition = ui.input(
-                label="Condition (optional)",
-                placeholder="e.g., treated",
-            )
-            bio_rep = ui.input(
-                label="Biological Replicate (optional)",
-                placeholder="e.g., 1",
-            )
+            with ui.row().classes("w-full gap-2"):
+                sample_id = ui.input(
+                    label="Sample ID",
+                    placeholder="e.g., treated_rep1",
+                ).classes("flex-grow")
+                organism = ui.input(
+                    label="Organism (optional)",
+                    placeholder="e.g., homo sapiens",
+                ).classes("flex-grow")
 
-            def add_sample():
-                if not sample_id.value:
-                    ui.notify("Sample ID is required")
-                    return
-                try:
-                    wizard.add_sample(
-                        id=sample_id.value,
-                        organism=organism.value or None,
-                        organism_part=organism_part.value or None,
-                        condition=condition.value or None,
-                        biological_replicate=int(bio_rep.value) if bio_rep.value else None,
-                    )
-                    ui.notify(f"Sample '{sample_id.value}' added")
-                    sample_id.value = ""
-                    organism.value = ""
-                    organism_part.value = ""
-                    condition.value = ""
-                    bio_rep.value = ""
-                    refresh_ui()
-                except Exception as e:
-                    ui.notify(f"Error: {e}", type="negative")
+            with ui.row().classes("w-full gap-2"):
+                organism_part = ui.input(
+                    label="Organism Part (optional)",
+                    placeholder="e.g., liver",
+                ).classes("flex-grow")
+                condition = ui.input(
+                    label="Condition (optional)",
+                    placeholder="e.g., treated",
+                ).classes("flex-grow")
 
-            ui.button("Add Sample", on_click=add_sample, icon="add").classes("w-full")
+            with ui.row().classes("w-full gap-2"):
+                bio_rep = ui.input(
+                    label="Biological Replicate (optional)",
+                    placeholder="e.g., 1",
+                ).classes("flex-grow")
 
-        # Display current samples
+                def add_sample():
+                    if not sample_id.value:
+                        ui.notify("Sample ID is required")
+                        return
+                    try:
+                        wizard.add_sample(
+                            id=sample_id.value,
+                            organism=organism.value or None,
+                            organism_part=organism_part.value or None,
+                            condition=condition.value or None,
+                            biological_replicate=int(bio_rep.value) if bio_rep.value else None,
+                        )
+                        ui.notify(f"Sample '{sample_id.value}' added")
+                        sample_id.value = ""
+                        organism.value = ""
+                        organism_part.value = ""
+                        condition.value = ""
+                        bio_rep.value = ""
+                        refresh_ui()
+                    except Exception as e:
+                        ui.notify(f"Error: {e}", type="negative")
+
+                ui.button("Add Sample", on_click=add_sample, icon="add").classes("px-4")
+
+        # Render existing samples as spreadsheet
         if wizard.samples:
-            with ui.expansion(
-                text=f"Current Samples ({len(wizard.samples)})",
-                icon="list",
-            ).classes("w-full mt-4"):
-                for idx, sample in enumerate(wizard.samples):
-                    with ui.row().classes("w-full gap-2 items-center"):
-                        ui.label(
-                            f"{sample['id']} | {sample.get('organism', 'N/A')} | {sample.get('condition', 'N/A')}"
-                        ).classes("flex-grow text-sm")
-                        def remove_sample(sample_idx=idx):
-                            try:
-                                wizard.remove_sample(sample_idx)
-                                refresh_ui()
-                            except Exception as e:
-                                ui.notify(f"Error: {e}", type="negative")
-                        ui.button("Remove", on_click=remove_sample, icon="delete").classes("px-2 py-1")
+            ui.label(f"Samples ({len(wizard.samples)})").classes("text-md font-semibold mt-6")
+            
+            JSpreadsheetEditor.prepare_client_runtime()
+            
+            # Create samples spreadsheet editor
+            bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+            editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Samples")
+            wizard.set_active_editor(editor)
+            editor.render()
+            
+            # Footer with instructions
+            ui.label(
+                "• Click cells to edit (id, organism, organism_part, condition, biological_replicate, technical_replicate)\n"
+                "• Right-click rows to delete\n"
+                "* ID is required"
+            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
         else:
-            ui.label("No samples added yet").classes("text-sm text-gray-500 italic mt-4")
+            ui.label("No samples added yet. Use 'Add Sample' to add samples.").classes(
+                "text-sm text-gray-500 italic mt-4"
+            )
 
 
 def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the MIXTURES step UI."""
+    """Create the MIXTURES step UI with spreadsheet-native table editing."""
     with ui.card().classes("w-full"):
         ui.label("Step 3: Create Multiplex Mixtures (optional)").classes("text-lg font-semibold")
         ui.label("For isobaric labeling (TMT, iTRAQ): define channel-to-sample mappings.").classes(
@@ -273,13 +284,21 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
             ui.label("Add samples first to create mixtures").classes("text-sm text-amber-600 mt-4")
             return
 
+        # Quick add form for new mixtures
         with ui.column().classes("w-full gap-4"):
-            mixture_id = ui.input(
-                label="Mixture ID",
-                placeholder="e.g., mix_1",
-            )
+            with ui.row().classes("w-full gap-2"):
+                mixture_id = ui.input(
+                    label="Mixture ID",
+                    placeholder="e.g., mix_1",
+                ).classes("flex-grow")
 
-            channels_container = ui.column().classes("w-full mt-4")
+                plex_type = ui.select(
+                    options={p: p for p in ChannelBuilder.get_supported_plex_types()},
+                    value="TMT6",
+                    label="Plex Type",
+                ).classes("flex-grow")
+
+            channels_container = ui.column().classes("w-full mt-2")
             channel_selects = {}
 
             def update_channels_ui():
@@ -292,24 +311,21 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
                     sample_ids = [s["id"] for s in wizard.samples]
 
                     with channels_container:
-                        ui.label(f"Assign {len(channels)} channels to samples:").classes("font-semibold")
-                        for idx, channel in enumerate(channels):
-                            sample_sel = ui.select(
-                                options={s: s for s in sample_ids},
-                                label=f"{channel}",
-                                value=sample_ids[idx % len(sample_ids)] if sample_ids else None,
-                            ).classes("w-full")
-                            channel_selects[channel] = sample_sel
+                        ui.label(f"Assign {len(channels)} channels to samples:").classes("font-semibold text-sm")
+                        with ui.row().classes("w-full gap-2 flex-wrap"):
+                            for idx, channel in enumerate(channels):
+                                sample_sel = ui.select(
+                                    options={s: s for s in sample_ids},
+                                    label=f"{channel}",
+                                    value=sample_ids[idx % len(sample_ids)] if sample_ids else None,
+                                ).classes("w-28")
+                                channel_selects[channel] = sample_sel
                 except Exception as e:
                     with channels_container:
                         ui.label(f"Error: {e}")
 
-            plex_type = ui.select(
-                options={p: p for p in ChannelBuilder.get_supported_plex_types()},
-                value="TMT6",
-                label="Plex Type",
-                on_change=lambda e: update_channels_ui(),
-            )
+            # Update channels UI when plex type changes
+            plex_type.on_change(lambda e: update_channels_ui())
             update_channels_ui()
 
             def add_mixture():
@@ -333,26 +349,26 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
                 except Exception as e:
                     ui.notify(f"Error: {e}", type="negative")
 
-            ui.button("Add Mixture", on_click=add_mixture, icon="add").classes("w-full mt-4")
+            ui.button("Add Mixture", on_click=add_mixture, icon="add").classes("w-full mt-2")
 
-        # Display current mixtures
+        # Render existing mixtures as spreadsheet
         if wizard.mixtures:
-            with ui.expansion(
-                text=f"Current Mixtures ({len(wizard.mixtures)})",
-                icon="list",
-            ).classes("w-full mt-4"):
-                for idx, mixture in enumerate(wizard.mixtures):
-                    with ui.row().classes("w-full gap-2 items-center"):
-                        ui.label(
-                            f"{mixture['id']} ({len(mixture['channels'])} channels)"
-                        ).classes("flex-grow text-sm")
-                        def remove_mixture(mixture_idx=idx):
-                            try:
-                                wizard.remove_mixture(mixture_idx)
-                                refresh_ui()
-                            except Exception as e:
-                                ui.notify(f"Error: {e}", type="negative")
-                        ui.button("Remove", on_click=remove_mixture, icon="delete").classes("px-2 py-1")
+            ui.label(f"Mixtures ({len(wizard.mixtures)})").classes("text-md font-semibold mt-6")
+            
+            JSpreadsheetEditor.prepare_client_runtime()
+            
+            # Create mixtures spreadsheet editor
+            bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
+            editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Mixtures")
+            wizard.set_active_editor(editor)
+            editor.render()
+            
+            # Footer with instructions
+            ui.label(
+                "• Click cells to edit (id and channel sample assignments)\n"
+                "• Right-click rows to delete\n"
+                "* ID is required"
+            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
         else:
             ui.label("No mixtures added yet (optional for LFQ)").classes("text-sm text-gray-500 italic mt-4")
 
@@ -599,19 +615,43 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
 
         # Navigation buttons
         with ui.row().classes("w-full gap-4 mt-6"):
-            back_btn = ui.button("← Back", icon="arrow_back").classes("px-6")
-            next_btn = ui.button("Next →", icon="arrow_forward").classes("px-6")
+            back_btn = ui.button("Back", icon="arrow_back").classes("px-6")
+            next_btn = ui.button("Next", icon="arrow_forward").classes("px-6")
 
-            def go_back():
+            async def go_back():
                 try:
+                    # Flush pending edits from active editor before navigating
+                    active_editor = editor.wizard.get_active_editor()
+                    if active_editor is not None:
+                        if hasattr(active_editor, 'flush_pending_edits'):
+                            flush_result = active_editor.flush_pending_edits()
+                            # If flush_pending_edits is async, await it
+                            import inspect
+                            if inspect.iscoroutine(flush_result):
+                                await flush_result
+
                     editor.wizard.previous_step()
+                    editor.wizard.set_active_editor(None)
+
                     refresh_ui()
                 except ValueError as e:
                     ui.notify(str(e), type="warning")
 
-            def go_next():
+            async def go_next():
                 try:
+                    # Flush pending edits from active editor before navigating
+                    active_editor = editor.wizard.get_active_editor()
+                    if active_editor is not None:
+                        if hasattr(active_editor, 'flush_pending_edits'):
+                            flush_result = active_editor.flush_pending_edits()
+                            # If flush_pending_edits is async, await it
+                            import inspect
+                            if inspect.iscoroutine(flush_result):
+                                await flush_result
+
                     editor.wizard.next_step()
+                    editor.wizard.set_active_editor(None)
+
                     refresh_ui()
                 except ValueError as e:
                     ui.notify(str(e), type="warning")

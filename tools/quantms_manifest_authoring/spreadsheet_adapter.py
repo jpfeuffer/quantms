@@ -180,6 +180,37 @@ class SpreadsheetAdapter:
         """
         return RunFieldInfo.get_field_info(field)
 
+    def get_column_headers_samples(self) -> List[str]:
+        """
+        Get column headers for samples in predictable order.
+
+        Returns:
+            List of field names representing columns
+        """
+        # Always put 'id' first, then others in consistent order
+        return ["id", "organism", "organism_part", "condition", "biological_replicate", "technical_replicate", "disease", "cell_type"]
+
+    def get_column_headers_mixtures(self) -> List[str]:
+        """
+        Get column headers for mixtures: id + channel columns.
+
+        Returns:
+            List of field names representing columns (id + all channel keys from current mixtures)
+        """
+        # Start with 'id'
+        headers = ["id"]
+        
+        # Add all unique channel keys from current mixtures
+        channel_keys = set()
+        for mixture in self.wizard.mixtures:
+            channel_keys.update(mixture.get("channels", {}).keys())
+        
+        # Sort channel keys for consistent order
+        headers.extend(sorted(channel_keys))
+        
+        return headers
+
+
     def wizard_to_spreadsheet(self) -> List[SpreadsheetRow]:
         """
         Convert WizardState.runs to spreadsheet rows.
@@ -327,3 +358,358 @@ class SpreadsheetAdapter:
             else:
                 # If source value is None, remove field from target if present
                 self.wizard.clear_run_field(idx, field)
+
+    def wizard_samples_to_spreadsheet(self) -> List["SampleSpreadsheetRow"]:
+        """
+        Convert WizardState.samples to spreadsheet rows.
+
+        Returns:
+            List of SampleSpreadsheetRow instances (one per sample)
+        """
+        rows = []
+        for idx, sample in enumerate(self.wizard.samples):
+            row = SampleSpreadsheetRow.from_wizard_sample(sample, row_index=idx)
+            rows.append(row)
+        return rows
+
+    def spreadsheet_row_to_wizard_sample(self, row: "SampleSpreadsheetRow") -> Dict[str, Any]:
+        """
+        Convert a spreadsheet row to a wizard sample dict.
+
+        Args:
+            row: SampleSpreadsheetRow to convert
+
+        Returns:
+            Dictionary suitable for WizardState
+        """
+        return row.to_dict()
+
+    def sync_sample_edits(self, rows: List["SampleSpreadsheetRow"]) -> None:
+        """
+        Synchronize spreadsheet rows back to WizardState samples.
+
+        This validates all rows and updates the wizard samples in-place.
+
+        Args:
+            rows: List of SampleSpreadsheetRow instances to sync
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate all rows
+        for row in rows:
+            row.validate()
+
+        # Replace wizard samples with synced rows
+        self.wizard.samples = [row.to_dict() for row in rows]
+
+    def wizard_mixtures_to_spreadsheet(self) -> List["MixtureSpreadsheetRow"]:
+        """
+        Convert WizardState.mixtures to spreadsheet rows.
+
+        Returns:
+            List of MixtureSpreadsheetRow instances (one per mixture)
+        """
+        rows = []
+        for idx, mixture in enumerate(self.wizard.mixtures):
+            row = MixtureSpreadsheetRow.from_wizard_mixture(mixture, row_index=idx)
+            rows.append(row)
+        return rows
+
+    def spreadsheet_row_to_wizard_mixture(self, row: "MixtureSpreadsheetRow") -> Dict[str, Any]:
+        """
+        Convert a spreadsheet row to a wizard mixture dict.
+
+        Args:
+            row: MixtureSpreadsheetRow to convert
+
+        Returns:
+            Dictionary suitable for WizardState
+        """
+        return row.to_dict()
+
+    def sync_mixture_edits(self, rows: List["MixtureSpreadsheetRow"]) -> None:
+        """
+        Synchronize spreadsheet rows back to WizardState mixtures.
+
+        This validates all rows and all referenced samples exist, then updates the wizard.
+
+        Args:
+            rows: List of MixtureSpreadsheetRow instances to sync
+
+        Raises:
+            ValueError: If validation fails or referenced sample does not exist
+        """
+        # Validate all rows and sample references
+        for row in rows:
+            row.validate()
+            # Validate that all referenced samples exist
+            sample_ids = {s["id"] for s in self.wizard.samples}
+            for channel, sample_id in row.channels.items():
+                if sample_id not in sample_ids:
+                    raise ValueError(
+                        f"Sample '{sample_id}' referenced in channel '{channel}' not found in samples"
+                    )
+
+        # Replace wizard mixtures with synced rows
+        self.wizard.mixtures = [row.to_dict() for row in rows]
+
+
+class SampleFieldInfo:
+    """Metadata about sample fields for the adapter."""
+
+    FIELD_METADATA = {
+        "id": {
+            "type": "str",
+            "required": True,
+            "description": "Unique sample identifier",
+        },
+        "organism": {
+            "type": "str",
+            "required": False,
+            "description": "Species (e.g., homo sapiens)",
+        },
+        "organism_part": {
+            "type": "str",
+            "required": False,
+            "description": "Tissue/compartment (e.g., liver)",
+        },
+        "condition": {
+            "type": "str",
+            "required": False,
+            "description": "Experimental condition",
+        },
+        "biological_replicate": {
+            "type": "int",
+            "required": False,
+            "description": "Biological replicate number",
+        },
+        "technical_replicate": {
+            "type": "int",
+            "required": False,
+            "description": "Technical replicate number",
+        },
+        "disease": {
+            "type": "str",
+            "required": False,
+            "description": "Disease state",
+        },
+        "cell_type": {
+            "type": "str",
+            "required": False,
+            "description": "Cell type",
+        },
+    }
+
+    @staticmethod
+    def get_all_fields() -> List[str]:
+        """Get all available field names."""
+        return list(SampleFieldInfo.FIELD_METADATA.keys())
+
+    @staticmethod
+    def get_field_info(field: str) -> Dict[str, Any]:
+        """Get metadata for a specific field."""
+        if field not in SampleFieldInfo.FIELD_METADATA:
+            raise ValueError(f"Unknown field: {field}")
+        return SampleFieldInfo.FIELD_METADATA[field]
+
+    @staticmethod
+    def get_required_fields() -> List[str]:
+        """Get list of required fields."""
+        return [
+            field
+            for field, info in SampleFieldInfo.FIELD_METADATA.items()
+            if info["required"]
+        ]
+
+
+@dataclass
+class SampleSpreadsheetRow:
+    """Represents a single spreadsheet row corresponding to a sample."""
+
+    id: Optional[str] = None
+    organism: Optional[str] = None
+    organism_part: Optional[str] = None
+    condition: Optional[str] = None
+    biological_replicate: Optional[int] = None
+    technical_replicate: Optional[int] = None
+    disease: Optional[str] = None
+    cell_type: Optional[str] = None
+    row_index: int = 0
+
+    @classmethod
+    def from_wizard_sample(cls, sample: Dict[str, Any], row_index: int = 0) -> "SampleSpreadsheetRow":
+        """
+        Create a spreadsheet row from a wizard sample dict.
+
+        Args:
+            sample: Dictionary from WizardState.samples
+            row_index: Index of this row (for reference)
+
+        Returns:
+            SampleSpreadsheetRow instance
+        """
+        return cls(
+            id=sample.get("id"),
+            organism=sample.get("organism"),
+            organism_part=sample.get("organism_part"),
+            condition=sample.get("condition"),
+            biological_replicate=sample.get("biological_replicate"),
+            technical_replicate=sample.get("technical_replicate"),
+            disease=sample.get("disease"),
+            cell_type=sample.get("cell_type"),
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert row to dict, excluding None values.
+
+        Returns:
+            Dictionary suitable for wizard.add_sample() or samples list
+        """
+        result = {}
+        if self.id is not None:
+            result["id"] = self.id
+        if self.organism is not None and (not isinstance(self.organism, str) or self.organism.strip() != ""):
+            result["organism"] = self.organism
+        if self.organism_part is not None and (not isinstance(self.organism_part, str) or self.organism_part.strip() != ""):
+            result["organism_part"] = self.organism_part
+        if self.condition is not None and (not isinstance(self.condition, str) or self.condition.strip() != ""):
+            result["condition"] = self.condition
+        if self.biological_replicate is not None:
+            result["biological_replicate"] = self.biological_replicate
+        if self.technical_replicate is not None:
+            result["technical_replicate"] = self.technical_replicate
+        if self.disease is not None and (not isinstance(self.disease, str) or self.disease.strip() != ""):
+            result["disease"] = self.disease
+        if self.cell_type is not None and (not isinstance(self.cell_type, str) or self.cell_type.strip() != ""):
+            result["cell_type"] = self.cell_type
+        return result
+
+    def validate(self) -> None:
+        """
+        Validate row against field constraints.
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Check required fields
+        if not self.id:
+            raise ValueError("Sample ID is required")
+
+        for field_name in ("biological_replicate", "technical_replicate"):
+            value = getattr(self, field_name)
+            if isinstance(value, str):
+                if value.strip() == "":
+                    setattr(self, field_name, None)
+                    continue
+                try:
+                    setattr(self, field_name, int(value))
+                except (TypeError, ValueError):
+                    raise ValueError(f"{field_name} must be an integer")
+
+    def update(self, **kwargs) -> None:
+        """Update row fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+
+class MixtureFieldInfo:
+    """Metadata about mixture fields for the adapter."""
+
+    FIELD_METADATA = {
+        "id": {
+            "type": "str",
+            "required": True,
+            "description": "Unique mixture identifier",
+        },
+    }
+
+    @staticmethod
+    def get_all_fields() -> List[str]:
+        """Get all available field names."""
+        return list(MixtureFieldInfo.FIELD_METADATA.keys())
+
+    @staticmethod
+    def get_field_info(field: str) -> Dict[str, Any]:
+        """Get metadata for a specific field."""
+        if field not in MixtureFieldInfo.FIELD_METADATA:
+            raise ValueError(f"Unknown field: {field}")
+        return MixtureFieldInfo.FIELD_METADATA[field]
+
+    @staticmethod
+    def get_required_fields() -> List[str]:
+        """Get list of required fields."""
+        return [
+            field
+            for field, info in MixtureFieldInfo.FIELD_METADATA.items()
+            if info["required"]
+        ]
+
+
+@dataclass
+class MixtureSpreadsheetRow:
+    """Represents a single spreadsheet row corresponding to a mixture."""
+
+    id: Optional[str] = None
+    channels: Dict[str, str] = None
+    row_index: int = 0
+
+    def __post_init__(self):
+        """Initialize channels dict if not provided."""
+        if self.channels is None:
+            self.channels = {}
+
+    @classmethod
+    def from_wizard_mixture(cls, mixture: Dict[str, Any], row_index: int = 0) -> "MixtureSpreadsheetRow":
+        """
+        Create a spreadsheet row from a wizard mixture dict.
+
+        Args:
+            mixture: Dictionary from WizardState.mixtures
+            row_index: Index of this row (for reference)
+
+        Returns:
+            MixtureSpreadsheetRow instance
+        """
+        return cls(
+            id=mixture.get("id"),
+            channels=mixture.get("channels", {}).copy(),
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert row to dict.
+
+        Returns:
+            Dictionary suitable for wizard.add_mixture() or mixtures list
+        """
+        result = {}
+        if self.id is not None:
+            result["id"] = self.id
+        if self.channels:
+            result["channels"] = self.channels.copy()
+        return result
+
+    def validate(self) -> None:
+        """
+        Validate row against field constraints.
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Check required fields
+        if not self.id:
+            raise ValueError("Mixture ID is required")
+        if not self.channels:
+            raise ValueError("At least one channel assignment is required")
+
+    def update(self, **kwargs) -> None:
+        """Update row fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+

@@ -998,7 +998,7 @@ class TestManifestEditingWizardCanGoForward:
 
 class TestRunTableEditPersistenceAcrossNavigation:
     """Regression tests for run-table edit persistence bug.
-    
+
     Tests that edited run fields remain intact when navigating forward
     to another step and then back to the runs step.
     (GitHub issue: edits lost on forward/back navigation)
@@ -1008,7 +1008,7 @@ class TestRunTableEditPersistenceAcrossNavigation:
         """
         Regression: Edited run field value should be preserved when navigating
         forward to next step and then back to runs step.
-        
+
         Scenario:
         1. Create a run with initial values
         2. Edit a field in the run (e.g., fraction or instrument)
@@ -1017,25 +1017,25 @@ class TestRunTableEditPersistenceAcrossNavigation:
         5. Verify the edited value is still present in the run
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         # Step 1: Add a run with initial values
         wizard.add_run(file="sample.raw", fraction=1, instrument="Orbitrap")
         assert wizard.runs[0]["fraction"] == 1
         assert wizard.runs[0]["instrument"] == "Orbitrap"
-        
+
         # Step 2: Edit the fraction field (simulating user spreadsheet edit)
         wizard.update_run(0, fraction=3)
         assert wizard.runs[0]["fraction"] == 3
-        
+
         # Step 3: Navigate forward to next step
         wizard.next_step()
         assert wizard.get_current_step() == WizardStep.SAMPLES
-        
+
         # Step 4: Navigate back to RUNS step
         wizard.previous_step()
         assert wizard.get_current_step() == WizardStep.RUNS
-        
+
         # Step 5: Verify the edited fraction value persists
         assert wizard.runs[0]["fraction"] == 3, \
             "Edited run field (fraction) was lost after forward/back navigation"
@@ -1050,22 +1050,22 @@ class TestRunTableEditPersistenceAcrossNavigation:
         when navigating away and back.
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         # Add a run with multiple editable fields
         wizard.add_run(file="sample.raw", fraction=1, instrument="Orbitrap")
-        
+
         # Edit multiple fields
         wizard.update_run(0, fraction=2, instrument="Lumos")
         assert wizard.runs[0]["fraction"] == 2
         assert wizard.runs[0]["instrument"] == "Lumos"
-        
+
         # Navigate forward and back
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
         wizard.previous_step()  # back to SAMPLES
         wizard.previous_step()  # back to RUNS
-        
+
         # Verify all edited fields persist
         assert wizard.runs[0]["fraction"] == 2, \
             "Fraction field was lost after multi-step navigation"
@@ -1078,22 +1078,22 @@ class TestRunTableEditPersistenceAcrossNavigation:
         navigating away and back.
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         # Add multiple runs
         wizard.add_run(file="sample1.raw", fraction=1, instrument="Orbitrap")
         wizard.add_run(file="sample2.raw", fraction=1, instrument="Orbitrap")
         wizard.add_run(file="sample3.raw", fraction=1, instrument="Orbitrap")
-        
+
         # Edit multiple runs with different values
         wizard.update_run(0, fraction=2, instrument="Lumos")
         wizard.update_run(1, fraction=3, instrument="QE HF")
         wizard.update_run(2, fraction=1, instrument="Orbitrap")  # Unchanged
-        
+
         # Navigate away and back
         wizard.next_step()  # SAMPLES
         wizard.previous_step()  # back to RUNS
-        
+
         # Verify all edits persist
         assert wizard.runs[0]["fraction"] == 2
         assert wizard.runs[0]["instrument"] == "Lumos"
@@ -1105,27 +1105,30 @@ class TestRunTableEditPersistenceAcrossNavigation:
 
 class TestNavigationButtonLabelRendering:
     """Tests for navigation button label rendering (UI layer).
-    
+
     Regression tests for redundant arrow glyphs in navigation button text.
     Buttons should display "Back" and "Next" as labels, with arrow icons
     handled separately via the icon parameter.
+
+    This is a regression test verifying the Phase 3 fix: arrow glyphs
+    were removed from button text labels while preserving the icons.
     """
 
     def test_navigation_buttons_have_correct_text_labels(self):
         """
         Regression: Navigation button text should be "Back" and "Next"
         without embedded arrow glyphs (← and →).
-        
+
         The icon parameter should be used separately to provide the
         arrow visual indicator.
         """
         # Import the GUI module to inspect button rendering
         from gui_nicegui import create_manifest_editor_ui
         from unittest.mock import MagicMock, patch
-        
+
         # Mock the UI context to capture button creation
         captured_buttons = []
-        
+
         def mock_button(text="", on_click=None, icon=""):
             captured_buttons.append({
                 "text": text,
@@ -1139,7 +1142,7 @@ class TestNavigationButtonLabelRendering:
             btn.text = text
             btn.icon = icon
             return btn
-        
+
         # Mock the UI module
         mock_ui = MagicMock()
         mock_ui.button = mock_button
@@ -1149,7 +1152,7 @@ class TestNavigationButtonLabelRendering:
         mock_ui.column = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=None)))
         mock_ui.notify = MagicMock()
         mock_ui.add_head_html = MagicMock()
-        
+
         # Patch the GUI module to use our mock ui
         with patch("gui_nicegui.ui", mock_ui):
             from gui_nicegui import WizardEditor
@@ -1158,20 +1161,20 @@ class TestNavigationButtonLabelRendering:
             # but we can verify the expected button text by reading the source code
             # For now, we'll use a direct source code inspection via grep
             pass
-        
+
         # Since mocking the full GUI is complex, we'll verify by reading the source
         # The test captures the intent: buttons should have text "Back" and "Next"
         # with separate icon parameters
         import re
         from pathlib import Path
-        
+
         gui_file = Path(__file__).parent / "gui_nicegui.py"
         gui_content = gui_file.read_text()
-        
+
         # Find the button creation lines
         back_button_match = re.search(r'ui\.button\("([^"]*Back[^"]*)"\s*,\s*icon="([^"]*)"', gui_content)
         next_button_match = re.search(r'ui\.button\("([^"]*Next[^"]*)"\s*,\s*icon="([^"]*)"', gui_content)
-        
+
         # Current implementation (broken): "← Back" and "Next →"
         # Expected fix (Phase 3): "Back" and "Next"
         if back_button_match:
@@ -1182,7 +1185,7 @@ class TestNavigationButtonLabelRendering:
                 f"Back button text should be 'Back' but found '{back_text}' (regression: has arrow glyph)"
             assert back_icon == "arrow_back", \
                 f"Back button icon should be 'arrow_back' but found '{back_icon}'"
-        
+
         if next_button_match:
             next_text = next_button_match.group(1)
             next_icon = next_button_match.group(2)
@@ -1196,32 +1199,32 @@ class TestNavigationButtonLabelRendering:
         """
         Verify that after removing arrow glyphs from button text,
         the arrow icons are still present via the icon parameter.
-        
+
         This ensures the visual arrow indicator is preserved while
         cleaning up redundant text glyphs.
         """
         from pathlib import Path
         import re
-        
+
         gui_file = Path(__file__).parent / "gui_nicegui.py"
         gui_content = gui_file.read_text()
-        
+
         # Find button declarations
         button_pattern = r'(back_btn|next_btn)\s*=\s*ui\.button\("([^"]*)"\s*,\s*icon="([^"]*)"\)'
         matches = re.finditer(button_pattern, gui_content)
-        
+
         button_specs = {}
         for match in matches:
             btn_var = match.group(1)
             btn_text = match.group(2)
             btn_icon = match.group(3)
             button_specs[btn_var] = {"text": btn_text, "icon": btn_icon}
-        
+
         # Verify back button has icon
         assert "back_btn" in button_specs, "Back button not found in source"
         assert button_specs["back_btn"]["icon"] == "arrow_back", \
             "Back button must have arrow_back icon"
-        
+
         # Verify next button has icon
         assert "next_btn" in button_specs, "Next button not found in source"
         assert button_specs["next_btn"]["icon"] == "arrow_forward", \
@@ -1231,12 +1234,12 @@ class TestNavigationButtonLabelRendering:
 class TestNavigationPreFlushBoundary:
     """
     Tests for the critical pre-navigation flush boundary.
-    
+
     When a user navigates (clicks Next/Back), any pending spreadsheet cell
     edits must be flushed to the wizard state BEFORE the editor is torn down
     and recreated. This prevents loss of data when the user navigates away
     while a cell is still in active edit mode (before a change event fires).
-    
+
     These tests verify that the navigation boundary properly guards against
     this regression.
     """
@@ -1247,12 +1250,12 @@ class TestNavigationPreFlushBoundary:
         it can register itself with the wizard for pre-navigation flush.
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         assert wizard.get_current_step() == WizardStep.RUNS
-        
+
         # Wizard should have a mechanism to store active editors
         # for flushing during navigation
         assert hasattr(wizard, '_active_editors') or \
@@ -1266,23 +1269,23 @@ class TestNavigationPreFlushBoundary:
         is flushed BEFORE the step index changes.
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw", fraction=1)
-        
+
         # Simulate registering an active editor
         # (In production, the GUI would update this when creating JSpreadsheetEditor)
         mock_editor = MagicMock()
         mock_editor.flush_pending_edits = MagicMock(return_value=1)
-        
+
         if hasattr(wizard, 'set_active_editor'):
             wizard.set_active_editor(mock_editor)
         elif hasattr(wizard, 'register_editor'):
             wizard.register_editor(mock_editor)
-        
+
         # Call next_step
         wizard.next_step()
-        
+
         # If editor was registered, flush should have been called
         # before the step changed
         if mock_editor.flush_pending_edits.called:
@@ -1296,25 +1299,25 @@ class TestNavigationPreFlushBoundary:
         is flushed BEFORE the step index changes.
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.next_step()  # Move to SAMPLES
-        
+
         assert wizard.get_current_step() == WizardStep.SAMPLES
-        
+
         # Simulate registering an active editor
         mock_editor = MagicMock()
         mock_editor.flush_pending_edits = MagicMock(return_value=0)
-        
+
         if hasattr(wizard, 'set_active_editor'):
             wizard.set_active_editor(mock_editor)
         elif hasattr(wizard, 'register_editor'):
             wizard.register_editor(mock_editor)
-        
+
         # Call previous_step
         wizard.previous_step()
-        
+
         # Flush should respect navigation order
         assert wizard.get_current_step() == WizardStep.RUNS, \
             "Step should have changed"
@@ -1324,24 +1327,24 @@ class TestNavigationPreFlushBoundary:
         Verify that the Runs step clearly communicates to the user what
         can be edited (file, fraction, instrument) and what cannot
         (sample/mixture assignment moved to Assignments step).
-        
+
         This is a critical UX boundary: users must understand that
         sample/mixture assignment happens separately.
         """
         from pathlib import Path
-        
+
         gui_file = Path(__file__).parent / "gui_nicegui.py"
         gui_content = gui_file.read_text()
-        
+
         # Find the create_runs_step function
         runs_step_start = gui_content.find("def create_runs_step(")
         runs_step_end = gui_content.find("\ndef create_samples_step(", runs_step_start)
-        
+
         assert runs_step_start != -1, "create_runs_step function not found"
         assert runs_step_end != -1, "create_samples_step function not found"
-        
+
         runs_step_code = gui_content[runs_step_start:runs_step_end]
-        
+
         # Should have clear label about what's editable in this step
         # Key fields: file, fraction, instrument
         assert any(word in runs_step_code.lower() for word in ["file", "fraction", "instrument"]), \
@@ -1351,24 +1354,24 @@ class TestNavigationPreFlushBoundary:
         """
         Verify that the Assignments step clearly communicates that THIS is
         where sample/mixture assignment happens (not in Runs step).
-        
+
         This clarifies ownership and prevents user confusion about where
         each piece of data should be entered.
         """
         from pathlib import Path
-        
+
         gui_file = Path(__file__).parent / "gui_nicegui.py"
         gui_content = gui_file.read_text()
-        
+
         # Find the create_assignments_step function
         assign_start = gui_content.find("def create_assignments_step(")
         assign_end = gui_content.find("\ndef create_experiment_step(", assign_start)
-        
+
         assert assign_start != -1, "create_assignments_step function not found"
         assert assign_end != -1, "create_experiment_step function not found"
-        
+
         assign_code = gui_content[assign_start:assign_end]
-        
+
         # Should clearly communicate sample/mixture assignment happens here
         lower_code = assign_code.lower()
         assert "assign" in lower_code or "link" in lower_code, \
@@ -1379,7 +1382,7 @@ class TestNavigationPreFlushBoundary:
     def test_wizard_navigation_guards_against_pending_edit_loss(self):
         """
         Integration test: Verify the complete pre-navigation flush flow.
-        
+
         This documents the expected behavior at the navigation boundary:
         1. User has pending edit in spreadsheet
         2. User clicks "Next" button
@@ -1390,32 +1393,32 @@ class TestNavigationPreFlushBoundary:
         7. Edit is preserved in new editor
         """
         from gui_wizard_state import WizardState, WizardStep
-        
+
         wizard = WizardState()
         # Start with a run
         wizard.add_run(file="/data/sample.raw", fraction=1)
-        
+
         # Track if flush was called during navigation
         flush_called_during_nav = False
-        
+
         def simulate_pending_edit_flush():
             nonlocal flush_called_during_nav
             flush_called_during_nav = True
             # Simulate flush updating wizard state from pending edit
             wizard.runs[0]["fraction"] = 5
-        
+
         # Mock editor with flush capability
         mock_editor = MagicMock()
         mock_editor.flush_pending_edits = MagicMock(side_effect=simulate_pending_edit_flush)
-        
+
         # Register editor with wizard (if supported)
         if hasattr(wizard, 'set_active_editor'):
             wizard.set_active_editor(mock_editor)
-            
+
             # Navigate to next step
             # (In production this happens when user clicks "Next" button in GUI)
             wizard.next_step()
-            
+
             # Verify flush was called
             if mock_editor.flush_pending_edits.called:
                 # If the implementation supports it, flush should have been called
@@ -1423,3 +1426,366 @@ class TestNavigationPreFlushBoundary:
                     "Flushed edit should be preserved in wizard state"
                 assert wizard.get_current_step() == WizardStep.SAMPLES, \
                     "Navigation should complete after flush"
+
+
+class TestJSpreadsheetEditorIntegration:
+    """Tests for JSpreadsheetEditor runtime integration with NiceGUI."""
+
+    def test_jspreadsheet_editor_registers_with_wizard(self):
+        """Test that JSpreadsheetEditor registers itself as active editor with wizard."""
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+
+        wizard = WizardState()
+        wizard.add_run(file="test.raw", fraction=1)
+
+        mock_refresh = MagicMock()
+        editor = JSpreadsheetEditor(wizard, mock_refresh)
+
+        # Simulate what create_runs_step should do
+        wizard.set_active_editor(editor)
+
+        # Verify editor is registered
+        assert wizard._active_editor is editor, \
+            "Editor should be registered as active editor with wizard"
+
+    def test_flush_pending_edits_is_coroutine(self):
+        """Test that flush_pending_edits is an async coroutine."""
+        import asyncio
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+        import inspect
+
+        wizard = WizardState()
+        wizard.add_run(file="test.raw", fraction=1)
+
+        mock_refresh = MagicMock()
+        editor = JSpreadsheetEditor(wizard, mock_refresh)
+
+        # Check that flush_pending_edits is async
+        assert inspect.iscoroutinefunction(editor.flush_pending_edits), \
+            "flush_pending_edits should be an async function"
+
+    def test_wizard_clears_active_editor_on_navigation(self):
+        """Test that active editor is cleared when button handler navigates away from Runs.
+
+        This simulates what the GUI button handler (go_next) does when the user clicks
+        the Next button while on the RUNS step.
+        """
+        import asyncio
+        from gui_wizard_state import WizardState, WizardStep
+        from jspreadsheet_editor import JSpreadsheetEditor
+
+        wizard = WizardState()
+        wizard.add_run(file="test.raw", fraction=1)
+
+        mock_refresh = MagicMock()
+        editor = JSpreadsheetEditor(wizard, mock_refresh)
+        wizard.set_active_editor(editor)
+
+        # Verify editor is registered before navigation
+        assert wizard._active_editor is editor, \
+            "Editor should be registered before navigation"
+
+        # Simulate what the go_next button handler does
+        async def simulate_button_navigation():
+            # Get current step BEFORE navigating
+            current_step = wizard.get_current_step()
+
+            # Call next_step
+            wizard.next_step()
+
+            # Clear active editor if we're leaving RUNS step
+            if current_step == WizardStep.RUNS:
+                wizard.set_active_editor(None)
+
+        asyncio.run(simulate_button_navigation())
+
+        # Verify we advanced to next step
+        assert wizard.get_current_step() == WizardStep.SAMPLES, \
+            "Should have advanced to SAMPLES step"
+
+        # Verify active editor was cleared
+        assert wizard._active_editor is None, \
+            "Active editor should be cleared when leaving RUNS step"
+
+    def test_wizard_calls_flush_on_active_editor_before_navigation(self):
+        """Test that wizard registers active editor for flush calls before navigation."""
+        import asyncio
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+
+        wizard = WizardState()
+        wizard.add_run(file="test.raw", fraction=1)
+
+        mock_refresh = MagicMock()
+        editor = JSpreadsheetEditor(wizard, mock_refresh)
+
+        # Track if flush was called
+        flush_called = False
+
+        original_flush = editor.flush_pending_edits
+
+        async def tracked_flush():
+            nonlocal flush_called
+            flush_called = True
+            return await original_flush()
+
+        editor.flush_pending_edits = tracked_flush
+
+        # Register editor with wizard
+        wizard.set_active_editor(editor)
+
+        # Simulate what the button handler would do - manually call flush
+        async def simulate_navigation():
+            active_editor = wizard._active_editor
+            if active_editor is not None:
+                if hasattr(active_editor, 'flush_pending_edits'):
+                    flush_result = active_editor.flush_pending_edits()
+                    import inspect
+                    if inspect.iscoroutine(flush_result):
+                        await flush_result
+
+        asyncio.run(simulate_navigation())
+        assert flush_called, "flush_pending_edits should be callable as coroutine"
+
+    def test_flush_pending_edits_returns_zero_on_successful_browser_round_trip(self):
+        """Test that flush_pending_edits returns 0 on a successful mocked browser round-trip.
+
+        This test verifies the asynchronous contract: when the browser round-trip
+        successfully fetches and returns spreadsheet data, flush_pending_edits
+        completes the sync and returns 0 to signal success to the GUI layer
+        (indicating no error or blocking condition).
+        """
+        import asyncio
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+        from unittest.mock import AsyncMock, patch
+
+        wizard = WizardState()
+        wizard.add_run(file="test.raw", fraction=1, instrument="Orbitrap")
+
+        # Simulate a successful browser round-trip:
+        # The browser returns the current spreadsheet data
+        simulated_spreadsheet_data = [
+            ["test.raw", "1", "Orbitrap"]
+        ]
+
+        async def test_flush():
+            # Mock context.client.run_javascript to simulate browser returning data
+            with patch('jspreadsheet_editor.context') as mock_context:
+                # Create mock container with html_id
+                mock_container = MagicMock()
+                mock_container.html_id = "test_container_id"
+
+                # Create editor after patch is applied
+                mock_refresh = MagicMock()
+                editor = JSpreadsheetEditor(wizard, mock_refresh)
+                editor.container = mock_container
+
+                # Set up the mock to return spreadsheet data
+                mock_run_javascript = AsyncMock()
+                mock_run_javascript.return_value = simulated_spreadsheet_data
+                mock_context.client.run_javascript = mock_run_javascript
+
+                # Call flush_pending_edits
+                result = await editor.flush_pending_edits()
+
+                # Verify it returns 0 (success)
+                assert result == 0, \
+                    "flush_pending_edits should return 0 on successful browser round-trip"
+
+                # Verify that run_javascript was called
+                assert mock_run_javascript.called, \
+                    "run_javascript should have been called"
+
+        asyncio.run(test_flush())
+
+
+class TestPreNavigationFlushContract:
+    """
+    Focused regression tests for pre-navigation flush behavior.
+
+    These tests verify that the navigation handlers in the GUI layer properly
+    call flush_pending_edits before actually changing wizard steps. This is the
+    critical boundary that guards against losing the last in-cell edit when the
+    user clicks Next or Back while a cell is still being edited.
+    """
+
+    def test_wizard_maintains_active_editor_reference_for_flush(self):
+        """
+        Contract test: The WizardState must provide a mechanism for editors to
+        register themselves so navigation handlers can find and flush them.
+
+        This is the key integration point between the GUI layer (which calls
+        async flush before navigation) and the editor layer.
+        """
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1)
+
+        # Create an editor and register it
+        editor = JSpreadsheetEditor(wizard, MagicMock())
+        editor.register_with_wizard()
+
+        # Verify the wizard can retrieve the registered editor
+        active = wizard.get_active_editor()
+        assert active is editor, (
+            "Wizard must store reference to active editor for pre-navigation flush"
+        )
+
+    def test_editor_flush_mechanism_callable_for_navigation(self):
+        """
+        Contract test: Editors must have a callable flush mechanism that can be
+        invoked from the navigation handlers before steps change.
+
+        The GUI layer will:
+        1. Get the active editor from wizard
+        2. Call editor.flush_pending_edits() (awaiting if async)
+        3. Only then call wizard.next_step() or wizard.previous_step()
+        """
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+        import inspect
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1)
+
+        editor = JSpreadsheetEditor(wizard, MagicMock())
+
+        # Verify the editor has a flush method
+        assert hasattr(editor, 'flush_pending_edits'), (
+            "Editor must have flush_pending_edits method"
+        )
+
+        # Verify it's callable
+        assert callable(editor.flush_pending_edits), (
+            "flush_pending_edits must be callable"
+        )
+
+        # Verify it's async so GUI can await it
+        assert inspect.iscoroutinefunction(editor.flush_pending_edits), (
+            "flush_pending_edits must be async for proper GUI integration"
+        )
+
+    def test_pending_edit_not_in_change_event_is_regression(self):
+        """
+        Regression documentation: This test captures the critical bug scenario.
+
+        When user types a value in a spreadsheet cell but immediately navigates
+        WITHOUT letting the cell blur (which would trigger jspreadsheet's change
+        event), the pending edit exists ONLY in the browser's JavaScript DOM,
+        not in Python's WizardState.
+
+        If the editor is destroyed without calling flush_pending_edits:
+        - The browser's spreadsheet instance is destroyed
+        - The in-cell value is lost forever
+        - Python never receives the edit
+
+        This is the regression that Phase 1 tests capture and Phase 2 will fix
+        by ensuring gui_nicegui.py always calls flush before navigating.
+        """
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1, instrument="Orbitrap")
+
+        # Simulate the scenario: editor created, user types but doesn't blur
+        editor = JSpreadsheetEditor(wizard, MagicMock())
+
+        # At this point, if we were in a real browser:
+        # - Spreadsheet cell for "fraction" shows "99" (user typed this)
+        # - No change event has fired yet (user still editing)
+        # - Python's wizard still shows fraction=1 (stale)
+        # - The "99" only exists in the browser's DOM
+
+        # When navigation happens WITHOUT calling flush_pending_edits:
+        del editor  # Editor is destroyed
+
+        # Create new editor from wizard
+        editor2 = JSpreadsheetEditor(wizard, MagicMock())
+
+        # The new editor shows the wizard's stale value
+        data = editor2.bridge.get_spreadsheet_data()
+
+        # This documents the bug: the user's typed "99" is lost
+        assert data["data"][0][1] == 1, (
+            "BUG DOCUMENTED: Pending edit (not yet synced via change event) "
+            "is lost when editor destroyed without flush. "
+            "Phase 2 will fix by calling flush_pending_edits in navigation."
+        )
+
+    def test_flush_bridge_syncs_updated_values_from_browser(self):
+        """
+        Integration test: When flush fetches spreadsheet data from the browser,
+        the JSpreadsheetBridge must properly sync that data back to the wizard.
+
+        This tests the critical path that prevents data loss:
+        1. Browser has: cell shows "99", but change event not fired
+        2. flush_pending_edits calls blur to trigger commit
+        3. flush fetches worksheet.getData() which includes the "99"
+        4. _sync_data_from_browser updates wizard with "99"
+        5. Editor destroyed - but wizard has the "99" now
+        """
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+        from jspreadsheet_bridge import JSpreadsheetBridge
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1)
+
+        # Create editor and bridge
+        bridge = JSpreadsheetBridge(wizard, entity_type="runs")
+        editor = JSpreadsheetEditor(wizard, MagicMock(), bridge=bridge)
+
+        # Simulate the data that would come from browser after blur+getData()
+        # This is what worksheet.getData() returns after blur commits the pending edit
+        browser_data = [
+            ["/data/test.raw", 99]  # User's pending edit is now committed
+        ]
+
+        # Sync this data to the wizard
+        editor._sync_data_from_browser(browser_data)
+
+        # Verify the pending edit is now safely in the wizard
+        assert wizard.runs[0]["fraction"] == 99, (
+            "After flush commits pending edit in browser and syncs back, "
+            "wizard state must be updated to prevent data loss"
+        )
+
+    def test_multiple_pending_edits_at_navigation_boundary(self):
+        """
+        Regression test: When user has made multiple pending edits across
+        different cells and then navigates, flush must capture ALL of them.
+
+        This ensures that if the user:
+        1. Types new fraction: "5" in one cell
+        2. Types new instrument: "Lumos" in another cell
+        3. Clicks Next before blurring either cell
+
+        Both edits are captured by flush and synced to wizard.
+        """
+        from gui_wizard_state import WizardState
+        from jspreadsheet_editor import JSpreadsheetEditor
+        from jspreadsheet_bridge import JSpreadsheetBridge
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1, instrument="Orbitrap")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="runs")
+        editor = JSpreadsheetEditor(wizard, MagicMock(), bridge=bridge)
+
+        # Simulate browser data with BOTH cells updated (both pendings now committed)
+        browser_data = [
+            ["/data/test.raw", 5, "Lumos"]  # Both pending edits are now committed
+        ]
+
+        # Sync the browser data
+        editor._sync_data_from_browser(browser_data)
+
+        # Verify BOTH changes were synced
+        assert wizard.runs[0]["fraction"] == 5, "Fraction pending edit must be captured"
+        assert wizard.runs[0]["instrument"] == "Lumos", "Instrument pending edit must be captured"

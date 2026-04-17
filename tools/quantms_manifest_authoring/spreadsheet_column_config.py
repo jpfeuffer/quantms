@@ -32,6 +32,7 @@ class ColumnConfigBuilder:
         self,
         headers: List[str],
         field_info_getter=None,
+        dropdown_sources: Dict[str, List[Union[str, Dict[str, str]]]] | None = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Build column configurations for headers.
@@ -75,8 +76,15 @@ class ColumnConfigBuilder:
                     # If field info lookup fails, just continue
                     col_config["type"] = "str"
 
+            # Prefer explicit dropdown sources supplied by the caller.
+            if dropdown_sources and header in dropdown_sources:
+                options = dropdown_sources[header]
+                if options:
+                    col_config["type"] = "dropdown"
+                    col_config["source"] = self._convert_options_to_jspreadsheet_format(options)
+
             # Check if this field should be a dropdown
-            if header in self.DROPDOWN_FIELD_MAPPING:
+            elif header in self.DROPDOWN_FIELD_MAPPING:
                 ontology_field = self.DROPDOWN_FIELD_MAPPING[header]
                 options = self.option_provider.get_options(ontology_field)
 

@@ -37,14 +37,14 @@ class TestRunsStepOwnership:
         """Verify Runs spreadsheet schema only has file, fraction, instrument."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw", fraction=1, instrument="Orbitrap")
-        
+
         adapter = SpreadsheetAdapter(wizard)
         headers = adapter.get_column_headers()
-        
+
         # Should only have these fields
         expected_fields = {"file", "fraction", "instrument"}
         actual_fields = set(headers)
-        
+
         assert actual_fields == expected_fields, (
             f"Runs spreadsheet should only have {expected_fields}, "
             f"but has {actual_fields}"
@@ -54,7 +54,7 @@ class TestRunsStepOwnership:
         """Verify RunFieldInfo metadata is limited to file, fraction, instrument."""
         all_fields = RunFieldInfo.get_all_fields()
         expected = ["file", "fraction", "instrument"]
-        
+
         assert set(all_fields) == set(expected), (
             f"RunFieldInfo should only define {expected}, but has {all_fields}"
         )
@@ -64,7 +64,7 @@ class TestRunsStepOwnership:
         wizard = WizardState()
         # Should succeed without sample/mixture
         wizard.add_run(file="/data/test.raw", fraction=1)
-        
+
         assert len(wizard.runs) == 1
         run = wizard.runs[0]
         assert run["file"] == "/data/test.raw"
@@ -77,13 +77,13 @@ class TestRunsStepOwnership:
         wizard = WizardState()
         wizard.add_run(file="test1.raw", fraction=1)
         wizard.add_run(file="test2.raw", instrument="Q-TOF")
-        
+
         bridge = JSpreadsheetBridge(wizard)
         data = bridge.get_spreadsheet_data()
-        
+
         # Should have exactly 3 columns
         assert set(data["headers"]) == {"file", "fraction", "instrument"}
-        
+
         # No sample or mixture columns
         assert "sample" not in data["headers"]
         assert "mixture" not in data["headers"]
@@ -92,22 +92,22 @@ class TestRunsStepOwnership:
         """Verify Runs step copy doesn't suggest sample/mixture assignment."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        
+
         refresh_ui = MagicMock()
-        
+
         # Mock NiceGUI to capture labels
         ui_labels = []
-        
+
         def mock_label(text=""):
             ui_labels.append(text)
             mock = MagicMock()
             mock.classes = MagicMock(return_value=mock)
             return mock
-        
+
         with patch("gui_nicegui.ui") as mock_ui, \
              patch("jspreadsheet_editor.ui") as mock_editor_ui, \
              patch("jspreadsheet_editor.app"):
-            
+
             mock_ui.card = MagicMock()
             mock_ui.card.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_ui.card.return_value.__exit__ = MagicMock(return_value=None)
@@ -118,21 +118,21 @@ class TestRunsStepOwnership:
             mock_ui.row.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_ui.row.return_value.__exit__ = MagicMock(return_value=None)
             mock_ui.notify = MagicMock()
-            
+
             mock_editor_ui.element = MagicMock(return_value=MagicMock())
             mock_editor_ui.run_javascript = MagicMock()
-            
+
             create_runs_step(wizard, refresh_ui)
-            
+
             # Combine all labels
             all_labels = " ".join(ui_labels)
-            
+
             # Should mention file/fraction/instrument
             assert "file" in all_labels.lower(), "Runs step should mention files"
             assert "assignments step" in all_labels.lower(), (
                 "Runs step should explicitly defer sample/mixture linking to the Assignments step"
             )
-            
+
             # Should NOT suggest sample/mixture assignment happens here
             forbidden_phrases = [
                 "assign to sample",
@@ -155,16 +155,16 @@ class TestAssignmentsStepOwnership:
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_sample(id="s1")
-        
+
         refresh_ui = MagicMock()
         ui_labels = []
-        
+
         def mock_label(text=""):
             ui_labels.append(text)
             mock = MagicMock()
             mock.classes = MagicMock(return_value=mock)
             return mock
-        
+
         with patch("gui_nicegui.ui") as mock_ui:
             mock_ui.card = MagicMock()
             mock_ui.card.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -179,17 +179,17 @@ class TestAssignmentsStepOwnership:
             mock_ui.column = MagicMock()
             mock_ui.column.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_ui.column.return_value.__exit__ = MagicMock(return_value=None)
-            
+
             create_assignments_step(wizard, refresh_ui)
-            
+
             all_labels = " ".join(ui_labels)
-            
+
             # Title should clearly mention sample/mixture
             assert "assign" in all_labels.lower(), "Title should mention assignment"
             assert ("sample" in all_labels.lower() or "mixture" in all_labels.lower()), (
                 "Title should mention sample or mixture assignment"
             )
-            
+
             # Should mention linking
             assert "link" in all_labels.lower() or "assign" in all_labels.lower(), (
                 "Description should mention linking/assignment"
@@ -236,7 +236,7 @@ class TestAssignmentsStepOwnership:
         """Verify assign_run validates that samples/mixtures exist."""
         wizard = WizardState()
         wizard.add_run(file="test.raw")
-        
+
         # Try to assign to non-existent sample - should fail
         with pytest.raises(ValueError, match="not found in samples"):
             wizard.assign_run(
@@ -244,7 +244,7 @@ class TestAssignmentsStepOwnership:
                 sample="nonexistent_sample",
                 mixture=None
             )
-        
+
         # Try to assign to non-existent mixture - should fail
         with pytest.raises(ValueError, match="not found in mixtures"):
             wizard.assign_run(
@@ -259,10 +259,10 @@ class TestAssignmentsStepOwnership:
         wizard.add_run(file="test.raw")
         wizard.add_sample(id="s1")
         wizard.add_mixture(id="m1", channels={"TMT126": "s1"})
-        
+
         # Should succeed
         wizard.assign_run(run_index=0, sample="s1", mixture=None, fraction=1)
-        
+
         run = wizard.runs[0]
         assert run["sample"] == "s1"
         assert run["fraction"] == 1
@@ -276,17 +276,17 @@ class TestPhase3DropdownBehaviorPreserved:
         wizard = WizardState()
         wizard.add_run(file="test.raw")
         wizard.add_sample(id="s1")
-        
+
         refresh_ui = MagicMock()
         select_calls = []
-        
+
         def mock_select(**kwargs):
             select_calls.append(kwargs)
             mock = MagicMock()
             mock.classes = MagicMock(return_value=mock)
             mock.value = kwargs.get("value")
             return mock
-        
+
         with patch("gui_nicegui.ui") as mock_ui:
             mock_ui.card = MagicMock()
             mock_ui.card.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -301,9 +301,9 @@ class TestPhase3DropdownBehaviorPreserved:
             mock_ui.column = MagicMock()
             mock_ui.column.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_ui.column.return_value.__exit__ = MagicMock(return_value=None)
-            
+
             create_assignments_step(wizard, refresh_ui)
-            
+
             # Should have sample selection dropdown
             labels = [call.get("label", "") for call in select_calls]
             assert any("Sample" in str(label) or "sample" in str(label) for label in labels), (
@@ -316,17 +316,17 @@ class TestPhase3DropdownBehaviorPreserved:
         wizard.add_run(file="test.raw")
         wizard.add_sample(id="s1")
         wizard.add_mixture(id="m1", channels={"TMT126": "s1"})
-        
+
         refresh_ui = MagicMock()
         select_calls = []
-        
+
         def mock_select(**kwargs):
             select_calls.append(kwargs)
             mock = MagicMock()
             mock.classes = MagicMock(return_value=mock)
             mock.value = kwargs.get("value")
             return mock
-        
+
         with patch("gui_nicegui.ui") as mock_ui:
             mock_ui.card = MagicMock()
             mock_ui.card.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -341,9 +341,9 @@ class TestPhase3DropdownBehaviorPreserved:
             mock_ui.column = MagicMock()
             mock_ui.column.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_ui.column.return_value.__exit__ = MagicMock(return_value=None)
-            
+
             create_assignments_step(wizard, refresh_ui)
-            
+
             # Should have mixture selection dropdown
             labels = [call.get("label", "") for call in select_calls]
             assert any("Mixture" in str(label) or "mixture" in str(label) for label in labels), (

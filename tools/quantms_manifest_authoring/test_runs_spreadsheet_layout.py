@@ -21,7 +21,7 @@ from jspreadsheet_editor import JSpreadsheetEditor
 def reset_jspreadsheet_class_state():
     """
     Reset JSpreadsheetEditor class-level registries before each test.
-    
+
     Ensures tests don't leak state through shared class attributes:
     - _static_assets_registered
     - _cdn_loaded_clients
@@ -29,15 +29,15 @@ def reset_jspreadsheet_class_state():
     - _instances
     """
     # Clear any existing registries
-    for attr in ['_static_assets_registered', '_cdn_loaded_clients', 
+    for attr in ['_static_assets_registered', '_cdn_loaded_clients',
                  '_event_bridge_clients', '_instances']:
         if hasattr(JSpreadsheetEditor, attr):
             delattr(JSpreadsheetEditor, attr)
-    
+
     yield
-    
+
     # Cleanup after test
-    for attr in ['_static_assets_registered', '_cdn_loaded_clients', 
+    for attr in ['_static_assets_registered', '_cdn_loaded_clients',
                  '_event_bridge_clients', '_instances']:
         if hasattr(JSpreadsheetEditor, attr):
             delattr(JSpreadsheetEditor, attr)
@@ -184,11 +184,11 @@ class TestSpreadsheetLayoutAndStyling:
 
             # Verify add_head_html was called with correct stylesheet links
             assert mock_ui.add_head_html.called, "add_head_html should be called"
-            
+
             # Check that the call included the expected stylesheet links
             call_args = mock_ui.add_head_html.call_args
             assert call_args is not None, "add_head_html should have been called with arguments"
-            
+
             head_html = call_args[0][0]  # Get the first positional argument
             assert isinstance(head_html, str), "add_head_html should receive a string"
             assert "jsuites.css" in head_html, "Should include jsuites.css stylesheet"

@@ -59,6 +59,7 @@ class WizardState:
         self.mixtures: List[Dict[str, Any]] = []
         self.experiment: Optional[Dict[str, Any]] = None
         self._experiment_settings_saved = False
+        self._active_editor: Optional[Any] = None
 
     def get_current_step(self) -> WizardStep:
         """Get the current wizard step."""
@@ -99,6 +100,24 @@ class WizardState:
 
         self.current_step_index = index
 
+    def set_active_editor(self, editor: Optional[Any]) -> None:
+        """
+        Register an active editor for pre-navigation flush.
+
+        Args:
+            editor: The editor instance to flush before navigation, or None to clear
+        """
+        self._active_editor = editor
+
+    def get_active_editor(self) -> Optional[Any]:
+        """
+        Get the currently registered active editor.
+
+        Returns:
+            The active editor instance, or None if no editor is registered
+        """
+        return self._active_editor
+
     def next_step(self) -> None:
         """
         Advance to the next step.
@@ -106,6 +125,9 @@ class WizardState:
         Raises:
             ValueError: If already at the last step or prerequisites not met
         """
+        # Flush active editor before stepping
+        self._flush_active_editor()
+
         steps = WizardStep.ordered_steps()
         if self.current_step_index >= len(steps) - 1:
             raise ValueError("Cannot advance past the last step (REVIEW)")
@@ -119,10 +141,28 @@ class WizardState:
         Raises:
             ValueError: If already at the first step
         """
+        # Flush active editor before stepping
+        self._flush_active_editor()
+
         if self.current_step_index <= 0:
             raise ValueError("Cannot go back from the first step (RUNS)")
 
         self.current_step_index -= 1
+
+    def _flush_active_editor(self) -> None:
+        """
+        Internal: Flush pending edits from the active editor if registered.
+
+        NOTE: In the async migration, this is now a no-op since the real flush
+        happens in the async button handlers (gui_nicegui.py) which await the
+        flush_pending_edits coroutine before calling next_step()/previous_step().
+
+        This method is kept for backward compatibility but is not used in the
+        new async flow.
+        """
+        # The async button handlers in gui_nicegui.py handle the flush directly
+        # by awaiting flush_pending_edits() before calling next_step/previous_step
+        pass
 
     def add_run(
         self,
