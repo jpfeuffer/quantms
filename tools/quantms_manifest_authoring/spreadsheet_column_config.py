@@ -72,6 +72,9 @@ class ColumnConfigBuilder:
                     # Store original type from metadata
                     col_config["type"] = field_meta.get("type", "str")
                     col_config["required"] = field_meta.get("required", False)
+                    # Include read_only marker if present
+                    if field_meta.get("read_only"):
+                        col_config["read_only"] = True
                 except Exception:
                     # If field info lookup fails, just continue
                     col_config["type"] = "str"

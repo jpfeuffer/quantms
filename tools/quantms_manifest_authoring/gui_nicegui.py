@@ -17,7 +17,7 @@ with guided step-by-step progression and validation concentrated in Review.
 
 import sys
 from pathlib import Path
-from typing import List, Callable
+from typing import List, Callable, Optional, Dict
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -106,8 +106,10 @@ class ManifestEditingWizard(WizardEditor):
         return self.wizard.get_current_step()
 
 
-def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
+def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
     """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
+    active_editor: Optional[JSpreadsheetEditor] = None
+
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
         ui.label("Edit runs in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
@@ -176,6 +178,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
             # Register the editor as the active editor for pre-navigation flush
             wizard.set_active_editor(editor)
             editor.render()
+            active_editor = editor
 
             # Footer with instructions
             ui.label(
@@ -189,9 +192,13 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> None:
                 "text-sm text-gray-500 italic mt-6"
             )
 
+    return active_editor
 
-def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> None:
+
+def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
     """Create the SAMPLES step UI with spreadsheet-native table editing."""
+    active_editor: Optional[JSpreadsheetEditor] = None
+
     with ui.card().classes("w-full"):
         ui.label("Step 2: Define Biological Samples").classes("text-lg font-semibold")
         ui.label("Create sample definitions for LFQ quantification.").classes("text-sm text-gray-600")
@@ -259,6 +266,7 @@ def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> None:
             editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Samples")
             wizard.set_active_editor(editor)
             editor.render()
+            active_editor = editor
             
             # Footer with instructions
             ui.label(
@@ -271,9 +279,13 @@ def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> None:
                 "text-sm text-gray-500 italic mt-4"
             )
 
+    return active_editor
 
-def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
+
+def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
     """Create the MIXTURES step UI with spreadsheet-native table editing."""
+    active_editor: Optional[JSpreadsheetEditor] = None
+
     with ui.card().classes("w-full"):
         ui.label("Step 3: Create Multiplex Mixtures (optional)").classes("text-lg font-semibold")
         ui.label("For isobaric labeling (TMT, iTRAQ): define channel-to-sample mappings.").classes(
@@ -282,7 +294,7 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
 
         if not wizard.samples:
             ui.label("Add samples first to create mixtures").classes("text-sm text-amber-600 mt-4")
-            return
+            return active_editor
 
         # Quick add form for new mixtures
         with ui.column().classes("w-full gap-4"):
@@ -362,6 +374,7 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
             editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Mixtures")
             wizard.set_active_editor(editor)
             editor.render()
+            active_editor = editor
             
             # Footer with instructions
             ui.label(
@@ -372,54 +385,74 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> None:
         else:
             ui.label("No mixtures added yet (optional for LFQ)").classes("text-sm text-gray-500 italic mt-4")
 
+    return active_editor
 
-def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the ASSIGNMENTS step UI."""
+
+def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
+    """Create the ASSIGNMENTS step UI with spreadsheet-based sample/mixture linking."""
+    active_editor: Optional[JSpreadsheetEditor] = None
+
     with ui.card().classes("w-full"):
-        ui.label("Step 4: Assign Runs to Samples/Mixtures").classes("text-lg font-semibold")
-        ui.label("This is where you link each run to its corresponding sample (for LFQ) or mixture (for isobaric labeling).").classes("text-sm text-gray-600")
+        ui.label("Step 5: Assign Runs to Samples/Mixtures").classes("text-lg font-semibold")
+
+        # Quantification-aware descriptive copy
+        quant_method = wizard.experiment.get("quantification_method") if wizard.experiment else None
+        is_multiplexed = quant_method in ("TMT", "iTRAQ", "SILAC")
+
+        if is_multiplexed:
+            ui.label(
+                "Link each run to its corresponding mixture. "
+                "Isobaric labeling methods require mixture definitions."
+            ).classes("text-sm text-gray-600")
+        else:
+            ui.label(
+                "Link each run directly to its corresponding sample. "
+                "For LFQ and other non-multiplexed quantification methods."
+            ).classes("text-sm text-gray-600")
 
         if not wizard.runs:
             ui.label("No runs to assign").classes("text-sm text-gray-500 italic mt-4")
-            return
+            return active_editor
 
-        for run_idx, run in enumerate(wizard.runs):
-            with ui.expansion(
-                text=f"Run {run_idx + 1}: {Path(run['file']).name}",
-                icon="edit",
-            ).classes("w-full"):
-                with ui.column().classes("w-full gap-4"):
-                    sample_sel = ui.select(
-                        options={s["id"]: s["id"] for s in wizard.samples} if wizard.samples else {},
-                        value=run.get("sample"),
-                        label="Assign to Sample (LFQ)",
-                    )
-                    mixture_sel = ui.select(
-                        options={m["id"]: m["id"] for m in wizard.mixtures} if wizard.mixtures else {},
-                        value=run.get("mixture"),
-                        label="Assign to Mixture (isobaric)",
-                    )
+        # Check for required target entities
+        if is_multiplexed and not wizard.mixtures:
+            ui.label(
+                "No mixtures defined yet. Create mixtures first for multiplexed quantification."
+            ).classes("text-sm text-amber-600 mt-4")
+            return active_editor
 
-                    def save_assignment(idx=run_idx):
-                        try:
-                            wizard.assign_run(
-                                run_index=idx,
-                                sample=sample_sel.value or None,
-                                mixture=mixture_sel.value or None,
-                            )
-                            ui.notify(f"Run {idx + 1} updated")
-                            refresh_ui()
-                        except Exception as e:
-                            ui.notify(f"Error: {e}", type="negative")
+        if not is_multiplexed and not wizard.samples:
+            ui.label(
+                "No samples defined yet. Create samples first for sample-based quantification."
+            ).classes("text-sm text-amber-600 mt-4")
+            return active_editor
 
-                    ui.button("Save Assignment", on_click=save_assignment, icon="save").classes("w-full")
+        # Create spreadsheet editor
+        ui.label(f"Assignments ({len(wizard.runs)} run(s))").classes("text-md font-semibold mt-6")
+
+        JSpreadsheetEditor.prepare_client_runtime()
+
+        # Create assignments spreadsheet editor
+        bridge = JSpreadsheetBridge(wizard, entity_type="assignments")
+        editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Assignments")
+        wizard.set_active_editor(editor)
+        editor.render()
+        active_editor = editor
+
+        # Footer with instructions
+        ui.label(
+            "• Click cells to edit (run file and sample/mixture assignment)\n"
+            "* Run file and assignment are required"
+        ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+
+    return active_editor
 
 
 def create_experiment_step(wizard: WizardState, refresh_ui: Callable) -> None:
     """Create the EXPERIMENT step UI."""
     with ui.card().classes("w-full"):
-        ui.label("Step 5: Define Experiment Parameters").classes("text-lg font-semibold")
-        ui.label("Set acquisition method, enzyme, and quantification approach.").classes(
+        ui.label("Step 4: Define Experiment Parameters").classes("text-lg font-semibold")
+        ui.label("Set acquisition method, enzyme, dissociation method, and quantification approach.").classes(
             "text-sm text-gray-600"
         )
 
@@ -545,22 +578,41 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
         # Progress container (will be refreshed by render_step)
         progress_container = ui.row().classes("w-full gap-2 mt-4 mb-4 items-center")
 
-        # Step content container
+        # Step content containers are mounted once and reused to avoid
+        # remounting heavy spreadsheet widgets on every navigation.
         step_content = ui.column().classes("w-full")
+        steps = WizardStep.ordered_steps()
+        step_names = [
+            "Runs",
+            "Samples",
+            "Mixtures",
+            "Experiment",
+            "Assignments",
+            "Review",
+        ]
+        step_renderers = {
+            WizardStep.RUNS: create_runs_step,
+            WizardStep.SAMPLES: create_samples_step,
+            WizardStep.MIXTURES: create_mixtures_step,
+            WizardStep.EXPERIMENT: create_experiment_step,
+            WizardStep.ASSIGNMENTS: create_assignments_step,
+            WizardStep.REVIEW: create_review_step,
+        }
+        step_containers: Dict[WizardStep, ui.column] = {}
+        step_dirty = {step: True for step in steps}
+        step_rendered = {step: False for step in steps}
+        step_editors: Dict[WizardStep, Optional[JSpreadsheetEditor]] = {step: None for step in steps}
 
-        def render_step():
-            """Render the current step's content and refresh progress indicator."""
+        with step_content:
+            for step in steps:
+                container = ui.column().classes("w-full")
+                container.set_visibility(False)
+                step_containers[step] = container
+
+        def render_progress() -> None:
+            """Refresh the read-only wizard progress indicator."""
             # Update progress indicator
             progress_container.clear()
-            steps = WizardStep.ordered_steps()
-            step_names = [
-                "Runs",
-                "Samples",
-                "Mixtures",
-                "Assignments",
-                "Experiment",
-                "Review",
-            ]
 
             with progress_container:
                 for idx, step in enumerate(steps):
@@ -579,23 +631,33 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                     if idx < len(steps) - 1:
                         ui.label("→").classes("text-gray-400")
 
-            # Update step content
-            step_content.clear()
-            current_step = editor.wizard.get_current_step()
+        def render_step_content(step: WizardStep, force: bool = False) -> None:
+            """Render a step into its cached container when needed."""
+            if step_rendered[step] and not (force or step_dirty[step]):
+                return
 
-            with step_content:
-                if current_step == WizardStep.RUNS:
-                    create_runs_step(editor.wizard, refresh_ui)
-                elif current_step == WizardStep.SAMPLES:
-                    create_samples_step(editor.wizard, refresh_ui)
-                elif current_step == WizardStep.MIXTURES:
-                    create_mixtures_step(editor.wizard, refresh_ui)
-                elif current_step == WizardStep.ASSIGNMENTS:
-                    create_assignments_step(editor.wizard, refresh_ui)
-                elif current_step == WizardStep.EXPERIMENT:
-                    create_experiment_step(editor.wizard, refresh_ui)
-                elif current_step == WizardStep.REVIEW:
-                    create_review_step(editor.wizard, refresh_ui)
+            container = step_containers[step]
+            container.clear()
+            with container:
+                step_editors[step] = step_renderers[step](editor.wizard, refresh_ui)
+
+            step_rendered[step] = True
+            step_dirty[step] = False
+
+        def show_current_step(rerender_current_step: bool) -> None:
+            """Show the active step and reuse any previously mounted content."""
+            current_step = editor.wizard.get_current_step()
+            render_step_content(current_step, force=rerender_current_step)
+
+            for step, container in step_containers.items():
+                container.set_visibility(step == current_step)
+
+            editor.wizard.set_active_editor(step_editors.get(current_step))
+
+        def render_step(rerender_current_step: bool = True) -> None:
+            """Refresh progress and show the current step content."""
+            render_progress()
+            show_current_step(rerender_current_step)
 
         def update_nav_buttons():
             """Update button states based on current step and progression prerequisites."""
@@ -605,9 +667,13 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
             # Next button enabled only if can_go_forward (respects all prerequisites)
             next_btn.enabled = editor.can_go_forward()
 
-        def refresh_ui():
-            """Refresh the entire UI and update nav button states."""
-            render_step()
+        def refresh_ui(rerender_current_step: bool = True, invalidate_cached_steps: bool = True):
+            """Refresh the UI while reusing cached step content whenever possible."""
+            if invalidate_cached_steps:
+                for step in steps:
+                    step_dirty[step] = True
+
+            render_step(rerender_current_step=rerender_current_step)
             update_nav_buttons()
 
         # Initial render
@@ -622,8 +688,10 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                 try:
                     # Flush pending edits from active editor before navigating
                     active_editor = editor.wizard.get_active_editor()
+                    invalidate_cached_steps = False
                     if active_editor is not None:
                         if hasattr(active_editor, 'flush_pending_edits'):
+                            invalidate_cached_steps = True
                             flush_result = active_editor.flush_pending_edits()
                             # If flush_pending_edits is async, await it
                             import inspect
@@ -631,9 +699,10 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                                 await flush_result
 
                     editor.wizard.previous_step()
-                    editor.wizard.set_active_editor(None)
-
-                    refresh_ui()
+                    refresh_ui(
+                        rerender_current_step=False,
+                        invalidate_cached_steps=invalidate_cached_steps,
+                    )
                 except ValueError as e:
                     ui.notify(str(e), type="warning")
 
@@ -641,8 +710,10 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                 try:
                     # Flush pending edits from active editor before navigating
                     active_editor = editor.wizard.get_active_editor()
+                    invalidate_cached_steps = False
                     if active_editor is not None:
                         if hasattr(active_editor, 'flush_pending_edits'):
+                            invalidate_cached_steps = True
                             flush_result = active_editor.flush_pending_edits()
                             # If flush_pending_edits is async, await it
                             import inspect
@@ -650,9 +721,10 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                                 await flush_result
 
                     editor.wizard.next_step()
-                    editor.wizard.set_active_editor(None)
-
-                    refresh_ui()
+                    refresh_ui(
+                        rerender_current_step=False,
+                        invalidate_cached_steps=invalidate_cached_steps,
+                    )
                 except ValueError as e:
                     ui.notify(str(e), type="warning")
 

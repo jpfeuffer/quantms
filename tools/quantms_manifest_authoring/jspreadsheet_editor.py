@@ -288,7 +288,7 @@ class JSpreadsheetEditor:
                     return {{ title, width }};
                 }});
 
-                // Merge dropdown configuration from columnConfig into columns
+                // Merge dropdown configuration and read-only flag from columnConfig into columns
                 headers.forEach((header, index) => {{
                     if (columnConfig[header]) {{
                         const config = columnConfig[header];
@@ -296,6 +296,10 @@ class JSpreadsheetEditor:
                             // Merge dropdown properties into column definition
                             columns[index].type = 'dropdown';
                             columns[index].source = config.source;
+                        }}
+                        // Merge read_only flag into readOnly property for jspreadsheet
+                        if (config.read_only) {{
+                            columns[index].readOnly = true;
                         }}
                     }}
                 }});
@@ -444,10 +448,10 @@ class JSpreadsheetEditor:
         if not container_id:
             return 0
 
-        # Fetch current spreadsheet data from browser
-        # Uses the actual jspreadsheet API exposed by bundled jspreadsheet.js:
-        # - spreadsheet.getWorksheetActive() returns the active worksheet index
-        # - spreadsheet.worksheets is the array of worksheet objects
+        # Fetch current spreadsheet data from browser.
+        # Browser validation showed that worksheet.getData() can lag behind the
+        # live input value while a cell editor is still open. We therefore try
+        # to close the active editor explicitly before reading the worksheet.
         fetch_script = f"""
         (async function() {{
             const containerId = {json.dumps(container_id)};
@@ -462,14 +466,6 @@ class JSpreadsheetEditor:
             }}
 
             try {{
-                // Blur the active element to commit any pending cell edits
-                const activeElement = document.activeElement;
-                if (activeElement && activeElement !== document.body) {{
-                    activeElement.blur();
-                    // Allow a brief moment for the blur to be processed
-                    await new Promise(resolve => setTimeout(resolve, 10));
-                }}
-
                 // Get the active worksheet using the actual jspreadsheet API
                 const activeIndex = spreadsheet.getWorksheetActive();
 
@@ -481,6 +477,20 @@ class JSpreadsheetEditor:
                 if (!worksheet || typeof worksheet.getData !== 'function') {{
                     return null;
                 }}
+
+                // Deterministically commit the active cell editor before snapshotting.
+                const activeElement = document.activeElement;
+                const activeCell = activeElement && typeof activeElement.closest === 'function'
+                    ? activeElement.closest('td[data-x][data-y]')
+                    : null;
+
+                if (activeCell && typeof worksheet.closeEditor === 'function') {{
+                    worksheet.closeEditor(activeCell, true);
+                }} else if (activeElement && activeElement !== document.body) {{
+                    activeElement.blur();
+                }}
+
+                await new Promise(resolve => setTimeout(resolve, 20));
 
                 const data = worksheet.getData();
                 return data;  // Return the data array

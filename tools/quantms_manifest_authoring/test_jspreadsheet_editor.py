@@ -395,8 +395,9 @@ class TestJSpreadsheetEditorNavigationPersistence:
         Contract test: The flush script must try to commit pending edits
         in the active cell before reading worksheet data.
 
-        A blur event on the active cell is acceptable if it's the least
-        invasive option for committing pending edits.
+        Browser validation showed that worksheet.getData() can remain stale
+        while a cell editor is still open, so the script must explicitly close
+        the active editor when the jspreadsheet API makes that possible.
         """
         wizard = WizardState()
         wizard.add_run(file="/data/sample1.raw", fraction=1)
@@ -408,11 +409,19 @@ class TestJSpreadsheetEditorNavigationPersistence:
 
         source = inspect.getsource(editor.flush_pending_edits)
 
-        # Verify script attempts to blur the active element to commit edits
-        # This is the least invasive way to ensure pending edits are committed
+        assert "closeEditor" in source, (
+            "Flush method should explicitly close the active spreadsheet editor "
+            "before reading worksheet data"
+        )
+
+        assert "closest('td[data-x][data-y]')" in source, (
+            "Flush method should resolve the active table cell coordinates so "
+            "jspreadsheet can commit the currently edited cell"
+        )
+
         assert "blur" in source.lower(), (
-            "Flush method should blur the active element to commit pending "
-            "edits before reading worksheet data"
+            "Flush method should retain a blur fallback when an explicit "
+            "jspreadsheet closeEditor path is unavailable"
         )
 
     def test_flush_pending_edits_is_awaitable(self):

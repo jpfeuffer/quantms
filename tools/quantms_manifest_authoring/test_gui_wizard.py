@@ -51,11 +51,11 @@ class TestWizardStep:
         assert hasattr(WizardStep, 'ASSIGNMENTS')
         steps = WizardStep.ordered_steps()
         assert WizardStep.ASSIGNMENTS in steps
-        # ASSIGNMENTS should come after MIXTURES and before EXPERIMENT
+        # ASSIGNMENTS should come after EXPERIMENT and before REVIEW
         assignments_idx = steps.index(WizardStep.ASSIGNMENTS)
-        mixtures_idx = steps.index(WizardStep.MIXTURES)
         experiment_idx = steps.index(WizardStep.EXPERIMENT)
-        assert mixtures_idx < assignments_idx < experiment_idx
+        review_idx = steps.index(WizardStep.REVIEW)
+        assert experiment_idx < assignments_idx < review_idx
 
 
 class TestWizardState:
@@ -127,14 +127,14 @@ class TestWizardState:
         wizard.add_run(file="test.raw", mixture=None, fraction=1)
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # EXPERIMENT
-        # Save experiment to reach REVIEW
+        # Save experiment to reach ASSIGNMENTS
         wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             dissociation_method="HCD"
         )
+        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # REVIEW
         assert wizard.get_current_step() == WizardStep.REVIEW
         with pytest.raises(ValueError, match="Cannot advance"):
@@ -348,11 +348,7 @@ class TestWizardWorkflow:
         assert wizard.get_current_step() == WizardStep.MIXTURES
         wizard.next_step()
 
-        # Step 4: Assignments
-        assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
-        wizard.next_step()
-
-        # Step 5: Experiment
+        # Step 4: Experiment
         assert wizard.get_current_step() == WizardStep.EXPERIMENT
         wizard.set_experiment(
             acquisition_method="DDA",
@@ -360,6 +356,10 @@ class TestWizardWorkflow:
             quantification_method="LFQ",
             dissociation_method="HCD"
         )
+        wizard.next_step()
+
+        # Step 5: Assignments
+        assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
         wizard.next_step()
 
         # Step 6: Review
@@ -394,17 +394,18 @@ class TestWizardWorkflow:
         })
         wizard.next_step()
 
-        # Step 4: Assignments
-        assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
-        wizard.next_step()
-
-        # Step 5: Experiment
+        # Step 4: Experiment
+        assert wizard.get_current_step() == WizardStep.EXPERIMENT
         wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             quantification_method="TMT",
             dissociation_method="HCD"
         )
+        wizard.next_step()
+
+        # Step 5: Assignments
+        assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
         wizard.next_step()
 
         # Step 6: Review
@@ -417,7 +418,7 @@ class TestExperimentStepForwardGating:
     """Tests for forward-gating behavior on EXPERIMENT step."""
 
     def test_cannot_advance_to_review_without_saving_experiment(self):
-        """Test that wizard cannot advance from EXPERIMENT to REVIEW without saving settings."""
+        """Test that wizard cannot advance from EXPERIMENT to ASSIGNMENTS without saving settings."""
         from gui_wizard_state import WizardState, WizardStep
 
         wizard = WizardState()
@@ -425,7 +426,6 @@ class TestExperimentStepForwardGating:
         wizard.add_run(file="test.raw", fraction=1)
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # EXPERIMENT
         assert wizard.get_current_step() == WizardStep.EXPERIMENT
 
@@ -434,7 +434,7 @@ class TestExperimentStepForwardGating:
             wizard.set_current_step_index(wizard.current_step_index + 1)
 
     def test_can_advance_to_review_after_saving_experiment(self):
-        """Test that wizard can advance from EXPERIMENT to REVIEW after saving settings."""
+        """Test that wizard can advance from EXPERIMENT to ASSIGNMENTS after saving settings."""
         from gui_wizard_state import WizardState, WizardStep
 
         wizard = WizardState()
@@ -442,7 +442,6 @@ class TestExperimentStepForwardGating:
         wizard.add_run(file="test.raw", fraction=1)
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # EXPERIMENT
         assert wizard.get_current_step() == WizardStep.EXPERIMENT
 
@@ -455,14 +454,14 @@ class TestExperimentStepForwardGating:
 
         # Now advancing should work
         wizard.set_current_step_index(wizard.current_step_index + 1)
-        assert wizard.get_current_step() == WizardStep.REVIEW
+        assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
 
 
 class TestAssignmentsStep:
     """Tests for the new ASSIGNMENTS step."""
 
-    def test_assignments_step_after_mixtures(self):
-        """Test that ASSIGNMENTS step comes after MIXTURES in sequence."""
+    def test_assignments_step_after_experiment(self):
+        """Test that ASSIGNMENTS step comes after EXPERIMENT."""
         from gui_wizard_state import WizardState, WizardStep
 
         wizard = WizardState()
@@ -470,12 +469,19 @@ class TestAssignmentsStep:
         wizard.add_run(file="test.raw")
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        assert wizard.get_current_step() == WizardStep.MIXTURES
+        wizard.next_step()  # EXPERIMENT
+        assert wizard.get_current_step() == WizardStep.EXPERIMENT
+        # Save experiment settings to allow progress
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
         wizard.next_step()  # ASSIGNMENTS
         assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
 
-    def test_assignments_step_before_experiment(self):
-        """Test that ASSIGNMENTS step comes before EXPERIMENT."""
+    def test_assignments_step_before_review(self):
+        """Test that ASSIGNMENTS step comes before REVIEW."""
         from gui_wizard_state import WizardState, WizardStep
 
         wizard = WizardState()
@@ -483,10 +489,16 @@ class TestAssignmentsStep:
         wizard.add_run(file="test.raw")
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
+        wizard.next_step()  # EXPERIMENT
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
         wizard.next_step()  # ASSIGNMENTS
         assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
-        wizard.next_step()  # EXPERIMENT
-        assert wizard.get_current_step() == WizardStep.EXPERIMENT
+        wizard.next_step()  # REVIEW
+        assert wizard.get_current_step() == WizardStep.REVIEW
 
     def test_assign_run_to_sample(self):
         """Test assigning a run to an existing sample."""
@@ -639,6 +651,12 @@ class TestCanGoForwardGating:
         wizard.wizard.add_run(file="test.raw")
         wizard.wizard.next_step()  # SAMPLES
         wizard.wizard.next_step()  # MIXTURES
+        wizard.wizard.next_step()  # EXPERIMENT
+        wizard.wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD"
+        )
         wizard.wizard.next_step()  # ASSIGNMENTS
         assert wizard.get_current_step() == WizardStep.ASSIGNMENTS
         # Should allow forward (assignments are deferred to review)
@@ -653,7 +671,6 @@ class TestCanGoForwardGating:
         wizard.wizard.add_run(file="test.raw")
         wizard.wizard.next_step()  # SAMPLES
         wizard.wizard.next_step()  # MIXTURES
-        wizard.wizard.next_step()  # ASSIGNMENTS
         wizard.wizard.next_step()  # EXPERIMENT
         assert wizard.get_current_step() == WizardStep.EXPERIMENT
 
@@ -678,13 +695,13 @@ class TestCanGoForwardGating:
         wizard.wizard.add_run(file="test.raw")
         wizard.wizard.next_step()  # SAMPLES
         wizard.wizard.next_step()  # MIXTURES
-        wizard.wizard.next_step()  # ASSIGNMENTS
         wizard.wizard.next_step()  # EXPERIMENT
         wizard.wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             dissociation_method="HCD"
         )
+        wizard.wizard.next_step()  # ASSIGNMENTS
         wizard.wizard.next_step()  # REVIEW
         assert wizard.get_current_step() == WizardStep.REVIEW
 
@@ -861,7 +878,7 @@ class TestGuiWizardShellLockedProgression:
         steps = WizardStep.ordered_steps()
         expected_order = [
             WizardStep.RUNS, WizardStep.SAMPLES, WizardStep.MIXTURES,
-            WizardStep.ASSIGNMENTS, WizardStep.EXPERIMENT, WizardStep.REVIEW
+            WizardStep.EXPERIMENT, WizardStep.ASSIGNMENTS, WizardStep.REVIEW
         ]
         assert steps == expected_order
 
@@ -873,13 +890,13 @@ class TestGuiWizardShellLockedProgression:
         wizard.add_run(file="test.raw")
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # EXPERIMENT
         wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             dissociation_method="HCD"
         )
+        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # REVIEW
         assert wizard.get_current_step() == WizardStep.REVIEW
         with pytest.raises(ValueError, match="Cannot advance"):
@@ -893,13 +910,13 @@ class TestGuiWizardShellLockedProgression:
         wizard.add_sample(id="s1", organism="homo sapiens")
         wizard.next_step()  # SAMPLES
         wizard.next_step()  # MIXTURES
-        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # EXPERIMENT
         wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             dissociation_method="HCD"
         )
+        wizard.next_step()  # ASSIGNMENTS
         wizard.next_step()  # REVIEW
         assert wizard.get_current_step() == WizardStep.REVIEW
         # Should be able to convert to manifest for validation
@@ -947,7 +964,6 @@ class TestManifestEditingWizardCanGoForward:
         editor.wizard.add_run(file="test.raw")
         editor.wizard.next_step()  # SAMPLES
         editor.wizard.next_step()  # MIXTURES
-        editor.wizard.next_step()  # ASSIGNMENTS
         editor.wizard.next_step()  # EXPERIMENT
         assert editor.wizard.get_current_step() == WizardStep.EXPERIMENT
         # Without experiment settings saved, cannot go forward
@@ -962,7 +978,6 @@ class TestManifestEditingWizardCanGoForward:
         editor.wizard.add_run(file="test.raw")
         editor.wizard.next_step()  # SAMPLES
         editor.wizard.next_step()  # MIXTURES
-        editor.wizard.next_step()  # ASSIGNMENTS
         editor.wizard.next_step()  # EXPERIMENT
         assert editor.wizard.get_current_step() == WizardStep.EXPERIMENT
         # Set experiment settings
@@ -983,13 +998,13 @@ class TestManifestEditingWizardCanGoForward:
         editor.wizard.add_run(file="test.raw")
         editor.wizard.next_step()  # SAMPLES
         editor.wizard.next_step()  # MIXTURES
-        editor.wizard.next_step()  # ASSIGNMENTS
         editor.wizard.next_step()  # EXPERIMENT
         editor.wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
             dissociation_method="HCD"
         )
+        editor.wizard.next_step()  # ASSIGNMENTS
         editor.wizard.next_step()  # REVIEW
         assert editor.wizard.get_current_step() == WizardStep.REVIEW
         # Cannot go forward from REVIEW (last step)

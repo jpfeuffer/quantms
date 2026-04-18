@@ -29,14 +29,14 @@ class WizardStep(Enum):
     RUNS = auto()
     SAMPLES = auto()
     MIXTURES = auto()
-    ASSIGNMENTS = auto()
     EXPERIMENT = auto()
+    ASSIGNMENTS = auto()
     REVIEW = auto()
 
     @classmethod
     def ordered_steps(cls) -> List["WizardStep"]:
         """Get steps in order."""
-        return [cls.RUNS, cls.SAMPLES, cls.MIXTURES, cls.ASSIGNMENTS, cls.EXPERIMENT, cls.REVIEW]
+        return [cls.RUNS, cls.SAMPLES, cls.MIXTURES, cls.EXPERIMENT, cls.ASSIGNMENTS, cls.REVIEW]
 
     def get_index(self) -> int:
         """Get the index of this step (0-based)."""

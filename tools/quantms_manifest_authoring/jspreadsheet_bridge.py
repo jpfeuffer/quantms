@@ -9,9 +9,16 @@ This bridge handles:
 - Providing column configuration for dropdown support
 """
 
-from typing import Any, Dict, Set, Literal
+from typing import Any, Dict, Set, Literal, Optional
 from gui_wizard_state import WizardState
-from spreadsheet_adapter import SpreadsheetAdapter, SampleFieldInfo, MixtureFieldInfo, RunFieldInfo
+from spreadsheet_adapter import (
+    SpreadsheetAdapter,
+    SampleFieldInfo,
+    MixtureFieldInfo,
+    RunFieldInfo,
+    AssignmentFieldInfo,
+    AssignmentSpreadsheetRow,
+)
 from spreadsheet_column_config import ColumnConfigBuilder
 from ontology_provider import OntologyOptionProvider
 
@@ -22,17 +29,22 @@ class JSpreadsheetBridge:
 
     Handles initialization of spreadsheet data from wizard state and
     synchronization of edits/deletions back to the wizard for multiple entity types
-    (runs, samples, mixtures).
+    (runs, samples, mixtures, assignments).
     """
 
-    def __init__(self, wizard: WizardState, column_config_builder=None, entity_type: Literal["runs", "samples", "mixtures"] = "runs"):
+    def __init__(
+        self,
+        wizard: WizardState,
+        column_config_builder=None,
+        entity_type: Literal["runs", "samples", "mixtures", "assignments"] = "runs",
+    ):
         """Initialize bridge with wizard state.
 
         Args:
             wizard: WizardState instance
             column_config_builder: Optional ColumnConfigBuilder for dropdown config.
                                   If None, creates a new one.
-            entity_type: Type of entity ('runs', 'samples', or 'mixtures'). Default is 'runs'.
+            entity_type: Type of entity ('runs', 'samples', 'mixtures', or 'assignments'). Default is 'runs'.
         """
         self.wizard = wizard
         self.entity_type = entity_type
@@ -40,6 +52,7 @@ class JSpreadsheetBridge:
         self.column_config_builder = column_config_builder or ColumnConfigBuilder()
         self.option_provider = OntologyOptionProvider()
         self._dropdown_constraint_cache = self._build_dropdown_constraints()
+
 
     def get_spreadsheet_data(self) -> Dict[str, Any]:
         """
@@ -68,6 +81,12 @@ class JSpreadsheetBridge:
                 for channel in headers[1:]:
                     row_data.append(row.channels.get(channel, None))
                 data.append(row_data)
+        elif self.entity_type == "assignments":
+            # Get headers based on quantification method
+            quant_method = self.wizard.experiment.get("quantification_method") if self.wizard.experiment else None
+            headers = self.adapter.get_assignment_headers_for_quantification(quant_method)
+            rows = self.adapter.wizard_assignments_to_spreadsheet(quant_method)
+            data = [[getattr(row, field, None) for field in headers] for row in rows]
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -99,16 +118,27 @@ class JSpreadsheetBridge:
                 "required": False,
                 "description": f"Sample assigned to channel {field}",
             }
+        elif self.entity_type == "assignments":
+            return AssignmentFieldInfo.get_field_info(field)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def _get_dropdown_sources(self, headers: list[str]) -> Dict[str, list[dict[str, str]]]:
         """Get explicit dropdown sources for entity-specific columns."""
-        if self.entity_type != "mixtures":
+        if self.entity_type == "mixtures":
+            sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
+            return {header: sample_options for header in headers if header != "id"}
+        elif self.entity_type == "assignments":
+            sources = {}
+            if "sample" in headers:
+                sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
+                sources["sample"] = sample_options
+            if "mixture" in headers:
+                mixture_options = [{"id": mixture["id"], "name": mixture["id"]} for mixture in self.wizard.mixtures]
+                sources["mixture"] = mixture_options
+            return sources
+        else:
             return {}
-
-        sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
-        return {header: sample_options for header in headers if header != "id"}
 
     def get_row_count(self) -> int:
         """Return the number of rows managed by the current bridge."""
@@ -118,6 +148,8 @@ class JSpreadsheetBridge:
             return len(self.wizard.samples)
         if self.entity_type == "mixtures":
             return len(self.wizard.mixtures)
+        if self.entity_type == "assignments":
+            return len(self.wizard.runs)
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
@@ -180,6 +212,25 @@ class JSpreadsheetBridge:
             self.adapter.sync_mixture_edits(rows)
             return
 
+        if self.entity_type == "assignments":
+            quant_method = self.wizard.experiment.get("quantification_method") if self.wizard.experiment else None
+            rows = self.adapter.wizard_assignments_to_spreadsheet(quant_method)
+            headers = self.adapter.get_assignment_headers_for_quantification(quant_method)
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    # Ignore run_file edits - it is read-only and derived from run state
+                    if field_name == "run_file":
+                        continue
+                    if value == "":
+                        value = None
+                    row.update(**{field_name: value})
+            self.adapter.sync_assignment_edits(rows, quant_method)
+            return
+
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
 
@@ -201,6 +252,8 @@ class JSpreadsheetBridge:
             self._handle_cell_edit_samples(row_index, col_index, new_value)
         elif self.entity_type == "mixtures":
             self._handle_cell_edit_mixtures(row_index, col_index, new_value)
+        elif self.entity_type == "assignments":
+            self._handle_cell_edit_assignments(row_index, col_index, new_value)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -314,6 +367,39 @@ class JSpreadsheetBridge:
         current_rows[row_index] = edited_row
         self.adapter.sync_mixture_edits(current_rows)
 
+    def _handle_cell_edit_assignments(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for assignments."""
+        quant_method = self.wizard.experiment.get("quantification_method") if self.wizard.experiment else None
+        headers = self.adapter.get_assignment_headers_for_quantification(quant_method)
+        field_name = headers[col_index]
+
+        # Get current rows and update the edited cell
+        current_rows = self.adapter.wizard_assignments_to_spreadsheet(quant_method)
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        # run_file is read-only, cannot edit
+        if field_name == "run_file":
+            raise ValueError("Run file is read-only")
+
+        # Update the assignment fields
+        if new_value is None or (isinstance(new_value, str) and new_value.strip() == ""):
+            value = None
+        else:
+            value = new_value
+
+        edited_row.update(**{field_name: value})
+
+        # Validate
+        edited_row.validate()
+
+        # Sync back to wizard
+        current_rows[row_index] = edited_row
+        self.adapter.sync_assignment_edits(current_rows, quant_method)
+
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
         Build a cache of dropdown constraints for validation.
@@ -381,6 +467,10 @@ class JSpreadsheetBridge:
             self.wizard.remove_sample(row_index)
         elif self.entity_type == "mixtures":
             self.wizard.remove_mixture(row_index)
+        elif self.entity_type == "assignments":
+            # Assignments are a linkage view over runs, so deletion is a no-op.
+            # Assignment rows cannot be directly deleted; they reflect run state.
+            pass
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 

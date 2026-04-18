@@ -199,15 +199,15 @@ class SpreadsheetAdapter:
         """
         # Start with 'id'
         headers = ["id"]
-        
+
         # Add all unique channel keys from current mixtures
         channel_keys = set()
         for mixture in self.wizard.mixtures:
             channel_keys.update(mixture.get("channels", {}).keys())
-        
+
         # Sort channel keys for consistent order
         headers.extend(sorted(channel_keys))
-        
+
         return headers
 
 
@@ -453,6 +453,98 @@ class SpreadsheetAdapter:
 
         # Replace wizard mixtures with synced rows
         self.wizard.mixtures = [row.to_dict() for row in rows]
+
+    def get_assignment_headers_for_quantification(self, quantification_method: Optional[str]) -> List[str]:
+        """
+        Get assignment column headers based on quantification method.
+
+        Args:
+            quantification_method: "LFQ", "TMT", "iTRAQ", "SILAC", or None
+
+        Returns:
+            List of field names appropriate for the quantification method
+        """
+        # Determine if multiplexed (TMT, iTRAQ, SILAC)
+        is_multiplexed = quantification_method in ("TMT", "iTRAQ", "SILAC")
+
+        headers = ["run_file"]
+        if is_multiplexed:
+            headers.append("mixture")
+        else:
+            # LFQ or non-multiplexed (default)
+            headers.append("sample")
+
+        return headers
+
+    def wizard_assignments_to_spreadsheet(self, quantification_method: Optional[str]) -> List["AssignmentSpreadsheetRow"]:
+        """
+        Convert WizardState.runs to assignment spreadsheet rows.
+
+        Args:
+            quantification_method: Quantification method to determine linkage type
+
+        Returns:
+            List of AssignmentSpreadsheetRow instances (one per run)
+        """
+        rows = []
+        for idx, run in enumerate(self.wizard.runs):
+            row = AssignmentSpreadsheetRow.from_wizard_run(
+                run,
+                row_index=idx,
+                quantification_method=quantification_method
+            )
+            rows.append(row)
+        return rows
+
+    def sync_assignment_edits(
+        self,
+        rows: List["AssignmentSpreadsheetRow"],
+        quantification_method: Optional[str]
+    ) -> None:
+        """
+        Synchronize spreadsheet assignment rows back to WizardState.
+
+        This validates all rows and updates the wizard runs in-place.
+
+        Args:
+            rows: List of AssignmentSpreadsheetRow instances to sync
+            quantification_method: Quantification method for validation
+
+        Raises:
+            ValueError: If validation fails or referenced sample/mixture does not exist
+        """
+        # Determine if multiplexed
+        is_multiplexed = quantification_method in ("TMT", "iTRAQ", "SILAC")
+
+        # Validate references
+        sample_ids = {s["id"] for s in self.wizard.samples}
+        mixture_ids = {m["id"] for m in self.wizard.mixtures}
+
+        for row in rows:
+            row.validate()
+
+            # Validate references exist
+            if row.sample is not None and row.sample not in sample_ids:
+                raise ValueError(f"Sample '{row.sample}' not found in samples")
+            if row.mixture is not None and row.mixture not in mixture_ids:
+                raise ValueError(f"Mixture '{row.mixture}' not found in mixtures")
+
+        # Update wizard runs
+        for idx, row in enumerate(rows):
+            if row.sample is not None:
+                self.wizard.update_run(idx, sample=row.sample)
+                # For non-multiplexed, clear mixture field
+                self.wizard.clear_run_field(idx, "mixture")
+            elif row.mixture is not None:
+                self.wizard.update_run(idx, mixture=row.mixture)
+                # For multiplexed, clear sample field
+                self.wizard.clear_run_field(idx, "sample")
+            else:
+                # Neither sample nor mixture set - clear both
+                if "sample" in self.wizard.runs[idx]:
+                    self.wizard.clear_run_field(idx, "sample")
+                if "mixture" in self.wizard.runs[idx]:
+                    self.wizard.clear_run_field(idx, "mixture")
 
 
 class SampleFieldInfo:
@@ -701,11 +793,12 @@ class MixtureSpreadsheetRow:
         Raises:
             ValueError: If validation fails
         """
-        # Check required fields
-        if not self.id:
+        # Mixture id is required
+        if not self.id or (isinstance(self.id, str) and self.id.strip() == ""):
             raise ValueError("Mixture ID is required")
+        # At least one channel is required
         if not self.channels:
-            raise ValueError("At least one channel assignment is required")
+            raise ValueError("At least one channel is required")
 
     def update(self, **kwargs) -> None:
         """Update row fields."""
@@ -713,3 +806,117 @@ class MixtureSpreadsheetRow:
             if hasattr(self, key):
                 setattr(self, key, value)
 
+
+class AssignmentFieldInfo:
+    """Metadata about assignment fields for the adapter."""
+
+    FIELD_METADATA = {
+        "run_file": {
+            "type": "str",
+            "required": True,
+            "read_only": True,
+            "description": "Run file name (read-only reference)",
+        },
+        "sample": {
+            "type": "str",
+            "required": False,
+            "description": "Sample ID (for LFQ)",
+        },
+        "mixture": {
+            "type": "str",
+            "required": False,
+            "description": "Mixture ID (for multiplexed quantification)",
+        },
+    }
+
+    @staticmethod
+    def get_all_fields() -> List[str]:
+        """Get all available field names."""
+        return list(AssignmentFieldInfo.FIELD_METADATA.keys())
+
+    @staticmethod
+    def get_field_info(field: str) -> Dict[str, Any]:
+        """Get metadata for a specific field."""
+        if field not in AssignmentFieldInfo.FIELD_METADATA:
+            raise ValueError(f"Unknown field: {field}")
+        return AssignmentFieldInfo.FIELD_METADATA[field]
+
+    @staticmethod
+    def get_required_fields() -> List[str]:
+        """Get list of required fields."""
+        return [
+            field
+            for field, info in AssignmentFieldInfo.FIELD_METADATA.items()
+            if info["required"]
+        ]
+
+
+@dataclass
+class AssignmentSpreadsheetRow:
+    """Represents a single spreadsheet row for run-to-sample/mixture assignment."""
+
+    run_file: Optional[str] = None
+    sample: Optional[str] = None
+    mixture: Optional[str] = None
+    row_index: int = 0
+
+    @classmethod
+    def from_wizard_run(
+        cls,
+        run: Dict[str, Any],
+        row_index: int = 0,
+        quantification_method: Optional[str] = None
+    ) -> "AssignmentSpreadsheetRow":
+        """
+        Create an assignment row from a wizard run dict.
+
+        Args:
+            run: Dictionary from WizardState.runs
+            row_index: Index of this row (for reference)
+            quantification_method: Quantification method to determine linkage type
+
+        Returns:
+            AssignmentSpreadsheetRow instance
+        """
+        # Determine if multiplexed (TMT, iTRAQ, SILAC)
+        is_multiplexed = quantification_method in ("TMT", "iTRAQ", "SILAC")
+
+        return cls(
+            run_file=run.get("file"),
+            sample=run.get("sample") if not is_multiplexed else None,
+            mixture=run.get("mixture") if is_multiplexed else None,
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert row to dict, excluding None values.
+
+        Returns:
+            Dictionary suitable for updating wizard run
+        """
+        result = {}
+        if self.sample is not None:
+            result["sample"] = self.sample
+        if self.mixture is not None:
+            result["mixture"] = self.mixture
+        return result
+
+    def validate(self) -> None:
+        """
+        Validate row against field constraints.
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # run_file is required and must be present
+        if not self.run_file:
+            raise ValueError("Required field 'run_file' is missing")
+
+        # sample and mixture are optional
+
+    def update(self, **kwargs) -> None:
+        """Update row fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
