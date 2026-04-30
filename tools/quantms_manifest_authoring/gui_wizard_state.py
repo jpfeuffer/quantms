@@ -57,6 +57,7 @@ class WizardState:
         self.runs: List[Dict[str, Any]] = []
         self.samples: List[Dict[str, Any]] = []
         self.mixtures: List[Dict[str, Any]] = []
+        self.modifications: List[Dict[str, Any]] = []
         self.experiment: Optional[Dict[str, Any]] = None
         self._experiment_settings_saved = False
         self._active_editor: Optional[Any] = None
@@ -171,6 +172,7 @@ class WizardState:
         mixture: Optional[str] = None,
         fraction: Optional[int] = None,
         instrument: Optional[str] = None,
+        modification_profile: Optional[str] = None,
     ) -> None:
         """
         Add a raw/mzML file run.
@@ -196,8 +198,16 @@ class WizardState:
             run["fraction"] = fraction
         if instrument is not None:
             run["instrument"] = instrument
+        if modification_profile is not None:
+            run["modification_profile"] = modification_profile
 
         self.runs.append(run)
+
+    def add_modification(self, **kwargs) -> None:
+        """Add a modification definition to the wizard state."""
+        if "mode" not in kwargs or not kwargs["mode"]:
+            raise ValueError("Modification mode is required")
+        self.modifications.append(kwargs.copy())
 
     def get_available_runs(self) -> List[Dict[str, Any]]:
         """Get list of all runs added so far."""
@@ -544,6 +554,7 @@ class WizardState:
                 mixture=run.get("mixture"),
                 fraction=run.get("fraction"),
                 instrument=run.get("instrument"),
+                modification_profile=run.get("modification_profile"),
             )
 
         # Add all samples
@@ -566,6 +577,10 @@ class WizardState:
                 channels=mixture["channels"],
                 description=mixture.get("description"),
             )
+
+        # Add all modifications
+        for modification in self.modifications:
+            manifest.add_modification(**modification)
 
         # Set experiment
         if self.experiment:

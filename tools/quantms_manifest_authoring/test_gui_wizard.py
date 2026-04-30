@@ -144,9 +144,30 @@ class TestWizardState:
         """Test adding a run to the wizard."""
         from gui_wizard_state import WizardState
         wizard = WizardState()
-        wizard.add_run(file="s3://bucket/file.raw", mixture="mix_1", fraction=1)
+        wizard.add_run(
+            file="s3://bucket/file.raw",
+            mixture="mix_1",
+            fraction=1,
+            modification_profile="default",
+        )
         assert len(wizard.runs) == 1
         assert wizard.runs[0]["file"] == "s3://bucket/file.raw"
+        assert wizard.runs[0]["modification_profile"] == "default"
+
+    def test_wizard_add_modification(self):
+        """Test adding a modification to the wizard."""
+        from gui_wizard_state import WizardState
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Carbamidomethyl",
+            residues="C",
+            profile="default",
+        )
+        assert len(wizard.modifications) == 1
+        assert wizard.modifications[0]["name"] == "Carbamidomethyl"
+        assert wizard.modifications[0]["profile"] == "default"
 
     def test_wizard_add_sample(self):
         """Test adding a sample to the wizard."""
@@ -193,8 +214,15 @@ class TestWizardState:
         """Test converting wizard state to ManifestState."""
         from gui_wizard_state import WizardState
         wizard = WizardState()
-        wizard.add_run(file="test.raw", mixture=None, fraction=1)
+        wizard.add_run(file="test.raw", mixture=None, fraction=1, modification_profile="default")
         wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Carbamidomethyl",
+            residues="C",
+            profile="default",
+        )
         wizard.set_experiment(
             acquisition_method="DDA",
             enzyme="Trypsin",
@@ -206,8 +234,11 @@ class TestWizardState:
         assert isinstance(manifest, ManifestState)
         assert len(manifest.runs) == 1
         assert len(manifest.samples) == 1
+        assert len(manifest.modifications) == 1
         assert manifest.experiment is not None
         assert manifest.experiment.acquisition_method == "DDA"
+        assert manifest.runs[0].modification_profile == "default"
+        assert manifest.modifications[0].profile == "default"
 
     def test_wizard_validation_deferred_to_review(self):
         """Test that validation only happens in review step."""
