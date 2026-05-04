@@ -999,6 +999,88 @@ class TestOntologyOptionProvider:
         except ImportError as e:
             pytest.skip(f"ontology_provider module not yet implemented: {e}")
 
+    def test_option_provider_returns_modification_choices(self):
+        """Test that option provider returns dropdown-ready modification choices."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            provider = OntologyOptionProvider()
+            options = provider.get_modification_options()
+
+            assert isinstance(options, list)
+            assert len(options) > 0
+
+            for option in options:
+                assert isinstance(option, dict)
+                assert option.get("label")
+                assert option.get("value")
+                assert option.get("kind") in {"ontology", "custom"}
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_prefers_live_modification_adapter(self):
+        """Test that live lookup is used before bundled fallback for modifications."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class MockLiveAdapter:
+                def search(self, term, limit=None):
+                    if term == "Carbamidomethyl":
+                        return ["UNIMOD:99999"]
+                    return []
+
+                def get_label(self, curie):
+                    return {"UNIMOD:99999": "Live Mock Modification"}.get(curie)
+
+            provider = OntologyOptionProvider(oak_adapter=MockLiveAdapter())
+            options = provider.get_modification_options()
+
+            assert any(option["value"] == "UNIMOD:99999" for option in options)
+            assert all(option["value"] != "UNIMOD:4" for option in options)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_uses_bundled_modification_fallback_when_live_lookup_fails(self):
+        """Test that bundled modification options are used when live lookup returns nothing."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class EmptyLiveAdapter:
+                def search(self, term, limit=None):
+                    return []
+
+            provider = OntologyOptionProvider(oak_adapter=EmptyLiveAdapter())
+            options = provider.get_modification_options()
+
+            option_values = {option["value"] for option in options}
+            assert "UNIMOD:4" in option_values
+            assert "UNIMOD:21" in option_values or "UNIMOD:35" in option_values
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_merges_custom_modification_entries(self):
+        """Test that custom modification entries can coexist with ontology-backed ones."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            provider = OntologyOptionProvider()
+            custom_options = [
+                {
+                    "label": "My Lab Label",
+                    "value": "custom:my-lab-label",
+                    "kind": "custom",
+                }
+            ]
+
+            options = provider.get_modification_options(custom_options=custom_options)
+            option_values = {option["value"] for option in options}
+
+            assert "custom:my-lab-label" in option_values
+            assert any(option["kind"] == "ontology" for option in options)
+            assert any(option["kind"] == "custom" for option in options)
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
     def test_option_provider_handles_unknown_field(self):
         """Test that option provider gracefully handles unknown field."""
         try:

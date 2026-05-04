@@ -24,6 +24,13 @@ try:
 except ImportError:
     OAK_AVAILABLE = False
 
+from modification_catalog import (
+    build_bundled_modification_options,
+    get_bundled_modification_search_terms,
+    merge_modification_options,
+    normalize_custom_modification_options,
+)
+
 
 # Local fallback definitions for when Oaklib is unavailable
 FALLBACK_ENZYME_OPTIONS = [
@@ -136,6 +143,8 @@ class OntologyOptionProvider:
                         Can be injected for testing purposes.
         """
         self._oak_adapter = oak_adapter
+        self._modification_adapter = oak_adapter if oak_adapter is not None else None
+        self._oak_adapter_is_injected = oak_adapter is not None
 
     def get_options(
         self, field: str
@@ -279,3 +288,72 @@ class OntologyOptionProvider:
             List of field names that have option providers.
         """
         return list(FALLBACK_OPTIONS_MAP.keys())
+
+    def get_modification_options(
+        self,
+        custom_options: Optional[List[Union[str, Dict[str, Any]]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get dropdown-ready modification options with live-first lookup and offline fallback."""
+        live_options = self._get_modification_options_from_oaklib()
+        if live_options:
+            base_options = live_options
+        else:
+            base_options = build_bundled_modification_options()
+
+        custom_normalized = normalize_custom_modification_options(custom_options)
+        return merge_modification_options(base_options, custom_normalized)
+
+    def _get_modification_options_from_oaklib(self) -> Optional[List[Dict[str, Any]]]:
+        """Attempt to resolve modification options from a live ontology adapter."""
+        adapter = self._modification_adapter
+        if adapter is None:
+            if self._oak_adapter_is_injected and self._oak_adapter is not None:
+                adapter = self._oak_adapter
+            elif not OAK_AVAILABLE:
+                return None
+            else:
+                try:
+                    adapter = _oak_get_adapter("sqlite:obo:unimod")
+                    self._modification_adapter = adapter
+                except Exception:
+                    return None
+
+        if not hasattr(adapter, "search") or not hasattr(adapter, "get_label"):
+            return None
+
+        options: List[Dict[str, Any]] = []
+        seen_values = set()
+        seen_labels = set()
+
+        for search_term in get_bundled_modification_search_terms():
+            try:
+                try:
+                    matches = list(adapter.search(search_term, limit=25))
+                except TypeError:
+                    matches = list(adapter.search(search_term))
+            except Exception:
+                continue
+
+            for curie in matches:
+                try:
+                    label = adapter.get_label(curie)
+                except Exception:
+                    continue
+
+                if not label or label in seen_labels or curie in seen_values:
+                    continue
+
+                options.append(
+                    {
+                        "label": label,
+                        "value": curie,
+                        "kind": "ontology",
+                        "ontology_id": curie,
+                        "name": label,
+                    }
+                )
+                seen_values.add(curie)
+                seen_labels.add(label)
+
+        options.sort(key=lambda option: option["label"].lower())
+        return options if options else None
