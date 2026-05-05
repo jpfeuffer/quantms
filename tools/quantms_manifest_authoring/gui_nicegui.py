@@ -17,7 +17,7 @@ with guided step-by-step progression and validation concentrated in Review.
 
 import sys
 from pathlib import Path
-from typing import List, Callable, Optional, Dict
+from typing import Any, List, Callable, Optional, Dict
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -29,6 +29,7 @@ from spreadsheet_adapter import SpreadsheetAdapter, SpreadsheetRow
 from file_picker import MsFilePickerDialog
 from jspreadsheet_editor import JSpreadsheetEditor
 from jspreadsheet_bridge import JSpreadsheetBridge
+from ontology_provider import OntologyOptionProvider
 
 
 class WizardEditor:
@@ -106,9 +107,582 @@ class ManifestEditingWizard(WizardEditor):
         return self.wizard.get_current_step()
 
 
-def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
-    """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
+class SpreadsheetEditorFlushGroup:
+    """Flush multiple spreadsheet editors as a single active editor."""
+
+    def __init__(self, editors: List[Any]):
+        self.editors = [editor for editor in editors if editor is not None]
+
+    async def flush_pending_edits(self) -> None:
+        """Flush pending edits from all registered editors."""
+        import inspect
+
+        for editor in self.editors:
+            if not hasattr(editor, "flush_pending_edits"):
+                continue
+            flush_result = editor.flush_pending_edits()
+            if inspect.iscoroutine(flush_result):
+                await flush_result
+
+
+def _normalize_modification_residues(value: Any) -> Optional[str]:
+    """Convert provider residue payloads into the manifest's string form."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return "".join(str(item) for item in value if item is not None)
+    return str(value)
+
+
+def _parse_optional_float(value: Any) -> Optional[float]:
+    """Parse an optional numeric field from a UI input."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    return float(text)
+
+
+def _format_optional_float(value: Any) -> str:
+    """Format an optional numeric value for a text input."""
+    if value is None:
+        return ""
+    return format(float(value), ".12g")
+
+
+def _normalize_term_specificity(value: Any) -> str:
+    """Normalize the UI term specificity value into the manifest representation."""
+    text = str(value or "").strip().lower()
+    return text or "none"
+
+
+def _split_residue_codes(value: Any) -> List[str]:
+    """Split residue input into comparable single-letter residue codes."""
+    text = str(value or "").strip().upper()
+    if not text:
+        return []
+
+    if text.isalpha():
+        return list(text)
+
+    for separator in (",", ";", "/"):
+        text = text.replace(separator, " ")
+
+    residue_codes: List[str] = []
+    for token in text.split():
+        if token.isalpha():
+            residue_codes.extend(list(token))
+    return residue_codes
+
+
+def _build_selected_modification_summary(selected_option: Dict[str, Any]) -> str:
+    """Build a compact UI summary for the currently selected UniMod entry."""
+    label = selected_option.get("label") or selected_option.get("name") or "Selected UniMod entry"
+    ontology_id = selected_option.get("ontology_id") or selected_option.get("value")
+    summary = f"Selected: {label}"
+    if ontology_id:
+        summary = f"{summary} ({ontology_id})"
+
+    detail_parts = []
+    residues = _normalize_modification_residues(selected_option.get("residues"))
+    if residues:
+        detail_parts.append(f"residues {residues}")
+
+    mass_shift = selected_option.get("mass_shift")
+    if mass_shift is not None:
+        detail_parts.append(f"delta {_format_optional_float(mass_shift)}")
+
+    if detail_parts:
+        summary = f"{summary} | {' | '.join(detail_parts)}"
+
+    return summary
+
+
+def _tag_customized_modification_name(name: Any) -> str:
+    """Tag a modified ontology-backed name so the override is visible in the UI and spreadsheet."""
+    normalized_name = str(name or "").strip()
+    if not normalized_name:
+        return "(custom)"
+    if normalized_name.endswith(" (custom)"):
+        return normalized_name
+    return f"{normalized_name} (custom)"
+
+
+def _convert_override_payload_to_custom(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an overridden ontology-backed payload into a custom modification payload."""
+    override_payload = dict(payload)
+    override_payload["kind"] = "custom"
+    override_payload["name"] = _tag_customized_modification_name(override_payload.get("name"))
+    override_payload.pop("ontology_id", None)
+    return override_payload
+
+
+def _apply_selected_modification_defaults(
+    selected_option: Dict[str, Any],
+    residues_input: Any,
+    mass_shift_input: Any,
+    formula_input: Any,
+    term_specificity_select: Any,
+) -> None:
+    """Populate authoring inputs from a selected UniMod entry when metadata is available."""
+    residues = _normalize_modification_residues(selected_option.get("residues"))
+    if residues:
+        residues_input.value = residues
+        residues_input.update()
+
+    mass_shift = selected_option.get("mass_shift")
+    if mass_shift is not None:
+        mass_shift_input.value = _format_optional_float(mass_shift)
+        mass_shift_input.update()
+
+    formula = (selected_option.get("formula") or "").strip()
+    if formula:
+        formula_input.value = formula
+        formula_input.update()
+
+    term_specificity = selected_option.get("term_specificity")
+    if term_specificity:
+        term_specificity_select.value = term_specificity
+        term_specificity_select.update()
+
+
+def _validate_selected_modification_inputs(
+    selected_option: Optional[Dict[str, Any]],
+    residues: Any,
+    term_specificity: Any,
+) -> Optional[Dict[str, Any]]:
+    """Validate residue and specificity inputs against the selected UniMod entry."""
+    if not selected_option or selected_option.get("kind") != "ontology":
+        return None
+
+    label = selected_option.get("label") or selected_option.get("name") or "Selected UniMod entry"
+    normalized_term_specificity = _normalize_term_specificity(term_specificity or selected_option.get("term_specificity"))
+
+    allowed_term_specificities = list(selected_option.get("allowed_term_specificities") or [])
+    if allowed_term_specificities and normalized_term_specificity not in allowed_term_specificities:
+        supported = ", ".join(allowed_term_specificities)
+        return {
+            "message": (
+                f"{label} does not support term specificity '{normalized_term_specificity}'. "
+                f"Supported term specificities: {supported}."
+            ),
+            "can_override": False,
+        }
+
+    requested_residues = _split_residue_codes(residues)
+    if not requested_residues:
+        return None
+
+    allowed_sites_by_term_specificity = dict(selected_option.get("allowed_sites_by_term_specificity") or {})
+    allowed_residues = list(allowed_sites_by_term_specificity.get(normalized_term_specificity) or [])
+    if not allowed_residues:
+        allowed_residues = _split_residue_codes(selected_option.get("residues"))
+
+    if not allowed_residues:
+        return {
+            "message": (
+                f"{label} does not accept residue-specific values for term specificity "
+                f"'{normalized_term_specificity}'."
+            ),
+            "can_override": True,
+        }
+
+    invalid_residues = [residue for residue in requested_residues if residue not in allowed_residues]
+    if invalid_residues:
+        return {
+            "message": (
+                f"{label} does not allow residues {', '.join(invalid_residues)} for term specificity "
+                f"'{normalized_term_specificity}'. Allowed residues: {''.join(allowed_residues)}."
+            ),
+            "can_override": True,
+        }
+
+    return None
+
+
+def _validate_modification_payload_requirements(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Validate payload requirements that depend on the final modification kind."""
+    if not payload:
+        return None
+
+    if payload.get("kind") == "custom" and payload.get("mass_shift") is None:
+        return "Custom modifications require a mass shift."
+
+    return None
+
+
+def _build_modification_payload(
+    selected_option: Optional[Dict[str, Any]],
+    custom_name: Optional[str],
+    mode: Optional[str],
+    residues: Optional[str],
+    term_specificity: Optional[str],
+    mass_shift: Optional[str],
+    formula: Optional[str],
+    profile: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Build a modification payload from either a template or a custom entry."""
+    custom_name = (custom_name or "").strip()
+    payload: Dict[str, Any] = {}
+    if selected_option:
+        payload["kind"] = selected_option.get("kind") or "ontology"
+        payload["name"] = selected_option.get("name") or selected_option.get("label")
+        payload["mode"] = mode or selected_option.get("mode") or "fixed"
+        payload["ontology_id"] = selected_option.get("ontology_id") or selected_option.get("value")
+        payload["residues"] = residues or _normalize_modification_residues(selected_option.get("residues"))
+        payload["term_specificity"] = term_specificity or selected_option.get("term_specificity")
+        parsed_mass_shift = _parse_optional_float(mass_shift)
+        if parsed_mass_shift is not None:
+            payload["mass_shift"] = parsed_mass_shift
+        elif selected_option.get("mass_shift") is not None:
+            payload["mass_shift"] = selected_option.get("mass_shift")
+        payload["formula"] = (formula or "").strip() or selected_option.get("formula")
+    elif custom_name:
+        payload["kind"] = "custom"
+        payload["name"] = custom_name
+        payload["mode"] = mode or "fixed"
+        payload["residues"] = residues or None
+        payload["term_specificity"] = term_specificity or None
+        payload["mass_shift"] = _parse_optional_float(mass_shift)
+        payload["formula"] = (formula or "").strip() or None
+    else:
+        return None
+
+    if profile:
+        payload["profile"] = profile
+
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
+    """Create the modification authoring surface that lives alongside Runs."""
     active_editor: Optional[JSpreadsheetEditor] = None
+    selected_modification_option: Optional[Dict[str, Any]] = None
+    selected_modification_options: List[Dict[str, Any]] = []
+    pending_override_payload: Optional[Dict[str, Any]] = None
+
+    custom_modification_options = [
+        modification
+        for modification in wizard.modifications
+        if modification.get("kind") == "custom"
+    ]
+    option_provider = OntologyOptionProvider()
+    existing_profiles = wizard.get_modification_profiles()
+    selected_profile = wizard.active_modification_profile or (existing_profiles[0] if existing_profiles else None)
+
+    with ui.card().classes("w-full mt-6"):
+        ui.label("Modification profiles and modifications").classes("text-lg font-semibold")
+        ui.label(
+            "Create or open a profile, search UniMod-backed modifications from a dialog, and add one or more entries on the same Runs page."
+        ).classes("text-sm text-gray-600")
+
+        with ui.column().classes("w-full gap-4 mt-4"):
+            with ui.row().classes("w-full gap-2"):
+                profile_select = ui.select(
+                    options={profile: profile for profile in existing_profiles},
+                    value=selected_profile,
+                    label="Profile",
+                ).classes("flex-grow")
+                new_profile_input = ui.input(
+                    label="Create Profile",
+                    placeholder="Create or open a profile once, then add multiple modifications",
+                ).classes("flex-grow")
+
+                def sync_active_profile(_=None):
+                    wizard.set_active_modification_profile(profile_select.value)
+
+                def use_profile():
+                    profile_name = (new_profile_input.value or "").strip()
+                    if not profile_name:
+                        ui.notify("Enter a profile name first", type="warning")
+                        return
+
+                    wizard.register_modification_profile(profile_name)
+                    profile_select.options = {profile: profile for profile in wizard.get_modification_profiles()}
+                    profile_select.value = profile_name
+                    wizard.set_active_modification_profile(profile_name)
+                    profile_select.update()
+                    new_profile_input.value = ""
+
+                ui.button("Open Profile", on_click=use_profile, icon="folder_open").classes("px-4 py-0.5")
+                profile_select.on_value_change(sync_active_profile)
+
+            with ui.row().classes("w-full gap-2"):
+                mode_select = ui.select(
+                    options={"fixed": "fixed", "variable": "variable"},
+                    value="fixed",
+                    label="Mode",
+                ).classes("flex-grow")
+                term_specificity_select = ui.select(
+                    options={
+                        "none": "none",
+                        "n-term": "n-term",
+                        "c-term": "c-term",
+                        "protein-n-term": "protein-n-term",
+                        "protein-c-term": "protein-c-term",
+                    },
+                    value="none",
+                    label="Term Specificity",
+                ).classes("flex-grow")
+
+            with ui.row().classes("w-full items-center justify-between gap-2 rounded-md bg-gray-50 p-3"):
+                with ui.column().classes("gap-1"):
+                    ui.label("UniMod selection").classes("text-sm font-medium")
+                    selected_modification_label = ui.label("No UniMod entry selected").classes("text-xs text-gray-600")
+
+                with ui.row().classes("gap-2"):
+                    def clear_selected_modification():
+                        nonlocal selected_modification_option, selected_modification_options
+                        selected_modification_option = None
+                        selected_modification_options = []
+                        selected_modification_label.text = "No UniMod entry selected"
+                        selected_modification_label.update()
+                        update_custom_name_visibility()
+
+                    ui.button("Clear UniMod entry", on_click=clear_selected_modification, icon="clear").classes(
+                        "px-4 py-0.5"
+                    )
+
+                    def open_unimod_dialog():
+                        unimod_dialog.open()
+
+                    ui.button("Find UniMod entry", on_click=open_unimod_dialog, icon="search").classes(
+                        "px-4 py-0.5"
+                    )
+
+            with ui.dialog() as unimod_dialog:
+                with ui.card().classes("w-full max-w-2xl gap-4"):
+                    ui.label("Find UniMod entry").classes("text-lg font-semibold")
+                    ui.label(
+                        "Search by accession, title, or any alternative title exposed by the provider."
+                    ).classes("text-sm text-gray-600")
+
+                    search_results_label = ui.label("Run a search to load UniMod results.").classes(
+                        "text-xs text-gray-500"
+                    )
+
+                    with ui.row().classes("w-full items-end gap-2"):
+                        search_input = ui.input(
+                            label="Search UniMod",
+                            placeholder="Try UNIMOD:4, Carbamidomethyl, or an alternative title",
+                        ).classes("flex-grow")
+
+                        results_select = ui.select(
+                            options={},
+                            value=None,
+                            label="UniMod results",
+                            clearable=True,
+                        ).classes("flex-grow")
+
+                    def run_unimod_search():
+                        nonlocal selected_modification_options
+                        query = (search_input.value or "").strip()
+                        if not query:
+                            ui.notify("Enter a UniMod accession or title to search", type="warning")
+                            return
+
+                        results = option_provider.get_modification_options(
+                            custom_options=custom_modification_options,
+                            query=query,
+                        )
+                        results_select.options = {
+                            option.get("value"): option.get("label")
+                            for option in results
+                            if option.get("value")
+                        }
+                        selected_modification_options = results
+                        results_select.value = results[0].get("value") if len(results) == 1 else None
+                        results_select.update()
+                        search_results_label.text = (
+                            f"Found {len(results)} UniMod result(s)" if results else "No UniMod results found"
+                        )
+                        search_results_label.update()
+
+                    def apply_unimod_selection():
+                        nonlocal selected_modification_option
+                        selected_value = results_select.value
+                        selected_option = None
+                        for option in selected_modification_options:
+                            if option.get("value") == selected_value:
+                                selected_option = option
+                                break
+
+                        if not selected_option:
+                            ui.notify("Search UniMod and choose a result first", type="warning")
+                            return
+
+                        selected_option = option_provider.enrich_modification_option(selected_option)
+                        selected_modification_option = selected_option
+                        _apply_selected_modification_defaults(
+                            selected_option,
+                            residues_input,
+                            mass_shift_input,
+                            formula_input,
+                            term_specificity_select,
+                        )
+                        selected_modification_label.text = _build_selected_modification_summary(selected_option)
+                        selected_modification_label.update()
+                        update_custom_name_visibility()
+                        unimod_dialog.close()
+
+                    with ui.row().classes("w-full justify-end gap-2"):
+                        ui.button("Search", on_click=run_unimod_search, icon="search").classes("px-4 py-0.5")
+                        ui.button("Apply UniMod selection", on_click=apply_unimod_selection, icon="check").classes(
+                            "px-4 py-0.5"
+                        )
+
+            with ui.dialog() as override_dialog:
+                with ui.card().classes("w-full max-w-lg gap-4"):
+                    ui.label("Override UniMod residue validation").classes("text-lg font-semibold")
+                    override_message_label = ui.label("").classes("text-sm text-gray-700")
+
+                    with ui.row().classes("w-full justify-end gap-2"):
+                        def cancel_override():
+                            nonlocal pending_override_payload
+                            pending_override_payload = None
+                            override_dialog.close()
+
+                        def confirm_override():
+                            nonlocal pending_override_payload
+                            if not pending_override_payload:
+                                override_dialog.close()
+                                return
+
+                            finalize_modification_add(pending_override_payload)
+                            pending_override_payload = None
+                            override_dialog.close()
+
+                        ui.button("Cancel", on_click=cancel_override).classes("px-4 py-0.5")
+                        ui.button("Add anyway", on_click=confirm_override, color="warning").classes("px-4 py-0.5")
+
+            with ui.row().classes("w-full gap-2"):
+                custom_name_input = ui.input(
+                    label="Custom Modification Name",
+                    placeholder="Use for custom modifications",
+                ).classes("flex-grow")
+                residues_input = ui.input(
+                    label="Residues",
+                    placeholder="e.g., C or STY",
+                ).classes("flex-grow")
+                mass_shift_input = ui.input(
+                    label="Mass Shift (optional)",
+                    placeholder="e.g., 57.021464",
+                ).classes("flex-grow")
+
+            with ui.row().classes("w-full gap-2"):
+                formula_input = ui.input(
+                    label="Formula (optional)",
+                    placeholder="e.g., HO3P",
+                ).classes("flex-grow")
+
+            custom_name_input.set_visibility(True)
+
+            def update_custom_name_visibility(_=None):
+                custom_name_input.set_visibility(not bool(selected_modification_option))
+
+            update_custom_name_visibility()
+
+            def finalize_modification_add(payload: Dict[str, Any]) -> None:
+                wizard.add_modification(**payload)
+                custom_name_input.value = ""
+                residues_input.value = ""
+                mass_shift_input.value = ""
+                formula_input.value = ""
+                clear_selected_modification()
+                update_custom_name_visibility()
+                refresh_ui()
+
+            def add_modification():
+                nonlocal pending_override_payload
+                active_profile = (profile_select.value or "").strip()
+                if not active_profile:
+                    ui.notify("Choose or create a profile first", type="warning")
+                    return
+
+                try:
+                    payload = _build_modification_payload(
+                        selected_option=selected_modification_option,
+                        custom_name=custom_name_input.value,
+                        mode=mode_select.value,
+                        residues=residues_input.value,
+                        term_specificity=term_specificity_select.value,
+                        mass_shift=mass_shift_input.value,
+                        formula=formula_input.value,
+                        profile=active_profile,
+                    )
+                    if not payload:
+                        ui.notify("Search UniMod and choose a modification, or enter a custom name", type="warning")
+                        return
+
+                    payload_requirement_issue = _validate_modification_payload_requirements(payload)
+                    if payload_requirement_issue:
+                        ui.notify(payload_requirement_issue, type="warning")
+                        return
+
+                    validation_issue = _validate_selected_modification_inputs(
+                        selected_modification_option,
+                        residues_input.value,
+                        term_specificity_select.value,
+                    )
+                    if validation_issue:
+                        if validation_issue.get("can_override"):
+                            pending_override_payload = _convert_override_payload_to_custom(payload)
+                            override_requirement_issue = _validate_modification_payload_requirements(
+                                pending_override_payload
+                            )
+                            if override_requirement_issue:
+                                pending_override_payload = None
+                                ui.notify(override_requirement_issue, type="warning")
+                                return
+
+                            override_message_label.text = (
+                                f"{validation_issue.get('message')} "
+                                f"Add it anyway as {pending_override_payload['name']}?"
+                            )
+                            override_message_label.update()
+                            override_dialog.open()
+                            return
+
+                        ui.notify(str(validation_issue.get("message") or "Invalid modification input"), type="warning")
+                        return
+
+                    finalize_modification_add(payload)
+                except Exception as e:
+                    ui.notify(f"Error adding modification: {e}", type="negative")
+
+            ui.button("Add Modification", on_click=add_modification, icon="add").classes("px-4 py-0.5")
+
+        if wizard.modifications:
+            ui.label(f"Modifications ({len(wizard.modifications)})").classes("text-md font-semibold mt-6")
+
+            JSpreadsheetEditor.prepare_client_runtime()
+            bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+            editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Modifications")
+            editor.render()
+            active_editor = editor
+
+            ui.label(
+                "• Click cells to edit modification fields\n"
+                "• Right-click rows to delete\n"
+                "* Mode, profile, and term specificity are available in the authoring flow"
+            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+        else:
+            ui.label("No modifications added yet. Use the form above to add one.").classes(
+                "text-sm text-gray-500 italic mt-4"
+            )
+
+    return active_editor
+
+
+def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]:
+    """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
+    runs_editor: Optional[JSpreadsheetEditor] = None
+    modifications_editor: Optional[JSpreadsheetEditor] = None
 
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
@@ -175,10 +749,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpr
 
             # Create and render the spreadsheet editor
             editor = JSpreadsheetEditor(wizard, refresh_ui)
-            # Register the editor as the active editor for pre-navigation flush
-            wizard.set_active_editor(editor)
             editor.render()
-            active_editor = editor
+            runs_editor = editor
 
             # Footer with instructions
             ui.label(
@@ -192,7 +764,13 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpr
                 "text-sm text-gray-500 italic mt-6"
             )
 
-    return active_editor
+    modifications_editor = create_modifications_surface(wizard, refresh_ui)
+
+    if runs_editor and modifications_editor:
+        return SpreadsheetEditorFlushGroup([runs_editor, modifications_editor])
+    if runs_editor:
+        return runs_editor
+    return modifications_editor
 
 
 def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
@@ -258,16 +836,16 @@ def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> Optional[J
         # Render existing samples as spreadsheet
         if wizard.samples:
             ui.label(f"Samples ({len(wizard.samples)})").classes("text-md font-semibold mt-6")
-            
+
             JSpreadsheetEditor.prepare_client_runtime()
-            
+
             # Create samples spreadsheet editor
             bridge = JSpreadsheetBridge(wizard, entity_type="samples")
             editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Samples")
             wizard.set_active_editor(editor)
             editor.render()
             active_editor = editor
-            
+
             # Footer with instructions
             ui.label(
                 "• Click cells to edit (id, organism, organism_part, condition, biological_replicate, technical_replicate)\n"
@@ -337,7 +915,7 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> Optional[
                         ui.label(f"Error: {e}")
 
             # Update channels UI when plex type changes
-            plex_type.on_change(lambda e: update_channels_ui())
+            plex_type.on_value_change(lambda e: update_channels_ui())
             update_channels_ui()
 
             def add_mixture():
@@ -366,16 +944,16 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> Optional[
         # Render existing mixtures as spreadsheet
         if wizard.mixtures:
             ui.label(f"Mixtures ({len(wizard.mixtures)})").classes("text-md font-semibold mt-6")
-            
+
             JSpreadsheetEditor.prepare_client_runtime()
-            
+
             # Create mixtures spreadsheet editor
             bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
             editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Mixtures")
             wizard.set_active_editor(editor)
             editor.render()
             active_editor = editor
-            
+
             # Footer with instructions
             ui.label(
                 "• Click cells to edit (id and channel sample assignments)\n"

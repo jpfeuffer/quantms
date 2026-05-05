@@ -154,6 +154,42 @@ class TestWizardState:
         assert wizard.runs[0]["file"] == "s3://bucket/file.raw"
         assert wizard.runs[0]["modification_profile"] == "default"
 
+    @pytest.mark.parametrize(
+        ("file_name", "expected_fraction"),
+        [
+            ("sample_f12.raw", 12),
+            ("sample_F34.raw", 34),
+            ("sample_fraction56.raw", 56),
+            ("sample_Frac78.raw", 78),
+        ],
+    )
+    def test_wizard_add_run_infers_fraction_from_supported_filename_patterns(self, file_name, expected_fraction):
+        """Test that add_run infers fractions from supported filename suffix patterns."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file=f"/data/{file_name}")
+
+        assert wizard.runs[0]["fraction"] == expected_fraction
+
+    def test_wizard_add_run_does_not_infer_fraction_for_letter_prefixed_f_pattern(self):
+        """Test that the short fNN form requires a non-letter prefix before the marker."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/samplexF12.raw")
+
+        assert "fraction" not in wizard.runs[0]
+
+    def test_wizard_add_run_preserves_explicit_fraction_over_filename_inference(self):
+        """Test that an explicit fraction wins over any inferred filename fraction."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample_fraction12.raw", fraction=3)
+
+        assert wizard.runs[0]["fraction"] == 3
+
     def test_wizard_add_modification(self):
         """Test adding a modification to the wizard."""
         from gui_wizard_state import WizardState

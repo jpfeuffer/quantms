@@ -124,6 +124,14 @@ FALLBACK_OPTIONS_MAP = {
 
 PSI_MS_INSTRUMENT_ROOT = "MS:1000463"
 
+UNIMOD_POSITION_TO_TERM_SPECIFICITY = {
+    "anywhere": "none",
+    "any n-term": "n-term",
+    "any c-term": "c-term",
+    "protein n-term": "protein-n-term",
+    "protein c-term": "protein-c-term",
+}
+
 
 class OntologyOptionProvider:
     """
@@ -292,18 +300,233 @@ class OntologyOptionProvider:
     def get_modification_options(
         self,
         custom_options: Optional[List[Union[str, Dict[str, Any]]]] = None,
+        query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Get dropdown-ready modification options with live-first lookup and offline fallback."""
-        live_options = self._get_modification_options_from_oaklib()
+        normalized_query = (query or "").strip()
+        live_options = self._get_modification_options_from_oaklib(query=normalized_query or None)
         if live_options:
             base_options = live_options
         else:
             base_options = build_bundled_modification_options()
+            if normalized_query:
+                query_text = normalized_query.lower()
+                base_options = [option for option in base_options if self._matches_bundled_modification_query(option, query_text)]
 
         custom_normalized = normalize_custom_modification_options(custom_options)
         return merge_modification_options(base_options, custom_normalized)
 
-    def _get_modification_options_from_oaklib(self) -> Optional[List[Dict[str, Any]]]:
+    def _get_modification_search_terms(self, query: Optional[str] = None) -> List[str]:
+        """Build UniMod search terms, normalizing shorthand accessions to canonical CURIEs."""
+        normalized_query = (query or "").strip()
+        if not normalized_query:
+            return get_bundled_modification_search_terms()
+
+        upper_query = normalized_query.upper()
+        if normalized_query.isdigit():
+            return [f"UNIMOD:{normalized_query}"]
+
+        if upper_query.startswith("UNIMOD:"):
+            accession = normalized_query.split(":", 1)[1].strip()
+            if accession.isdigit():
+                return [f"UNIMOD:{accession}"]
+
+        return [normalized_query]
+
+    def _matches_bundled_modification_query(self, option: Dict[str, Any], query_text: str) -> bool:
+        """Return True when a bundled modification option matches the offline query text."""
+        haystacks: List[str] = [
+            str(option.get("label", "")),
+            str(option.get("name", "")),
+            str(option.get("value", "")),
+            str(option.get("ontology_id", "")),
+            str(option.get("classification", "")),
+            str(option.get("description", "")),
+        ]
+
+        for field_name in ("aliases", "search_terms"):
+            field_value = option.get(field_name)
+            if isinstance(field_value, (list, tuple, set)):
+                haystacks.extend(str(entry) for entry in field_value)
+            elif field_value:
+                haystacks.append(str(field_value))
+
+        return any(query_text in haystack.lower() for haystack in haystacks if haystack)
+
+    def _build_modification_option_from_ols_record(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Normalize an OLS raw search record into a dropdown-ready modification option."""
+        label = record.get("label")
+        value = record.get("obo_id") or record.get("short_form")
+        if not value:
+            iri = record.get("iri") or ""
+            if "/obo/UNIMOD_" in iri:
+                value = f"UNIMOD:{iri.rsplit('UNIMOD_', 1)[-1]}"
+
+        if not label or not value:
+            return None
+
+        description = record.get("description")
+        if isinstance(description, list):
+            description = " ".join(item for item in description if item)
+
+        synonyms = record.get("synonym") or record.get("related_synonyms")
+        if isinstance(synonyms, str):
+            synonyms = [synonyms]
+
+        return {
+            "label": label,
+            "value": value,
+            "kind": "ontology",
+            "ontology_id": value,
+            "name": label,
+            "description": description,
+            "aliases": synonyms or [],
+            "iri": record.get("iri"),
+        }
+
+    def enrich_modification_option(self, option: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Hydrate a selected UniMod search option with term-level metadata when available."""
+        if not option or option.get("kind") != "ontology":
+            return option
+
+        adapter = self._modification_adapter or self._oak_adapter
+        if adapter is None or not hasattr(adapter, "client") or not hasattr(adapter.client, "get_term"):
+            return option
+
+        iri = option.get("iri")
+        if not iri:
+            ontology_id = str(option.get("ontology_id") or option.get("value") or "").strip()
+            if ontology_id.upper().startswith("UNIMOD:"):
+                iri = f"http://purl.obolibrary.org/obo/{ontology_id.upper().replace(':', '_')}"
+
+        if not iri:
+            return option
+
+        focus_ontology = str(getattr(adapter, "focus_ontology", "unimod") or "unimod").lower()
+
+        try:
+            term_response = adapter.client.get_term(focus_ontology, iri)
+        except Exception:
+            return option
+
+        term = self._extract_ols_term(term_response)
+        if not term:
+            return option
+
+        enriched_option = dict(option)
+        enriched_option.update(self._build_modification_option_details_from_ols_term(term))
+
+        description = term.get("description")
+        if isinstance(description, list):
+            description = " ".join(item for item in description if item)
+        if description and not enriched_option.get("description"):
+            enriched_option["description"] = description
+
+        synonyms = term.get("synonyms") or term.get("obo_synonym")
+        if isinstance(synonyms, str):
+            synonyms = [synonyms]
+        if synonyms and not enriched_option.get("aliases"):
+            enriched_option["aliases"] = synonyms
+
+        return enriched_option
+
+    def _extract_ols_term(self, term_response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract the first term entry from an OLS term response."""
+        if not isinstance(term_response, dict):
+            return None
+
+        if term_response.get("obo_id"):
+            return term_response
+
+        embedded = term_response.get("_embedded") or {}
+        terms = embedded.get("terms") or []
+        if terms:
+            return terms[0]
+
+        return None
+
+    def _build_modification_option_details_from_ols_term(self, term: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract user-facing UniMod metadata from an OLS term record."""
+        details: Dict[str, Any] = {}
+        xrefs = term.get("obo_xref") or []
+        specificity_groups: Dict[str, Dict[str, Any]] = {}
+
+        for xref in xrefs:
+            if not isinstance(xref, dict):
+                continue
+
+            xref_id = str(xref.get("id") or "").strip()
+            description = xref.get("description")
+            if not xref_id or description is None:
+                continue
+
+            description_text = str(description).strip()
+            if xref_id == "delta_mono_mass":
+                try:
+                    details["mass_shift"] = float(description_text)
+                except ValueError:
+                    pass
+                continue
+
+            if xref_id == "delta_composition":
+                details["formula"] = description_text
+                continue
+
+            if not xref_id.startswith("spec_"):
+                continue
+
+            _, group_id, field_name = xref_id.split("_", 2)
+            group = specificity_groups.setdefault(group_id, {"site": []})
+            if field_name == "site":
+                group.setdefault("site", []).append(description_text)
+            else:
+                group[field_name] = description_text
+
+        allowed_sites_by_term_specificity: Dict[str, List[str]] = {}
+        allowed_term_specificities: List[str] = []
+
+        for group_id in sorted(specificity_groups, key=lambda value: int(value)):
+            group = specificity_groups[group_id]
+            if str(group.get("hidden", "0")).strip().lower() in {"1", "true", "yes"}:
+                continue
+
+            position = str(group.get("position") or "").strip().lower()
+            term_specificity = UNIMOD_POSITION_TO_TERM_SPECIFICITY.get(position)
+            if not term_specificity:
+                continue
+
+            if term_specificity not in allowed_term_specificities:
+                allowed_term_specificities.append(term_specificity)
+
+            sites = allowed_sites_by_term_specificity.setdefault(term_specificity, [])
+            for raw_site in group.get("site", []):
+                normalized_site = self._normalize_unimod_site(raw_site)
+                if normalized_site and normalized_site not in sites:
+                    sites.append(normalized_site)
+
+        if allowed_term_specificities:
+            details["allowed_term_specificities"] = allowed_term_specificities
+            details["allowed_sites_by_term_specificity"] = allowed_sites_by_term_specificity
+
+            default_term_specificity = allowed_term_specificities[0]
+            if "none" in allowed_term_specificities:
+                default_term_specificity = "none"
+
+            details["term_specificity"] = default_term_specificity
+            default_sites = allowed_sites_by_term_specificity.get(default_term_specificity) or []
+            if default_sites:
+                details["residues"] = "".join(default_sites)
+
+        return details
+
+    def _normalize_unimod_site(self, site: Any) -> Optional[str]:
+        """Normalize UniMod site strings into residue codes when possible."""
+        site_text = str(site or "").strip()
+        if len(site_text) == 1 and site_text.isalpha():
+            return site_text.upper()
+        return None
+
+    def _get_modification_options_from_oaklib(self, query: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
         """Attempt to resolve modification options from a live ontology adapter."""
         adapter = self._modification_adapter
         if adapter is None:
@@ -316,19 +539,64 @@ class OntologyOptionProvider:
                     adapter = _oak_get_adapter("sqlite:obo:unimod")
                     self._modification_adapter = adapter
                 except Exception:
-                    return None
-
-        if not hasattr(adapter, "search") or not hasattr(adapter, "get_label"):
-            return None
+                    try:
+                        adapter = _oak_get_adapter("ols:unimod")
+                        self._modification_adapter = adapter
+                    except Exception:
+                        return None
 
         options: List[Dict[str, Any]] = []
         seen_values = set()
         seen_labels = set()
 
-        for search_term in get_bundled_modification_search_terms():
+        search_terms = self._get_modification_search_terms(query)
+
+        if hasattr(adapter, "client") and hasattr(adapter.client, "search"):
+            params = {
+                "type": "class",
+                "local": "true",
+                "fieldList": "iri,label,obo_id,short_form,description,synonym",
+                "rows": 50,
+                "start": 0,
+            }
+            focus_ontology = getattr(adapter, "focus_ontology", None)
+            if focus_ontology:
+                params["ontology"] = str(focus_ontology).lower()
+
+            for search_term in search_terms:
+                if not search_term:
+                    continue
+                try:
+                    records = list(adapter.client.search(search_term, params=params))
+                except Exception:
+                    continue
+
+                for record in records:
+                    option = self._build_modification_option_from_ols_record(record)
+                    if not option:
+                        continue
+
+                    option_value = option.get("value")
+                    option_label = option.get("label")
+                    if option_value in seen_values or option_label in seen_labels:
+                        continue
+
+                    options.append(option)
+                    seen_values.add(option_value)
+                    seen_labels.add(option_label)
+
+            options.sort(key=lambda option: option["label"].lower())
+            return options if options else None
+
+        if not hasattr(adapter, "search") or not hasattr(adapter, "get_label"):
+            return None
+
+        for search_term in search_terms:
+            if not search_term:
+                continue
             try:
                 try:
-                    matches = list(adapter.search(search_term, limit=25))
+                    matches = list(adapter.search(search_term, limit=50))
                 except TypeError:
                     matches = list(adapter.search(search_term))
             except Exception:

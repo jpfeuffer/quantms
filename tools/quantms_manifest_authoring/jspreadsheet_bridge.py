@@ -16,8 +16,10 @@ from spreadsheet_adapter import (
     SampleFieldInfo,
     MixtureFieldInfo,
     RunFieldInfo,
+    ModificationFieldInfo,
     AssignmentFieldInfo,
     AssignmentSpreadsheetRow,
+    ModificationSpreadsheetRow,
 )
 from spreadsheet_column_config import ColumnConfigBuilder
 from ontology_provider import OntologyOptionProvider
@@ -36,7 +38,7 @@ class JSpreadsheetBridge:
         self,
         wizard: WizardState,
         column_config_builder=None,
-        entity_type: Literal["runs", "samples", "mixtures", "assignments"] = "runs",
+        entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications"] = "runs",
     ):
         """Initialize bridge with wizard state.
 
@@ -44,7 +46,7 @@ class JSpreadsheetBridge:
             wizard: WizardState instance
             column_config_builder: Optional ColumnConfigBuilder for dropdown config.
                                   If None, creates a new one.
-            entity_type: Type of entity ('runs', 'samples', 'mixtures', or 'assignments'). Default is 'runs'.
+            entity_type: Type of entity ('runs', 'samples', 'mixtures', 'assignments', or 'modifications'). Default is 'runs'.
         """
         self.wizard = wizard
         self.entity_type = entity_type
@@ -87,6 +89,10 @@ class JSpreadsheetBridge:
             headers = self.adapter.get_assignment_headers_for_quantification(quant_method)
             rows = self.adapter.wizard_assignments_to_spreadsheet(quant_method)
             data = [[getattr(row, field, None) for field in headers] for row in rows]
+        elif self.entity_type == "modifications":
+            headers = self.adapter.get_column_headers_modifications()
+            rows = self.adapter.wizard_modifications_to_spreadsheet()
+            data = [[getattr(row, field, None) for field in headers] for row in rows]
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -120,6 +126,8 @@ class JSpreadsheetBridge:
             }
         elif self.entity_type == "assignments":
             return AssignmentFieldInfo.get_field_info(field)
+        elif self.entity_type == "modifications":
+            return ModificationFieldInfo.get_field_info(field)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -137,6 +145,17 @@ class JSpreadsheetBridge:
                 mixture_options = [{"id": mixture["id"], "name": mixture["id"]} for mixture in self.wizard.mixtures]
                 sources["mixture"] = mixture_options
             return sources
+        elif self.entity_type == "modifications":
+            return {
+                "mode": [
+                    {"id": "fixed", "name": "fixed"},
+                    {"id": "variable", "name": "variable"},
+                ],
+                "kind": [
+                    {"id": "ontology", "name": "ontology"},
+                    {"id": "custom", "name": "custom"},
+                ],
+            }
         else:
             return {}
 
@@ -150,6 +169,8 @@ class JSpreadsheetBridge:
             return len(self.wizard.mixtures)
         if self.entity_type == "assignments":
             return len(self.wizard.runs)
+        if self.entity_type == "modifications":
+            return len(self.wizard.modifications)
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
@@ -231,6 +252,26 @@ class JSpreadsheetBridge:
             self.adapter.sync_assignment_edits(rows, quant_method)
             return
 
+        if self.entity_type == "modifications":
+            rows = self.adapter.wizard_modifications_to_spreadsheet()
+            headers = self.adapter.get_column_headers_modifications()
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    if field_name in {"mass_shift"}:
+                        if value == "":
+                            value = None
+                        elif isinstance(value, str):
+                            value = float(value)
+                    elif field_name in {"mode", "kind", "name", "ontology_id", "residues", "term_specificity", "profile"} and value == "":
+                        value = None
+                    row.update(**{field_name: value})
+            self.adapter.sync_modification_edits(rows)
+            return
+
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
 
@@ -254,6 +295,8 @@ class JSpreadsheetBridge:
             self._handle_cell_edit_mixtures(row_index, col_index, new_value)
         elif self.entity_type == "assignments":
             self._handle_cell_edit_assignments(row_index, col_index, new_value)
+        elif self.entity_type == "modifications":
+            self._handle_cell_edit_modifications(row_index, col_index, new_value)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -400,6 +443,44 @@ class JSpreadsheetBridge:
         current_rows[row_index] = edited_row
         self.adapter.sync_assignment_edits(current_rows, quant_method)
 
+    def _handle_cell_edit_modifications(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for modifications."""
+        headers = self.adapter.get_column_headers_modifications()
+        field_name = headers[col_index]
+
+        current_rows = self.adapter.wizard_modifications_to_spreadsheet()
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        if field_name == "mass_shift" and new_value is not None:
+            if isinstance(new_value, str) and new_value.strip() == "":
+                new_value = None
+            elif new_value is not None:
+                try:
+                    new_value = float(new_value)
+                except (ValueError, TypeError):
+                    raise ValueError(f"mass_shift must be a number, got: {new_value}")
+        elif field_name in {"max_occurrences", "binary_group", "min_occurrences", "distance_from_terminus"} and new_value is not None:
+            if isinstance(new_value, str) and new_value.strip() == "":
+                new_value = None
+            elif new_value is not None:
+                try:
+                    new_value = int(new_value)
+                except (ValueError, TypeError):
+                    raise ValueError(f"{field_name} must be an integer, got: {new_value}")
+
+        if field_name in self._dropdown_constraint_cache:
+            self._validate_dropdown_value(field_name, new_value)
+
+        edited_row.update(**{field_name: new_value})
+        edited_row.validate()
+
+        current_rows[row_index] = edited_row
+        self.adapter.sync_modification_edits(current_rows)
+
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
         Build a cache of dropdown constraints for validation.
@@ -420,6 +501,10 @@ class JSpreadsheetBridge:
                     values.add(opt)
             values.discard(None)
             constraints["instrument"] = values
+
+        if self.entity_type == "modifications":
+            constraints["mode"] = {"fixed", "variable"}
+            constraints["kind"] = {"ontology", "custom"}
 
         return constraints
 
@@ -471,6 +556,10 @@ class JSpreadsheetBridge:
             # Assignments are a linkage view over runs, so deletion is a no-op.
             # Assignment rows cannot be directly deleted; they reflect run state.
             pass
+        elif self.entity_type == "modifications":
+            if row_index < 0 or row_index >= len(self.wizard.modifications):
+                raise IndexError(f"Row index {row_index} out of range")
+            del self.wizard.modifications[row_index]
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 

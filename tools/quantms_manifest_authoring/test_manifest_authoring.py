@@ -1040,6 +1040,187 @@ class TestOntologyOptionProvider:
         except ImportError as e:
             pytest.skip(f"ontology_provider module not yet implemented: {e}")
 
+    def test_option_provider_normalizes_numeric_unimod_queries_and_preserves_text_search(self):
+        """Test that UniMod shorthand, canonical accessions, and free-text queries all resolve."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class MockLiveAdapter:
+                def __init__(self):
+                    self.search_terms = []
+
+                def search(self, term, limit=None):
+                    self.search_terms.append(term)
+                    if term in {"UNIMOD:1224", "UNIMOD:1239", "carbamidomethyl"}:
+                        return [term]
+                    return []
+
+                def get_label(self, curie):
+                    return {
+                        "UNIMOD:1224": "Mock UniMod 1224",
+                        "UNIMOD:1239": "Mock UniMod 1239",
+                        "carbamidomethyl": "Carbamidomethyl",
+                    }.get(curie)
+
+            provider = OntologyOptionProvider(oak_adapter=MockLiveAdapter())
+
+            shorthand_options = provider.get_modification_options(query="1224")
+            accession_options = provider.get_modification_options(query="UNIMOD:1239")
+            text_options = provider.get_modification_options(query="carbamidomethyl")
+
+            assert shorthand_options[0]["value"] == "UNIMOD:1224"
+            assert accession_options[0]["value"] == "UNIMOD:1239"
+            assert text_options[0]["value"] == "carbamidomethyl"
+
+            search_terms = provider._modification_adapter.search_terms
+            assert "UNIMOD:1224" in search_terms
+            assert "UNIMOD:1239" in search_terms
+            assert "carbamidomethyl" in search_terms
+            assert "1224" not in search_terms
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_uses_ols_style_adapter_for_full_unimod_results(self):
+        """Test that OLS-backed UniMod search returns full-record accessions instead of falling back."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class MockOlsClient:
+                def __init__(self):
+                    self.search_terms = []
+
+                def search(self, term, params=None):
+                    self.search_terms.append(term)
+                    records = {
+                        "substitution": [
+                            {
+                                "iri": "http://purl.obolibrary.org/obo/UNIMOD_1044",
+                                "obo_id": "UNIMOD:1044",
+                                "short_form": "UNIMOD_1044",
+                                "label": "Ala->Cys",
+                                "description": ["Ala->Cys substitution."],
+                                "synonym": ["Misacylation of the tRNA or editing of the charged tRNA"],
+                            },
+                            {
+                                "iri": "http://purl.obolibrary.org/obo/UNIMOD_1224",
+                                "obo_id": "UNIMOD:1224",
+                                "short_form": "UNIMOD_1224",
+                                "label": "Trp->Ala",
+                                "description": ["Trp->Ala substitution."],
+                                "synonym": ["Misacylation of the tRNA or editing of the charged tRNA"],
+                            },
+                        ],
+                        "UNIMOD:1224": [
+                            {
+                                "iri": "http://purl.obolibrary.org/obo/UNIMOD_1224",
+                                "obo_id": "UNIMOD:1224",
+                                "short_form": "UNIMOD_1224",
+                                "label": "Trp->Ala",
+                                "description": ["Trp->Ala substitution."],
+                                "synonym": ["Misacylation of the tRNA or editing of the charged tRNA"],
+                            }
+                        ],
+                        "Carbamidomethyl": [
+                            {
+                                "iri": "http://purl.obolibrary.org/obo/UNIMOD_4",
+                                "obo_id": "UNIMOD:4",
+                                "short_form": "UNIMOD_4",
+                                "label": "Carbamidomethyl",
+                                "description": ["Iodoacetamide derivative."],
+                                "synonym": ["Carboxyamidomethylation"],
+                            }
+                        ],
+                    }
+                    return records.get(term, [])
+
+            class MockOlsAdapter:
+                def __init__(self):
+                    self.focus_ontology = "unimod"
+                    self.client = MockOlsClient()
+
+            provider = OntologyOptionProvider(oak_adapter=MockOlsAdapter())
+
+            substitution_options = provider.get_modification_options(query="substitution")
+            accession_options = provider.get_modification_options(query="1224")
+            text_options = provider.get_modification_options(query="Carbamidomethyl")
+
+            substitution_values = {option["value"] for option in substitution_options}
+            assert "UNIMOD:1044" in substitution_values
+            assert "UNIMOD:1224" in substitution_values
+            assert accession_options[0]["value"] == "UNIMOD:1224"
+            assert text_options[0]["value"] == "UNIMOD:4"
+            assert provider._modification_adapter.client.search_terms == [
+                "substitution",
+                "UNIMOD:1224",
+                "Carbamidomethyl",
+            ]
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_enriches_selected_unimod_option_with_term_metadata(self):
+        """Test that a selected OLS-backed UniMod hit is hydrated with mass and specificity metadata."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class MockOlsClient:
+                def search(self, term, params=None):
+                    if term != "Carbamidomethyl":
+                        return []
+                    return [
+                        {
+                            "iri": "http://purl.obolibrary.org/obo/UNIMOD_4",
+                            "obo_id": "UNIMOD:4",
+                            "short_form": "UNIMOD_4",
+                            "label": "Carbamidomethyl",
+                            "description": ["Iodoacetamide derivative."],
+                            "synonym": ["Carboxyamidomethylation"],
+                        }
+                    ]
+
+                def get_term(self, ontology, iri):
+                    assert ontology == "unimod"
+                    assert iri == "http://purl.obolibrary.org/obo/UNIMOD_4"
+                    return {
+                        "_embedded": {
+                            "terms": [
+                                {
+                                    "obo_id": "UNIMOD:4",
+                                    "label": "Carbamidomethyl",
+                                    "obo_xref": [
+                                        {"id": "delta_mono_mass", "description": "57.021464"},
+                                        {"id": "delta_composition", "description": "H(3) C(2) N O"},
+                                        {"id": "spec_1_hidden", "description": "0"},
+                                        {"id": "spec_1_position", "description": "Anywhere"},
+                                        {"id": "spec_1_site", "description": "C"},
+                                        {"id": "spec_2_hidden", "description": "0"},
+                                        {"id": "spec_2_position", "description": "Any N-term"},
+                                        {"id": "spec_2_site", "description": "N-term"},
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+
+            class MockOlsAdapter:
+                def __init__(self):
+                    self.focus_ontology = "unimod"
+                    self.client = MockOlsClient()
+
+            provider = OntologyOptionProvider(oak_adapter=MockOlsAdapter())
+
+            option = provider.get_modification_options(query="Carbamidomethyl")[0]
+            enriched_option = provider.enrich_modification_option(option)
+
+            assert enriched_option["mass_shift"] == 57.021464
+            assert enriched_option["formula"] == "H(3) C(2) N O"
+            assert enriched_option["residues"] == "C"
+            assert enriched_option["term_specificity"] == "none"
+            assert enriched_option["allowed_term_specificities"] == ["none", "n-term"]
+            assert enriched_option["allowed_sites_by_term_specificity"]["none"] == ["C"]
+            assert enriched_option["allowed_sites_by_term_specificity"]["n-term"] == []
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
     def test_option_provider_uses_bundled_modification_fallback_when_live_lookup_fails(self):
         """Test that bundled modification options are used when live lookup returns nothing."""
         try:
@@ -1055,6 +1236,32 @@ class TestOntologyOptionProvider:
             option_values = {option["value"] for option in options}
             assert "UNIMOD:4" in option_values
             assert "UNIMOD:21" in option_values or "UNIMOD:35" in option_values
+        except ImportError as e:
+            pytest.skip(f"ontology_provider module not yet implemented: {e}")
+
+    def test_option_provider_searches_bundled_substitution_entries_offline(self):
+        """Test that offline fallback resolves bundled substitution entries and accessions."""
+        try:
+            from ontology_provider import OntologyOptionProvider
+
+            class EmptyLiveAdapter:
+                def search(self, term, limit=None):
+                    return []
+
+            provider = OntologyOptionProvider(oak_adapter=EmptyLiveAdapter())
+
+            substitution_options = provider.get_modification_options(query="substitution")
+            shorthand_1224_options = provider.get_modification_options(query="1224")
+            shorthand_1239_options = provider.get_modification_options(query="1239")
+            carbamidomethyl_options = provider.get_modification_options(query="Carbamidomethyl")
+
+            substitution_values = {option["value"] for option in substitution_options}
+            assert "UNIMOD:1224" in substitution_values
+            assert "UNIMOD:1239" in substitution_values
+
+            assert shorthand_1224_options[0]["value"] == "UNIMOD:1224"
+            assert shorthand_1239_options[0]["value"] == "UNIMOD:1239"
+            assert carbamidomethyl_options[0]["value"] == "UNIMOD:4"
         except ImportError as e:
             pytest.skip(f"ontology_provider module not yet implemented: {e}")
 

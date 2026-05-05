@@ -18,15 +18,23 @@ class ColumnConfigBuilder:
         "instrument": "instrument",
     }
 
-    def __init__(self, option_provider=None):
+    # Per-column filter mode for dropdown autocomplete.
+    # Supported values: "prefix" (default), "substring", "fuzzy"
+    DROPDOWN_FILTER_MODE: Dict[str, str] = {}
+
+    def __init__(self, option_provider=None, filter_modes: Dict[str, str] | None = None):
         """
         Initialize the builder.
 
         Args:
             option_provider: Optional OntologyOptionProvider instance.
                            If None, creates a new one.
+            filter_modes: Optional dict mapping field names to filter mode
+                         ("prefix", "substring", or "fuzzy"). Overrides
+                         class-level DROPDOWN_FILTER_MODE for specified fields.
         """
         self.option_provider = option_provider or OntologyOptionProvider()
+        self._filter_modes = {**self.DROPDOWN_FILTER_MODE, **(filter_modes or {})}
 
     def build_column_config(
         self,
@@ -85,6 +93,7 @@ class ColumnConfigBuilder:
                 if options:
                     col_config["type"] = "dropdown"
                     col_config["source"] = self._convert_options_to_jspreadsheet_format(options)
+                    col_config["filter_mode"] = self._filter_modes.get(header, "prefix")
 
             # Check if this field should be a dropdown
             elif header in self.DROPDOWN_FIELD_MAPPING:
@@ -96,6 +105,7 @@ class ColumnConfigBuilder:
                     col_config["type"] = "dropdown"
                     # Convert options to jspreadsheet-ce format (id/name)
                     col_config["source"] = self._convert_options_to_jspreadsheet_format(options)
+                    col_config["filter_mode"] = self._filter_modes.get(header, "prefix")
 
             config[header] = col_config
 

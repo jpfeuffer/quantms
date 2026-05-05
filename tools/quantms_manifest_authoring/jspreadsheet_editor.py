@@ -296,6 +296,8 @@ class JSpreadsheetEditor:
                             // Merge dropdown properties into column definition
                             columns[index].type = 'dropdown';
                             columns[index].source = config.source;
+                            columns[index].autocomplete = true;
+                            columns[index].filterMode = config.filter_mode || 'prefix';
                         }}
                         // Merge read_only flag into readOnly property for jspreadsheet
                         if (config.read_only) {{
@@ -354,8 +356,54 @@ class JSpreadsheetEditor:
                 return true;
             }}
 
+            function installDropdownFilterPatch() {{
+                if (window.__quantmsDropdownPatched) return;
+                window.__quantmsDropdownPatched = true;
+                var _origDropdown = window.jSuites.dropdown;
+                window.jSuites.dropdown = function(el, options) {{
+                    var instance = _origDropdown.apply(this, arguments);
+                    if (options && options.autocomplete && instance) {{
+                        var activeCell = document.querySelector('td.editor[data-x]');
+                        if (activeCell) {{
+                            var x = parseInt(activeCell.getAttribute('data-x'), 10);
+                            var filterMode = null;
+                            var allData = window.__quantmsSpreadsheetData || {{}};
+                            var wids = Object.keys(allData);
+                            for (var i = 0; i < wids.length; i++) {{
+                                var d = allData[wids[i]];
+                                var header = d.headers && d.headers[x];
+                                var cfg = header && d.column_config && d.column_config[header];
+                                if (cfg && cfg.filter_mode && cfg.filter_mode !== 'substring') {{
+                                    filterMode = cfg.filter_mode;
+                                    break;
+                                }}
+                            }}
+                            if (filterMode) {{
+                                var _origFind = instance.find.bind(instance);
+                                instance.find = (function(mode, orig) {{
+                                    return function(str) {{
+                                        if (!str || str.trim() === '') {{
+                                            instance.search = null;
+                                            return orig('');
+                                        }}
+                                        var escaped = str.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&');
+                                        var pattern = mode === 'fuzzy'
+                                            ? escaped.split('').join('.*')
+                                            : '^' + escaped;
+                                        instance.search = null;
+                                        return orig(pattern);
+                                    }};
+                                }})(filterMode, _origFind);
+                            }}
+                        }}
+                    }}
+                    return instance;
+                }};
+            }}
+
             function waitForSpreadsheet() {{
                 if (typeof window.jspreadsheet !== 'undefined' && typeof window.jSuites !== 'undefined') {{
+                    installDropdownFilterPatch();
                     initializeSpreadsheet();
                     return;
                 }}

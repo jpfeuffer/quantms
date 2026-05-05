@@ -14,6 +14,7 @@ no UI dependencies and can be imported and tested independently.
 """
 
 from enum import Enum, auto
+import re
 from typing import Optional, Dict, List, Any
 import sys
 from pathlib import Path
@@ -58,6 +59,8 @@ class WizardState:
         self.samples: List[Dict[str, Any]] = []
         self.mixtures: List[Dict[str, Any]] = []
         self.modifications: List[Dict[str, Any]] = []
+        self.modification_profiles: List[str] = []
+        self.active_modification_profile: Optional[str] = None
         self.experiment: Optional[Dict[str, Any]] = None
         self._experiment_settings_saved = False
         self._active_editor: Optional[Any] = None
@@ -165,6 +168,23 @@ class WizardState:
         # by awaiting flush_pending_edits() before calling next_step/previous_step
         pass
 
+    @staticmethod
+    def _infer_fraction_from_file_name(file: str) -> Optional[int]:
+        """Infer a fraction number from a run filename when it follows a supported pattern."""
+        file_name = re.split(r"[\\/]", str(file or ""))[-1]
+        file_stem = Path(file_name).stem
+
+        for pattern in (
+            r"(?i)fraction(\d+)",
+            r"(?i)frac(\d+)",
+            r"(?i)(?:^|[^A-Za-z])f(\d+)",
+        ):
+            match = re.search(pattern, file_stem)
+            if match:
+                return int(match.group(1))
+
+        return None
+
     def add_run(
         self,
         file: str,
@@ -187,6 +207,9 @@ class WizardState:
         if not file:
             raise ValueError("File path is required")
 
+        if fraction is None:
+            fraction = self._infer_fraction_from_file_name(file)
+
         run = {
             "file": file,
         }
@@ -208,6 +231,34 @@ class WizardState:
         if "mode" not in kwargs or not kwargs["mode"]:
             raise ValueError("Modification mode is required")
         self.modifications.append(kwargs.copy())
+        profile = (kwargs.get("profile") or "").strip()
+        if profile:
+            self.register_modification_profile(profile)
+
+    def register_modification_profile(self, profile: str) -> None:
+        """Register a modification profile so it survives rerenders."""
+        profile_name = (profile or "").strip()
+        if not profile_name:
+            return
+        if profile_name not in self.modification_profiles:
+            self.modification_profiles.append(profile_name)
+
+    def set_active_modification_profile(self, profile: Optional[str]) -> None:
+        """Set the currently active modification profile."""
+        profile_name = (profile or "").strip() if profile else None
+        self.active_modification_profile = profile_name
+        if profile_name:
+            self.register_modification_profile(profile_name)
+
+    def get_modification_profiles(self) -> List[str]:
+        """Return known modification profiles in insertion order."""
+        if not self.modification_profiles and self.modifications:
+            self.modification_profiles = []
+            for modification in self.modifications:
+                profile_name = (modification.get("profile") or "").strip()
+                if profile_name and profile_name not in self.modification_profiles:
+                    self.modification_profiles.append(profile_name)
+        return self.modification_profiles.copy()
 
     def get_available_runs(self) -> List[Dict[str, Any]]:
         """Get list of all runs added so far."""

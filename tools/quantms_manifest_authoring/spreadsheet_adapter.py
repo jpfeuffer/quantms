@@ -60,6 +60,126 @@ class RunFieldInfo:
         ]
 
 
+class ModificationFieldInfo:
+    """Metadata about modification fields for the adapter."""
+
+    FIELD_METADATA = {
+        "mode": {
+            "type": "str",
+            "required": True,
+            "description": "Modification mode (fixed or variable)",
+        },
+        "kind": {
+            "type": "str",
+            "required": False,
+            "description": "Modification source kind (ontology or custom)",
+        },
+        "name": {
+            "type": "str",
+            "required": False,
+            "description": "Human-readable modification name",
+        },
+        "ontology_id": {
+            "type": "str",
+            "required": False,
+            "description": "Ontology CURIE for ontology-backed modifications",
+        },
+        "residues": {
+            "type": "str",
+            "required": False,
+            "description": "Target residues",
+        },
+        "term_specificity": {
+            "type": "str",
+            "required": False,
+            "description": "Term specificity",
+        },
+        "mass_shift": {
+            "type": "float",
+            "required": False,
+            "description": "Mass shift in Daltons",
+        },
+        "profile": {
+            "type": "str",
+            "required": False,
+            "description": "Modification profile",
+        },
+        "id": {
+            "type": "str",
+            "required": False,
+            "description": "Optional identifier",
+        },
+        "max_occurrences": {
+            "type": "int",
+            "required": False,
+            "description": "Maximum occurrences",
+        },
+        "required": {
+            "type": "bool",
+            "required": False,
+            "description": "Whether the modification is required",
+        },
+        "neutral_loss": {
+            "type": "float",
+            "required": False,
+            "description": "Neutral loss",
+        },
+        "localize_mass_shift": {
+            "type": "bool",
+            "required": False,
+            "description": "Whether to localize the mass shift",
+        },
+        "label_mass_shift": {
+            "type": "float",
+            "required": False,
+            "description": "Label mass shift",
+        },
+        "custom_mod_code": {
+            "type": "str",
+            "required": False,
+            "description": "Custom modification code",
+        },
+        "formula": {
+            "type": "str",
+            "required": False,
+            "description": "Chemical formula",
+        },
+        "binary_group": {
+            "type": "int",
+            "required": False,
+            "description": "Binary group",
+        },
+        "min_occurrences": {
+            "type": "int",
+            "required": False,
+            "description": "Minimum occurrences",
+        },
+        "distance_from_terminus": {
+            "type": "int",
+            "required": False,
+            "description": "Distance from terminus",
+        },
+    }
+
+    @staticmethod
+    def get_all_fields() -> List[str]:
+        return list(ModificationFieldInfo.FIELD_METADATA.keys())
+
+    @staticmethod
+    def get_field_info(field: str) -> Dict[str, Any]:
+        if field not in ModificationFieldInfo.FIELD_METADATA:
+            raise ValueError(f"Unknown field: {field}")
+        return ModificationFieldInfo.FIELD_METADATA[field]
+
+    @staticmethod
+    def get_required_fields() -> List[str]:
+        return [
+            field
+            for field, info in ModificationFieldInfo.FIELD_METADATA.items()
+            if info["required"]
+        ]
+
+
 @dataclass
 class SpreadsheetRow:
     """Represents a single spreadsheet row corresponding to a run."""
@@ -138,6 +258,100 @@ class SpreadsheetRow:
         return value is None or value == ""
 
 
+@dataclass
+class ModificationSpreadsheetRow:
+    """Represents a single spreadsheet row corresponding to a modification."""
+
+    mode: Optional[str] = None
+    kind: Optional[str] = None
+    name: Optional[str] = None
+    ontology_id: Optional[str] = None
+    residues: Optional[str] = None
+    term_specificity: Optional[str] = None
+    mass_shift: Optional[float] = None
+    profile: Optional[str] = None
+    id: Optional[str] = None
+    max_occurrences: Optional[int] = None
+    required: Optional[bool] = None
+    neutral_loss: Optional[float] = None
+    localize_mass_shift: Optional[bool] = None
+    label_mass_shift: Optional[float] = None
+    custom_mod_code: Optional[str] = None
+    formula: Optional[str] = None
+    binary_group: Optional[int] = None
+    min_occurrences: Optional[int] = None
+    distance_from_terminus: Optional[int] = None
+    row_index: int = 0
+
+    @classmethod
+    def from_wizard_modification(
+        cls,
+        modification: Dict[str, Any],
+        row_index: int = 0,
+    ) -> "ModificationSpreadsheetRow":
+        return cls(
+            mode=modification.get("mode"),
+            kind=modification.get("kind"),
+            name=modification.get("name"),
+            ontology_id=modification.get("ontology_id"),
+            residues=modification.get("residues"),
+            term_specificity=modification.get("term_specificity"),
+            mass_shift=modification.get("mass_shift"),
+            profile=modification.get("profile"),
+            id=modification.get("id"),
+            max_occurrences=modification.get("max_occurrences"),
+            required=modification.get("required"),
+            neutral_loss=modification.get("neutral_loss"),
+            localize_mass_shift=modification.get("localize_mass_shift"),
+            label_mass_shift=modification.get("label_mass_shift"),
+            custom_mod_code=modification.get("custom_mod_code"),
+            formula=modification.get("formula"),
+            binary_group=modification.get("binary_group"),
+            min_occurrences=modification.get("min_occurrences"),
+            distance_from_terminus=modification.get("distance_from_terminus"),
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+        for field in ModificationFieldInfo.get_all_fields():
+            value = getattr(self, field, None)
+            if value is not None:
+                result[field] = value
+        return result
+
+    def update(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+    def validate(self) -> None:
+        if not self.mode:
+            raise ValueError("Required field 'mode' is missing")
+
+        if isinstance(self.mass_shift, str):
+            if self.mass_shift.strip() == "":
+                self.mass_shift = None
+            else:
+                self.mass_shift = float(self.mass_shift)
+
+        for field in ["max_occurrences", "binary_group", "min_occurrences", "distance_from_terminus"]:
+            value = getattr(self, field)
+            if isinstance(value, str):
+                if value.strip() == "":
+                    setattr(self, field, None)
+                else:
+                    setattr(self, field, int(value))
+
+        for field in ["neutral_loss", "label_mass_shift"]:
+            value = getattr(self, field)
+            if isinstance(value, str):
+                if value.strip() == "":
+                    setattr(self, field, None)
+                else:
+                    setattr(self, field, float(value))
+
+
 class SpreadsheetAdapter:
     """
     Adapter for translating between WizardState and spreadsheet rows.
@@ -164,6 +378,24 @@ class SpreadsheetAdapter:
         """
         # Always put 'file' first, then others in consistent order
         return ["file", "fraction", "instrument"]
+
+    def get_column_headers_modifications(self) -> List[str]:
+        """
+        Get column headers for modifications in predictable order.
+
+        Returns:
+            List of field names representing visible columns
+        """
+        return [
+            "mode",
+            "kind",
+            "name",
+            "ontology_id",
+            "residues",
+            "term_specificity",
+            "mass_shift",
+            "profile",
+        ]
 
     def get_field_info(self, field: str) -> Dict[str, Any]:
         """
@@ -224,6 +456,19 @@ class SpreadsheetAdapter:
             rows.append(row)
         return rows
 
+    def wizard_modifications_to_spreadsheet(self) -> List[ModificationSpreadsheetRow]:
+        """
+        Convert WizardState.modifications to spreadsheet rows.
+
+        Returns:
+            List of ModificationSpreadsheetRow instances (one per modification)
+        """
+        rows = []
+        for idx, modification in enumerate(self.wizard.modifications):
+            row = ModificationSpreadsheetRow.from_wizard_modification(modification, row_index=idx)
+            rows.append(row)
+        return rows
+
     def spreadsheet_row_to_wizard_run(self, row: SpreadsheetRow) -> Dict[str, Any]:
         """
         Convert a spreadsheet row to a wizard run dict.
@@ -234,6 +479,10 @@ class SpreadsheetAdapter:
         Returns:
             Dictionary suitable for WizardState
         """
+        return row.to_dict()
+
+    def spreadsheet_row_to_wizard_modification(self, row: ModificationSpreadsheetRow) -> Dict[str, Any]:
+        """Convert a spreadsheet row to a wizard modification dict."""
         return row.to_dict()
 
     def spreadsheet_to_wizard(self, rows: List[SpreadsheetRow]) -> None:
@@ -284,6 +533,29 @@ class SpreadsheetAdapter:
                     if value is None or (isinstance(value, str) and value.strip() == ""):
                         # Use public API to remove field
                         self.wizard.clear_run_field(idx, field)
+
+    def sync_modification_edits(self, rows: List[ModificationSpreadsheetRow]) -> None:
+        """
+        Synchronize spreadsheet rows back to WizardState modifications.
+
+        This validates all rows and updates the wizard modifications in-place.
+
+        Args:
+            rows: List of ModificationSpreadsheetRow instances to sync
+
+        Raises:
+            ValueError: If validation fails
+        """
+        for row in rows:
+            row.validate()
+
+        existing_profiles = self.wizard.get_modification_profiles()
+        self.wizard.modifications = [row.to_dict() for row in rows]
+        self.wizard.modification_profiles = []
+        for profile in existing_profiles:
+            self.wizard.register_modification_profile(profile)
+        for modification in self.wizard.modifications:
+            self.wizard.register_modification_profile(modification.get("profile"))
 
     def get_row_by_index(self, index: int) -> Optional[SpreadsheetRow]:
         """

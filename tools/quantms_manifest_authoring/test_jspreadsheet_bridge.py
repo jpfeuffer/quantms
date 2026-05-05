@@ -177,3 +177,24 @@ class TestJSpreadsheetBridge:
 
         with pytest.raises(ValueError, match="out of range"):
             bridge.handle_cell_edit(row_index=10, col_index=0, new_value="new_value")
+
+    def test_modification_bridge_handles_missing_term_specificity(self):
+        """Bridge should tolerate modifications that do not define term_specificity."""
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="custom",
+            name="Custom PTM",
+            residues="C",
+            profile="default",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+        data = bridge.get_spreadsheet_data()
+
+        assert "term_specificity" in data["headers"]
+        assert data["data"][0][data["headers"].index("term_specificity")] is None
+
+        bridge.sync_from_spreadsheet_data(data["data"])
+
+        assert wizard.modifications[0].get("term_specificity") is None
