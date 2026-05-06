@@ -198,3 +198,126 @@ class TestJSpreadsheetBridge:
         bridge.sync_from_spreadsheet_data(data["data"])
 
         assert wizard.modifications[0].get("term_specificity") is None
+
+    def test_modification_bridge_marks_ontology_cells_read_only_except_mode_and_profile(self):
+        """Ontology-backed modification rows should lock curated fields in spreadsheet metadata."""
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Phospho",
+            ontology_id="UNIMOD:21",
+            residues="STY",
+            term_specificity="none",
+            mass_shift=79.966331,
+            profile="default",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+        data = bridge.get_spreadsheet_data()
+
+        headers = data["headers"]
+        editable_fields = {"mode", "profile"}
+        locked_positions = {(cell["row"], cell["col"]) for cell in data["read_only_cells"]}
+
+        for col_index, field_name in enumerate(headers):
+            if field_name in editable_fields:
+                assert (0, col_index) not in locked_positions
+            else:
+                assert (0, col_index) in locked_positions
+
+    def test_modification_bridge_rejects_editing_locked_ontology_fields(self):
+        """Ontology-backed modification rows should only permit mode/profile edits in the sheet."""
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Phospho",
+            ontology_id="UNIMOD:21",
+            residues="STY",
+            term_specificity="none",
+            mass_shift=79.966331,
+            profile="default",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+        spreadsheet_data = bridge.get_spreadsheet_data()
+
+        with pytest.raises(ValueError, match="only edit 'mode' and 'profile'"):
+            bridge.handle_cell_edit(
+                row_index=0,
+                col_index=spreadsheet_data["headers"].index("name"),
+                new_value="Phospho edited",
+            )
+
+        bridge.handle_cell_edit(
+            row_index=0,
+            col_index=spreadsheet_data["headers"].index("profile"),
+            new_value="alternate",
+        )
+
+        assert wizard.modifications[0]["profile"] == "alternate"
+
+    def test_modification_bridge_sync_ignores_locked_ontology_field_changes(self):
+        """Full-sheet sync should preserve locked ontology fields and only accept editable ones."""
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Phospho",
+            ontology_id="UNIMOD:21",
+            residues="STY",
+            term_specificity="none",
+            mass_shift=79.966331,
+            profile="default",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        headers = spreadsheet_data["headers"]
+        row = spreadsheet_data["data"][0][:]
+        row[headers.index("name")] = "Phospho edited"
+        row[headers.index("residues")] = "M"
+        row[headers.index("profile")] = "alternate"
+
+        bridge.sync_from_spreadsheet_data([row])
+
+        assert wizard.modifications[0]["name"] == "Phospho"
+        assert wizard.modifications[0]["residues"] == "STY"
+        assert wizard.modifications[0]["profile"] == "alternate"
+
+    def test_modification_bridge_sync_allows_copying_ontology_values_onto_non_ontology_row(self):
+        """Copying an ontology row onto a non-ontology row should create a locked ontology row."""
+        wizard = WizardState()
+        wizard.add_modification(
+            mode="fixed",
+            kind="ontology",
+            name="Phospho",
+            ontology_id="UNIMOD:21",
+            residues="STY",
+            term_specificity="none",
+            mass_shift=79.966331,
+            profile="default",
+        )
+        wizard.add_modification(
+            mode="variable",
+            kind="custom",
+            name="Lab Label",
+            residues="M",
+            mass_shift=42.0,
+            profile="custom-profile",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="modifications")
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        copied_row = spreadsheet_data["data"][0][:]
+        copied_row[spreadsheet_data["headers"].index("profile")] = "alternate"
+
+        bridge.sync_from_spreadsheet_data([spreadsheet_data["data"][0], copied_row])
+
+        assert wizard.modifications[1]["kind"] == "ontology"
+        assert wizard.modifications[1]["name"] == "Phospho"
+        assert wizard.modifications[1]["ontology_id"] == "UNIMOD:21"
+        assert wizard.modifications[1]["residues"] == "STY"
+        assert wizard.modifications[1]["mass_shift"] == 79.966331
+        assert wizard.modifications[1]["profile"] == "alternate"

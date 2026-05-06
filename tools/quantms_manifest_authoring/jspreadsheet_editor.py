@@ -79,6 +79,18 @@ class JSpreadsheetEditor:
         return f"""
             <link rel=\"stylesheet\" href=\"{cls.ASSET_ROUTE}/jsuites/jsuites.css\" />
             <link rel=\"stylesheet\" href=\"{cls.ASSET_ROUTE}/jspreadsheet-ce/jspreadsheet.css\" />
+            <style>
+                .quantms-cell-readonly {{
+                    background-color: #e5e7eb !important;
+                    color: #4b5563 !important;
+                    cursor: not-allowed !important;
+                }}
+
+                .quantms-cell-readonly.jss_dropdown::after,
+                td.readonly.jss_dropdown::after {{
+                    display: none !important;
+                }}
+            </style>
         """
 
     @classmethod
@@ -203,6 +215,7 @@ class JSpreadsheetEditor:
         headers_json = json.dumps(headers)
         data_json = json.dumps(data)
         column_config_json = json.dumps(column_config)
+        read_only_cells_json = json.dumps(spreadsheet_data.get("read_only_cells", []))
         widget_id_json = json.dumps(self.widget_id)
         container_id_json = json.dumps(container_id)
 
@@ -212,6 +225,7 @@ class JSpreadsheetEditor:
                 headers: {headers_json},
                 data: {data_json},
                 column_config: {column_config_json},
+                read_only_cells: {read_only_cells_json},
                 widget_id: {widget_id_json},
                 container_id: {container_id_json}
             }};
@@ -248,9 +262,122 @@ class JSpreadsheetEditor:
                 const headers = spreadsheetData.headers || [];
                 const data = spreadsheetData.data || [];
                 const columnConfig = spreadsheetData.column_config || {{}};
+                const readOnlyCells = spreadsheetData.read_only_cells || [];
+                const readOnlyCellKeys = new Set(readOnlyCells.map(cell => `${{cell.row}}:${{cell.col}}`));
                 const containerId = spreadsheetData.container_id;
                 const widgetId = spreadsheetData.widget_id;
                 const worksheetName = {worksheet_name_json};
+                const ontologyEditableFields = new Set(['mode', 'profile']);
+                const kindColumnIndex = headers.indexOf('kind');
+
+                const isDynamicOntologyReadOnlyCell = (worksheet, x, y) => {{
+                    if (kindColumnIndex === -1 || y < 0 || x < 0 || x >= headers.length) {{
+                        return false;
+                    }}
+
+                    const rowValues = worksheet && typeof worksheet.getRowData === 'function'
+                        ? (worksheet.getRowData(y) || [])
+                        : [];
+                    const kindValue = rowValues[kindColumnIndex];
+                    return String(kindValue || '').trim().toLowerCase() === 'ontology'
+                        && !ontologyEditableFields.has(headers[x]);
+                }};
+
+                const applyReadOnlyCellState = (worksheet, cell, x, y) => {{
+                    if (!(cell instanceof HTMLElement)) {{
+                        return;
+                    }}
+
+                    const isReadOnly = readOnlyCellKeys.has(`${{y}}:${{x}}`) || isDynamicOntologyReadOnlyCell(worksheet, x, y);
+                    if (worksheet && typeof worksheet.setReadOnly === 'function') {{
+                        worksheet.setReadOnly(cell, isReadOnly);
+                    }}
+                    cell.classList.toggle('readonly', isReadOnly);
+                    cell.classList.toggle('quantms-cell-readonly', isReadOnly);
+                    if (isReadOnly) {{
+                        cell.setAttribute('data-quantms-readonly', 'true');
+                        cell.classList.remove('jss_dropdown');
+                    }} else {{
+                        cell.removeAttribute('data-quantms-readonly');
+                    }}
+                }};
+
+                const applyReadOnlyStylesToRenderedCells = (worksheet) => {{
+                    container.querySelectorAll('td[data-x][data-y]').forEach(cell => {{
+                        const x = parseInt(cell.getAttribute('data-x'), 10);
+                        const y = parseInt(cell.getAttribute('data-y'), 10);
+                        if (Number.isNaN(x) || Number.isNaN(y)) {{
+                            return;
+                        }}
+                        applyReadOnlyCellState(worksheet, cell, x, y);
+                    }});
+                }};
+
+                const applyReadOnlyStylesToRenderedRow = (worksheet, rowIndex) => {{
+                    container.querySelectorAll(`td[data-y="${{rowIndex}}"]`).forEach(cell => {{
+                        const x = parseInt(cell.getAttribute('data-x'), 10);
+                        if (Number.isNaN(x)) {{
+                            return;
+                        }}
+                        applyReadOnlyCellState(worksheet, cell, x, rowIndex);
+                    }});
+                }};
+
+                const installReadOnlyObserver = (worksheet) => {{
+                    if (container.__quantmsReadonlyObserverWidgetId === widgetId) {{
+                        return;
+                    }}
+
+                    if (container.__quantmsReadonlyObserver) {{
+                        container.__quantmsReadonlyObserver.disconnect();
+                    }}
+
+                    let refreshScheduled = false;
+                    const scheduleRefresh = () => {{
+                        if (refreshScheduled) {{
+                            return;
+                        }}
+                        refreshScheduled = true;
+                        window.requestAnimationFrame(() => {{
+                            refreshScheduled = false;
+                            applyReadOnlyStylesToRenderedCells(worksheet);
+                        }});
+                    }};
+
+                    const observer = new MutationObserver(() => scheduleRefresh());
+                    observer.observe(container, {{
+                        childList: true,
+                        subtree: true,
+                        characterData: true,
+                    }});
+
+                    container.addEventListener('paste', scheduleRefresh, true);
+                    container.addEventListener('keyup', scheduleRefresh, true);
+                    container.__quantmsReadonlyObserver = observer;
+                    container.__quantmsReadonlyObserverWidgetId = widgetId;
+                }};
+
+                const installReadOnlyGuard = () => {{
+                    if (container.dataset.quantmsReadonlyGuardInstalled === widgetId) {{
+                        return;
+                    }}
+
+                    const blockReadOnlyInteraction = (event) => {{
+                        const target = event.target;
+                        const cell = target && target.closest ? target.closest('td[data-x][data-y]') : null;
+                        if (!cell || !container.contains(cell)) {{
+                            return;
+                        }}
+                        if (cell.getAttribute('data-quantms-readonly') !== 'true') {{
+                            return;
+                        }}
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }};
+
+                    container.addEventListener('dblclick', blockReadOnlyInteraction, true);
+                    container.dataset.quantmsReadonlyGuardInstalled = widgetId;
+                }};
 
                 if (headers.length === 0) {{
                     console.log('No spreadsheet data available');
@@ -332,7 +459,11 @@ class JSpreadsheetEditor:
                         allowManualInsertColumn: false,
                         allowInsertRow: false,
                         allowManualInsertRow: false,
+                        updateTable: function(worksheet, cell, x, y) {{
+                            applyReadOnlyCellState(worksheet, cell, x, y);
+                        }},
                         onchange: function(worksheet, cell, x, y, value) {{
+                            applyReadOnlyStylesToRenderedRow(worksheet, y);
                             emitSpreadsheetEvent({{
                                 type: 'cell_edit',
                                 widget_id: widgetId,
@@ -353,6 +484,15 @@ class JSpreadsheetEditor:
 
                 container.dataset.quantmsSpreadsheetWidget = widgetId;
                 window.__quantmsSpreadsheetInstances[widgetId] = spreadsheet;
+                installReadOnlyGuard();
+                const worksheet = Array.isArray(spreadsheet.worksheets) && spreadsheet.worksheets.length > 0
+                    ? spreadsheet.worksheets[0]
+                    : (Array.isArray(spreadsheet) && spreadsheet.length > 0 ? spreadsheet[0] : null);
+                if (worksheet) {{
+                    installReadOnlyObserver(worksheet);
+                    applyReadOnlyStylesToRenderedCells(worksheet);
+                    window.requestAnimationFrame(() => applyReadOnlyStylesToRenderedCells(worksheet));
+                }}
                 return true;
             }}
 

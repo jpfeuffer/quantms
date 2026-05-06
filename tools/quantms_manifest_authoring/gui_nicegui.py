@@ -65,40 +65,32 @@ class WizardEditor:
         current_idx = self.wizard.current_step_index
         steps = WizardStep.ordered_steps()
 
-        # Cannot go forward from the last step
         if current_idx >= len(steps) - 1:
             return False
 
         current_step = self.wizard.get_current_step()
 
-        # RUNS step requires at least one run
         if current_step == WizardStep.RUNS:
             return len(self.wizard.runs) > 0
 
-        # SAMPLES step: always allow forward (can skip samples)
         if current_step == WizardStep.SAMPLES:
             return True
 
-        # MIXTURES step: always allow forward (can skip mixtures for LFQ)
         if current_step == WizardStep.MIXTURES:
             return True
 
-        # ASSIGNMENTS step: always allow forward
         if current_step == WizardStep.ASSIGNMENTS:
             return True
 
-        # EXPERIMENT step: require saved settings
         if current_step == WizardStep.EXPERIMENT:
             return self.wizard._experiment_settings_saved
 
-        # REVIEW step: cannot go forward
         if current_step == WizardStep.REVIEW:
             return False
 
         return True
 
 
-# Alias for backward compatibility with tests
 class ManifestEditingWizard(WizardEditor):
     """Alias for WizardEditor for backward compatibility."""
 
@@ -362,7 +354,8 @@ def _build_modification_payload(
 def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
     """Create the modification authoring surface that lives alongside Runs."""
     active_editor: Optional[JSpreadsheetEditor] = None
-    selected_modification_option: Optional[Dict[str, Any]] = None
+    modification_draft = wizard.get_pending_modification_draft()
+    selected_modification_option: Optional[Dict[str, Any]] = modification_draft.get("selected_option")
     selected_modification_options: List[Dict[str, Any]] = []
     pending_override_payload: Optional[Dict[str, Any]] = None
 
@@ -373,51 +366,115 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
     ]
     option_provider = OntologyOptionProvider()
     existing_profiles = wizard.get_modification_profiles()
-    selected_profile = wizard.active_modification_profile or (existing_profiles[0] if existing_profiles else None)
+    if not existing_profiles:
+        wizard.register_modification_profile("default")
+        wizard.set_active_modification_profile("default")
+        existing_profiles = wizard.get_modification_profiles()
+    keep_selected_option = object()
+
+    def normalize_profile_name(profile: Any) -> Optional[str]:
+        return wizard.normalize_modification_profile_name(profile)
+
+    def resolve_profile_name(profile: Any) -> Optional[str]:
+        return wizard.find_modification_profile_name(profile)
 
     with ui.card().classes("w-full mt-6"):
-        ui.label("Modification profiles and modifications").classes("text-lg font-semibold")
-        ui.label(
-            "Create or open a profile, search UniMod-backed modifications from a dialog, and add one or more entries on the same Runs page."
-        ).classes("text-sm text-gray-600")
+        ui.label("Modification profiles").classes("text-lg font-semibold")
 
-        with ui.column().classes("w-full gap-4 mt-4"):
-            with ui.row().classes("w-full gap-2"):
-                profile_select = ui.select(
-                    options={profile: profile for profile in existing_profiles},
-                    value=selected_profile,
-                    label="Profile",
-                ).classes("flex-grow")
-                new_profile_input = ui.input(
-                    label="Create Profile",
-                    placeholder="Create or open a profile once, then add multiple modifications",
-                ).classes("flex-grow")
+        with ui.column().classes("w-full gap-4 mt-2"):
+            # --- Tab-based profile strip (like Excel worksheet tabs) ---
+            tabs_container: Any = None
+            rename_row: Any = None
+            rename_input: Any = None
 
-                def sync_active_profile(_=None):
-                    wizard.set_active_modification_profile(profile_select.value)
+            def recover_selected_modification_option() -> None:
+                nonlocal selected_modification_option
+                if selected_modification_option:
+                    return
+                recovered_selected_option = wizard.get_pending_modification_draft().get("selected_option")
+                if recovered_selected_option:
+                    selected_modification_option = recovered_selected_option
 
-                def use_profile():
-                    profile_name = (new_profile_input.value or "").strip()
-                    if not profile_name:
-                        ui.notify("Enter a profile name first", type="warning")
+            _tab_buttons: Dict[str, Any] = {}
+
+            def switch_to_profile(profile_name: str) -> None:
+                recover_selected_modification_option()
+                wizard.set_active_modification_profile(profile_name)
+                persist_modification_draft()
+                rebuild_tabs()
+
+            def add_new_profile() -> None:
+                existing = wizard.get_modification_profiles()
+                new_name = f"profile-{len(existing) + 1}"
+                wizard.register_modification_profile(new_name)
+                wizard.set_active_modification_profile(new_name)
+                persist_modification_draft()
+                rebuild_tabs()
+
+            def start_rename(profile_name: str) -> None:
+                rename_input.value = profile_name
+                rename_input.update()
+                rename_row.set_visibility(True)
+
+            def confirm_rename() -> None:
+                new_name = normalize_profile_name(rename_input.value)
+                if not new_name:
+                    ui.notify("Profile name cannot be empty", type="warning")
+                    return
+                current = wizard.active_modification_profile
+                if current and new_name != current:
+                    resolved = resolve_profile_name(new_name)
+                    if resolved and resolved != current:
+                        ui.notify(f'Profile "{resolved}" already exists', type="warning")
                         return
+                    wizard.rename_modification_profile(current, new_name)
+                rename_row.set_visibility(False)
+                persist_modification_draft()
+                rebuild_tabs()
 
-                    wizard.register_modification_profile(profile_name)
-                    profile_select.options = {profile: profile for profile in wizard.get_modification_profiles()}
-                    profile_select.value = profile_name
-                    wizard.set_active_modification_profile(profile_name)
-                    profile_select.update()
-                    new_profile_input.value = ""
+            def cancel_rename() -> None:
+                rename_row.set_visibility(False)
 
-                ui.button("Open Profile", on_click=use_profile, icon="folder_open").classes("px-4 py-0.5")
-                profile_select.on_value_change(sync_active_profile)
+            def rebuild_tabs() -> None:
+                _tab_buttons.clear()
+                tabs_container.clear()
+                profiles = wizard.get_modification_profiles()
+                active = wizard.active_modification_profile
+                with tabs_container:
+                    for profile in profiles:
+                        is_active = profile == active
+                        btn_props = "unelevated no-caps color=primary" if is_active else "flat no-caps"
+                        btn = ui.button(profile, on_click=lambda p=profile: switch_to_profile(p))
+                        btn.props(btn_props).classes("h-8 px-3")
+                        _tab_buttons[profile] = btn
+                        if is_active:
+                            ui.button(
+                                icon="edit", on_click=lambda p=profile: start_rename(p)
+                            ).props("flat dense round no-caps size=xs").classes("h-6 w-6 min-w-0 ml-0")
+                    ui.button("+", on_click=add_new_profile).props("flat no-caps dense").classes("h-8 w-8 min-w-0")
 
-            with ui.row().classes("w-full gap-2"):
+            with ui.row().classes("w-full items-center gap-1 border-b pb-1") as tabs_container:
+                rebuild_tabs()
+
+            ui.label(
+                "Click a tab to switch profiles, use + to add another profile, and use the edit icon to rename the active profile."
+            ).classes("text-xs text-gray-600")
+
+            with ui.row().classes("w-full items-center gap-2") as rename_row:
+                ui.label("Rename:").classes("text-sm text-gray-600")
+                rename_input = ui.input(placeholder="New profile name").classes("grow")
+                ui.button("OK", on_click=confirm_rename).props("flat dense no-caps").classes("h-8 px-2")
+                ui.button("Cancel", on_click=cancel_rename).props("flat dense no-caps").classes("h-8 px-2")
+            rename_row.set_visibility(False)
+
+            ui.separator().classes("my-1")
+
+            with ui.row().classes("w-full gap-4"):
                 mode_select = ui.select(
                     options={"fixed": "fixed", "variable": "variable"},
                     value="fixed",
                     label="Mode",
-                ).classes("flex-grow")
+                ).classes("grow basis-0")
                 term_specificity_select = ui.select(
                     options={
                         "none": "none",
@@ -428,56 +485,21 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
                     },
                     value="none",
                     label="Term Specificity",
-                ).classes("flex-grow")
-
-            with ui.row().classes("w-full items-center justify-between gap-2 rounded-md bg-gray-50 p-3"):
-                with ui.column().classes("gap-1"):
-                    ui.label("UniMod selection").classes("text-sm font-medium")
-                    selected_modification_label = ui.label("No UniMod entry selected").classes("text-xs text-gray-600")
-
-                with ui.row().classes("gap-2"):
-                    def clear_selected_modification():
-                        nonlocal selected_modification_option, selected_modification_options
-                        selected_modification_option = None
-                        selected_modification_options = []
-                        selected_modification_label.text = "No UniMod entry selected"
-                        selected_modification_label.update()
-                        update_custom_name_visibility()
-
-                    ui.button("Clear UniMod entry", on_click=clear_selected_modification, icon="clear").classes(
-                        "px-4 py-0.5"
-                    )
-
-                    def open_unimod_dialog():
-                        unimod_dialog.open()
-
-                    ui.button("Find UniMod entry", on_click=open_unimod_dialog, icon="search").classes(
-                        "px-4 py-0.5"
-                    )
+                ).classes("grow basis-0")
 
             with ui.dialog() as unimod_dialog:
                 with ui.card().classes("w-full max-w-2xl gap-4"):
-                    ui.label("Find UniMod entry").classes("text-lg font-semibold")
-                    ui.label(
-                        "Search by accession, title, or any alternative title exposed by the provider."
-                    ).classes("text-sm text-gray-600")
-
-                    search_results_label = ui.label("Run a search to load UniMod results.").classes(
-                        "text-xs text-gray-500"
+                    ui.label("UniMod entry search").classes("text-lg font-semibold")
+                    ui.label("Search UniMod-backed entries and apply the selected result to the draft.").classes(
+                        "text-sm text-gray-600"
                     )
-
-                    with ui.row().classes("w-full items-end gap-2"):
-                        search_input = ui.input(
-                            label="Search UniMod",
-                            placeholder="Try UNIMOD:4, Carbamidomethyl, or an alternative title",
-                        ).classes("flex-grow")
-
-                        results_select = ui.select(
-                            options={},
-                            value=None,
-                            label="UniMod results",
-                            clearable=True,
-                        ).classes("flex-grow")
+                    search_input = ui.input(
+                        placeholder="Try UNIMOD:4, Carbamidomethyl, or an alternative title",
+                    ).classes("w-full")
+                    search_results_label = ui.label("Enter a UniMod accession or title to search").classes(
+                        "text-sm text-gray-700"
+                    )
+                    results_select = ui.select(options={}, value=None, clearable=True).classes("w-full")
 
                     def run_unimod_search():
                         nonlocal selected_modification_options
@@ -527,14 +549,48 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
                         )
                         selected_modification_label.text = _build_selected_modification_summary(selected_option)
                         selected_modification_label.update()
+                        wizard.update_pending_modification_draft(
+                            selected_option=selected_option,
+                            profile=wizard.active_modification_profile,
+                            mode=mode_select.value,
+                            term_specificity=term_specificity_select.value,
+                            custom_name=custom_name_input.value,
+                            residues=residues_input.value,
+                            mass_shift=mass_shift_input.value,
+                            formula=formula_input.value,
+                        )
                         update_custom_name_visibility()
+                        # Auto-expand the modification details panel when a UniMod entry is selected
+                        try:
+                            modification_details_expansion.value = True
+                            modification_details_expansion.update()
+                        except Exception:
+                            # expansion may not yet exist at definition time; ignore if unavailable
+                            pass
                         unimod_dialog.close()
 
                     with ui.row().classes("w-full justify-end gap-2"):
-                        ui.button("Search", on_click=run_unimod_search, icon="search").classes("px-4 py-0.5")
-                        ui.button("Apply UniMod selection", on_click=apply_unimod_selection, icon="check").classes(
-                            "px-4 py-0.5"
-                        )
+                        ui.button("Search", on_click=run_unimod_search, icon="search").props(
+                            "unelevated no-caps"
+                        ).classes("h-11 min-w-32 px-5")
+                        ui.button("Apply UniMod selection", on_click=apply_unimod_selection, icon="check").props(
+                            "unelevated no-caps"
+                        ).classes("h-11 min-w-56 px-5")
+
+            ui.button("Find UniMod entry", on_click=unimod_dialog.open, icon="search").props(
+                "unelevated no-caps"
+            ).classes("h-11 min-w-32 px-5")
+
+            selected_modification_label = ui.label("No UniMod entry selected").classes("text-xs text-gray-600")
+
+            def clear_selected_modification():
+                nonlocal selected_modification_option, selected_modification_options
+                selected_modification_option = None
+                selected_modification_options = []
+                selected_modification_label.text = "No UniMod entry selected"
+                selected_modification_label.update()
+                persist_modification_draft(selected_option=None)
+                update_custom_name_visibility()
 
             with ui.dialog() as override_dialog:
                 with ui.card().classes("w-full max-w-lg gap-4"):
@@ -560,30 +616,66 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
                         ui.button("Cancel", on_click=cancel_override).classes("px-4 py-0.5")
                         ui.button("Add anyway", on_click=confirm_override, color="warning").classes("px-4 py-0.5")
 
-            with ui.row().classes("w-full gap-2"):
-                custom_name_input = ui.input(
-                    label="Custom Modification Name",
-                    placeholder="Use for custom modifications",
-                ).classes("flex-grow")
-                residues_input = ui.input(
-                    label="Residues",
-                    placeholder="e.g., C or STY",
-                ).classes("flex-grow")
-                mass_shift_input = ui.input(
-                    label="Mass Shift (optional)",
-                    placeholder="e.g., 57.021464",
-                ).classes("flex-grow")
+            with ui.expansion(text="Modification details", icon="tune", value=bool(selected_modification_option)).classes("w-full") as modification_details_expansion:
+                with ui.column().classes("w-full p-4 bg-gray-50 rounded border border-gray-200"):
+                    ui.label("Review or override the modification details before adding the entry.").classes(
+                        "text-sm text-gray-600"
+                    )
 
-            with ui.row().classes("w-full gap-2"):
-                formula_input = ui.input(
-                    label="Formula (optional)",
-                    placeholder="e.g., HO3P",
-                ).classes("flex-grow")
+                    with ui.row().classes("w-full gap-4 items-start mt-3"):
+                        with ui.column().classes("grow basis-0 gap-1") as custom_name_field:
+                            ui.label("Modification Name").classes("text-sm text-gray-700")
+                            custom_name_input = ui.input(
+                                value=modification_draft.get("custom_name") or "",
+                                placeholder="Enter a name for a custom modification",
+                            ).classes("w-full")
+                        with ui.column().classes("grow basis-0 gap-1"):
+                            ui.label("Residues").classes("text-sm text-gray-700")
+                            residues_input = ui.input(
+                                value=modification_draft.get("residues") or "",
+                                placeholder="e.g., C or STY",
+                            ).classes("w-full")
+                        with ui.column().classes("grow basis-0 gap-1"):
+                            ui.label("Mass Shift").classes("text-sm text-gray-700")
+                            mass_shift_input = ui.input(
+                                value=modification_draft.get("mass_shift") or "",
+                                placeholder="e.g., 57.021464",
+                            ).classes("w-full")
 
-            custom_name_input.set_visibility(True)
+                    with ui.row().classes("w-full gap-4 items-start mt-3"):
+                        with ui.column().classes("grow basis-0 gap-1"):
+                            ui.label("Formula (optional)").classes("text-sm text-gray-700")
+                            formula_input = ui.input(
+                                value=modification_draft.get("formula") or "",
+                                placeholder="e.g., HO3P",
+                            ).classes("w-full")
+
+            def persist_modification_draft(selected_option=keep_selected_option):
+                current_selected_option = (
+                    selected_modification_option if selected_option is keep_selected_option else selected_option
+                )
+                wizard.update_pending_modification_draft(
+                    selected_option=current_selected_option,
+                    profile=wizard.active_modification_profile,
+                    mode=mode_select.value,
+                    term_specificity=term_specificity_select.value,
+                    custom_name=custom_name_input.value,
+                    residues=residues_input.value,
+                    mass_shift=mass_shift_input.value,
+                    formula=formula_input.value,
+                )
+
+            mode_select.value = modification_draft.get("mode") or mode_select.value
+            term_specificity_select.value = modification_draft.get("term_specificity") or term_specificity_select.value
+
+            if selected_modification_option:
+                selected_modification_label.text = _build_selected_modification_summary(selected_modification_option)
+                selected_modification_label.update()
 
             def update_custom_name_visibility(_=None):
-                custom_name_input.set_visibility(not bool(selected_modification_option))
+                is_visible = not bool(selected_modification_option)
+                custom_name_field.set_visibility(is_visible)
+                custom_name_input.set_visibility(is_visible)
 
             update_custom_name_visibility()
 
@@ -593,16 +685,39 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
                 residues_input.value = ""
                 mass_shift_input.value = ""
                 formula_input.value = ""
+                wizard.clear_pending_modification_draft()
                 clear_selected_modification()
                 update_custom_name_visibility()
                 refresh_ui()
 
             def add_modification():
-                nonlocal pending_override_payload
-                active_profile = (profile_select.value or "").strip()
+                nonlocal pending_override_payload, selected_modification_option
+                active_profile = wizard.active_modification_profile
                 if not active_profile:
                     ui.notify("Choose or create a profile first", type="warning")
                     return
+
+                if not selected_modification_option:
+                    recover_selected_modification_option()
+                    if selected_modification_option:
+                        selected_modification_label.text = _build_selected_modification_summary(
+                            selected_modification_option
+                        )
+                        selected_modification_label.update()
+                        if not residues_input.value:
+                            residues_input.value = _normalize_modification_residues(
+                                selected_modification_option.get("residues")
+                            )
+                        if not mass_shift_input.value and selected_modification_option.get("mass_shift") is not None:
+                            mass_shift_input.value = str(selected_modification_option.get("mass_shift"))
+                        if not formula_input.value and selected_modification_option.get("formula"):
+                            formula_input.value = str(selected_modification_option.get("formula"))
+                        if not term_specificity_select.value and selected_modification_option.get("term_specificity"):
+                            term_specificity_select.value = selected_modification_option.get("term_specificity")
+                            term_specificity_select.update()
+                        update_custom_name_visibility()
+
+                persist_modification_draft()
 
                 try:
                     payload = _build_modification_payload(
@@ -655,7 +770,11 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
                 except Exception as e:
                     ui.notify(f"Error adding modification: {e}", type="negative")
 
-            ui.button("Add Modification", on_click=add_modification, icon="add").classes("px-4 py-0.5")
+            with ui.row().classes("w-full justify-end mt-2"):
+                add_modification_label = wizard.active_modification_profile or "default"
+                ui.button(f"Add modification to {add_modification_label}", on_click=add_modification, icon="add").props(
+                    "unelevated no-caps"
+                ).classes("h-11 min-w-48 px-5")
 
         if wizard.modifications:
             ui.label(f"Modifications ({len(wizard.modifications)})").classes("text-md font-semibold mt-6")

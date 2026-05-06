@@ -34,6 +34,13 @@ class JSpreadsheetBridge:
     (runs, samples, mixtures, assignments).
     """
 
+    MODIFICATION_ONTOLOGY_EDITABLE_FIELDS = {"mode", "profile"}
+
+    @classmethod
+    def _row_kind_is_ontology(cls, kind: Any) -> bool:
+        """Return True when a modification row should be treated as ontology-backed."""
+        return isinstance(kind, str) and kind.strip().lower() == "ontology"
+
     def __init__(
         self,
         wizard: WizardState,
@@ -103,11 +110,33 @@ class JSpreadsheetBridge:
             dropdown_sources=self._get_dropdown_sources(headers),
         )
 
-        return {
+        spreadsheet_data = {
             "headers": headers,
             "data": data,
             "column_config": column_config,
         }
+
+        if self.entity_type == "modifications":
+            spreadsheet_data["read_only_cells"] = self._get_modification_read_only_cells(headers, rows)
+
+        return spreadsheet_data
+
+    def _is_locked_ontology_modification_field(self, row: ModificationSpreadsheetRow, field_name: str) -> bool:
+        """Return True when an ontology-backed modification field must stay read-only in the sheet."""
+        return self._row_kind_is_ontology(row.kind) and field_name not in self.MODIFICATION_ONTOLOGY_EDITABLE_FIELDS
+
+    def _get_modification_read_only_cells(
+        self,
+        headers: list[str],
+        rows: list[ModificationSpreadsheetRow],
+    ) -> list[dict[str, int]]:
+        """Return per-cell read-only metadata for ontology-backed modification rows."""
+        read_only_cells: list[dict[str, int]] = []
+        for row_index, row in enumerate(rows):
+            for col_index, field_name in enumerate(headers):
+                if self._is_locked_ontology_modification_field(row, field_name):
+                    read_only_cells.append({"row": row_index, "col": col_index})
+        return read_only_cells
 
 
     def _get_field_info(self, field: str) -> Dict[str, Any]:
@@ -259,7 +288,10 @@ class JSpreadsheetBridge:
                 if not isinstance(row_data, (list, tuple)):
                     continue
                 row = rows[row_index]
+                row_was_ontology = self._row_kind_is_ontology(row.kind)
                 for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    if row_was_ontology and field_name not in self.MODIFICATION_ONTOLOGY_EDITABLE_FIELDS:
+                        continue
                     value = row_data[col_index]
                     if field_name in {"mass_shift"}:
                         if value == "":
@@ -454,6 +486,12 @@ class JSpreadsheetBridge:
             raise ValueError(f"Row index {row_index} out of range")
 
         edited_row = current_rows[row_index]
+
+        if self._is_locked_ontology_modification_field(edited_row, field_name):
+            raise ValueError(
+                "Ontology-backed modifications can only edit 'mode' and 'profile' in the sheet. "
+                "Delete and re-add the modification to change curated fields."
+            )
 
         if field_name == "mass_shift" and new_value is not None:
             if isinstance(new_value, str) and new_value.strip() == "":
