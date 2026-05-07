@@ -36,6 +36,11 @@ class RunFieldInfo:
             "required": False,
             "description": "Instrument name",
         },
+        "group_id": {
+            "type": "str",
+            "required": False,
+            "description": "Authoring group identifier",
+        },
     }
 
     @staticmethod
@@ -180,6 +185,61 @@ class ModificationFieldInfo:
         ]
 
 
+class GroupFieldInfo:
+    """Metadata about authoring group fields for the adapter."""
+
+    FIELD_METADATA = {
+        "id": {
+            "type": "str",
+            "required": True,
+            "description": "Group identifier",
+            "read_only": True,
+        },
+        "name": {
+            "type": "str",
+            "required": True,
+            "description": "Group label",
+            "read_only": True,
+        },
+        "kind": {
+            "type": "str",
+            "required": True,
+            "description": "Group kind",
+            "read_only": True,
+        },
+        "members": {
+            "type": "str",
+            "required": False,
+            "description": "Run identifiers belonging to this group",
+            "read_only": True,
+        },
+        "description": {
+            "type": "str",
+            "required": False,
+            "description": "Optional group description",
+            "read_only": True,
+        },
+    }
+
+    @staticmethod
+    def get_all_fields() -> List[str]:
+        return list(GroupFieldInfo.FIELD_METADATA.keys())
+
+    @staticmethod
+    def get_field_info(field: str) -> Dict[str, Any]:
+        if field not in GroupFieldInfo.FIELD_METADATA:
+            raise ValueError(f"Unknown field: {field}")
+        return GroupFieldInfo.FIELD_METADATA[field]
+
+    @staticmethod
+    def get_required_fields() -> List[str]:
+        return [
+            field
+            for field, info in GroupFieldInfo.FIELD_METADATA.items()
+            if info["required"]
+        ]
+
+
 @dataclass
 class SpreadsheetRow:
     """Represents a single spreadsheet row corresponding to a run."""
@@ -187,6 +247,7 @@ class SpreadsheetRow:
     file: Optional[str] = None
     fraction: Optional[int] = None
     instrument: Optional[str] = None
+    group_id: Optional[str] = None
     row_index: int = 0
 
     @classmethod
@@ -205,6 +266,7 @@ class SpreadsheetRow:
             file=run.get("file"),
             fraction=run.get("fraction"),
             instrument=run.get("instrument"),
+            group_id=run.get("group_id"),
             row_index=row_index,
         )
 
@@ -222,6 +284,8 @@ class SpreadsheetRow:
             result["fraction"] = self.fraction
         if self.instrument is not None:
             result["instrument"] = self.instrument
+        if self.group_id is not None:
+            result["group_id"] = self.group_id
         return result
 
     def update(self, **kwargs) -> None:
@@ -352,6 +416,63 @@ class ModificationSpreadsheetRow:
                     setattr(self, field, float(value))
 
 
+@dataclass
+class GroupSpreadsheetRow:
+    """Represents a single spreadsheet row corresponding to an authoring group."""
+
+    id: Optional[str] = None
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    members: Optional[str] = None
+    description: Optional[str] = None
+    row_index: int = 0
+
+    @classmethod
+    def from_wizard_group(cls, group: Dict[str, Any], row_index: int = 0) -> "GroupSpreadsheetRow":
+        members = group.get("members", []) or []
+        if isinstance(members, (list, tuple, set)):
+            members_text = ", ".join(str(member) for member in members if member is not None)
+        else:
+            members_text = str(members)
+
+        return cls(
+            id=group.get("id"),
+            name=group.get("name"),
+            kind=group.get("kind"),
+            members=members_text,
+            description=group.get("description"),
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        if self.id is not None:
+            result["id"] = self.id
+        if self.name is not None:
+            result["name"] = self.name
+        if self.kind is not None:
+            result["kind"] = self.kind
+        if self.members is not None:
+            members = [member.strip() for member in str(self.members).split(",") if member.strip()]
+            result["members"] = members
+        if self.description is not None:
+            result["description"] = self.description
+        return result
+
+    def update(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+    def validate(self) -> None:
+        if not self.id:
+            raise ValueError("Required field 'id' is missing")
+        if not self.name:
+            raise ValueError("Required field 'name' is missing")
+        if not self.kind:
+            raise ValueError("Required field 'kind' is missing")
+
+
 class SpreadsheetAdapter:
     """
     Adapter for translating between WizardState and spreadsheet rows.
@@ -377,7 +498,16 @@ class SpreadsheetAdapter:
             List of field names representing columns
         """
         # Always put 'file' first, then others in consistent order
-        return ["file", "fraction", "instrument"]
+        return ["file", "fraction", "instrument", "group_id"]
+
+    def get_column_headers_groups(self) -> List[str]:
+        """
+        Get column headers for authoring groups in predictable order.
+
+        Returns:
+            List of field names representing columns
+        """
+        return ["id", "name", "kind", "members", "description"]
 
     def get_column_headers_modifications(self) -> List[str]:
         """
@@ -411,6 +541,10 @@ class SpreadsheetAdapter:
             ValueError: If field is unknown
         """
         return RunFieldInfo.get_field_info(field)
+
+    def get_group_field_info(self, field: str) -> Dict[str, Any]:
+        """Get metadata for a group field."""
+        return GroupFieldInfo.get_field_info(field)
 
     def get_column_headers_samples(self) -> List[str]:
         """
@@ -453,6 +587,19 @@ class SpreadsheetAdapter:
         rows = []
         for idx, run in enumerate(self.wizard.runs):
             row = SpreadsheetRow.from_wizard_run(run, row_index=idx)
+            rows.append(row)
+        return rows
+
+    def wizard_groups_to_spreadsheet(self) -> List[GroupSpreadsheetRow]:
+        """
+        Convert WizardState.groups to spreadsheet rows.
+
+        Returns:
+            List of GroupSpreadsheetRow instances (one per group)
+        """
+        rows = []
+        for idx, group in enumerate(self.wizard.groups):
+            row = GroupSpreadsheetRow.from_wizard_group(group, row_index=idx)
             rows.append(row)
         return rows
 
@@ -556,6 +703,13 @@ class SpreadsheetAdapter:
             self.wizard.register_modification_profile(profile)
         for modification in self.wizard.modifications:
             self.wizard.register_modification_profile(modification.get("profile"))
+
+    def sync_group_edits(self, rows: List[GroupSpreadsheetRow]) -> None:
+        """Synchronize group rows back to WizardState.
+
+        Groups are read-only in the Phase 2 authoring surface, so syncing is a no-op.
+        """
+        return
 
     def get_row_by_index(self, index: int) -> Optional[SpreadsheetRow]:
         """

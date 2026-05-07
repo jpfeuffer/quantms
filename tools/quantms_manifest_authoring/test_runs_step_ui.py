@@ -32,6 +32,30 @@ from gui_wizard_state import WizardState
 from gui_nicegui import create_runs_step
 
 
+class RecordingSpreadsheetEditor:
+    """Lightweight editor double that records how the Runs step wires spreadsheets."""
+
+    created = []
+
+    @classmethod
+    def prepare_client_runtime(cls):
+        return None
+
+    def __init__(self, wizard, on_change, bridge=None, worksheet_name="Runs"):
+        self.wizard = wizard
+        self.on_change = on_change
+        self.bridge = bridge
+        self.worksheet_name = worksheet_name
+        self.rendered = False
+        RecordingSpreadsheetEditor.created.append(self)
+
+    def render(self):
+        self.rendered = True
+
+    async def flush_pending_edits(self):
+        return None
+
+
 class MockContextClient:
     """Mock for context.client with on_connect lifecycle hook."""
 
@@ -80,6 +104,39 @@ class MockUIInput:
     def classes(self, *args, **kwargs):
         return self
 
+    def set_visibility(self, *_args, **_kwargs):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+class MockUISelect:
+    """Mock for ui.select that captures set/get of value."""
+
+    def __init__(self, options=None, value=None, label="", clearable=False):
+        self.options = options or {}
+        self.value = value
+        self.label = label
+        self.clearable = clearable
+        self._callbacks = []
+
+    def classes(self, *args, **kwargs):
+        return self
+
+    def update(self):
+        return self
+
+    def on_value_change(self, callback):
+        self._callbacks.append(callback)
+        return self
+
+    def set_visibility(self, *_args, **_kwargs):
+        return self
+
     def __enter__(self):
         return self
 
@@ -102,6 +159,9 @@ class MockUILabel:
     def __exit__(self, *args):
         pass
 
+    def update(self):
+        return self
+
 
 class MockUIButton:
     """Mock for ui.button with captured on_click callback."""
@@ -112,6 +172,9 @@ class MockUIButton:
         self.icon = icon
 
     def classes(self, *args, **kwargs):
+        return self
+
+    def props(self, *args, **kwargs):
         return self
 
     def trigger_click(self):
@@ -130,8 +193,29 @@ class MockUIRow:
 
     def __init__(self):
         self.children = []
+        self.visible = True
 
     def classes(self, *args, **kwargs):
+        return self
+
+    def clear(self):
+        self.children = []
+        return self
+
+    def set_visibility(self, visible):
+        self.visible = visible
+        return self
+
+    def update(self):
+        return self
+
+    def props(self, *args, **kwargs):
+        return self
+
+    def open(self):
+        return self
+
+    def close(self):
         return self
 
     def __enter__(self):
@@ -146,8 +230,29 @@ class MockUICard:
 
     def __init__(self):
         self.children = []
+        self.visible = True
 
     def classes(self, *args, **kwargs):
+        return self
+
+    def clear(self):
+        self.children = []
+        return self
+
+    def set_visibility(self, visible):
+        self.visible = visible
+        return self
+
+    def update(self):
+        return self
+
+    def props(self, *args, **kwargs):
+        return self
+
+    def open(self):
+        return self
+
+    def close(self):
         return self
 
     def __enter__(self):
@@ -170,7 +275,7 @@ class MockUIContext:
         """Capture notifications (non-blocking)."""
         self.notifications.append({"message": message, "type": type})
 
-    def button(self, text="", on_click=None, icon=""):
+    def button(self, text="", on_click=None, icon="", **kwargs):
         """Create a mock button and capture callbacks."""
         btn = MockUIButton(text, on_click, icon)
         self.buttons.append(btn)
@@ -181,6 +286,11 @@ class MockUIContext:
         inp = MockUIInput(value, placeholder, label, type)
         self.inputs.append(inp)
         return inp
+
+    def select(self, options=None, value=None, label="", clearable=False):
+        """Create a mock select and capture state."""
+        sel = MockUISelect(options, value, label, clearable)
+        return sel
 
     def label(self, text=""):
         """Create a mock label."""
@@ -200,8 +310,16 @@ class MockUIContext:
         """Create a mock column."""
         return MockUIRow()
 
-    def expansion(self, text="", icon=""):
+    def expansion(self, text="", icon="", value=None):
         """Create a mock expansion (deprecated in new design)."""
+        return MockUICard()
+
+    def dialog(self):
+        """Create a mock dialog."""
+        return MockUICard()
+
+    def separator(self):
+        """Create a mock separator."""
         return MockUICard()
 
     def element(self, tag):
@@ -362,9 +480,9 @@ class TestRunsStepCallbacks:
 
             create_runs_step(wizard, refresh_ui=mock_refresh_ui)
 
-        # Verify that the Runs Table label was created
-        runs_table_labels = [lbl for lbl in mock_ui_ctx.labels if "Runs Table" in lbl.text]
-        assert len(runs_table_labels) > 0, "Runs Table label not found"
+        # Verify that the Files Table label was created
+        runs_table_labels = [lbl for lbl in mock_ui_ctx.labels if "Files Table" in lbl.text]
+        assert len(runs_table_labels) > 0, "Files Table label not found"
 
         # Verify that the on_connect handler was registered (spreadsheet init deferred)
         mock_context_obj = mock_context_editor.client
@@ -373,6 +491,36 @@ class TestRunsStepCallbacks:
         # Verify that the help/instruction label exists
         help_labels = [lbl for lbl in mock_ui_ctx.labels if "Right-click rows to delete" in lbl.text]
         assert len(help_labels) > 0, "Help text with delete instruction not found"
+
+    def test_runs_step_renders_files_groups_and_modifications_surfaces(self):
+        """The Runs step should render Files and Groups surfaces and keep the modification editor."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.add_modification(mode="fixed", kind="custom", name="Custom PTM", profile="default")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
+        assert any("Files Table" in text for text in label_texts)
+        assert any("Groups Table" in text for text in label_texts)
+        assert any("Modifications (1)" in text for text in label_texts)
+
+        worksheet_names = [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert worksheet_names.count("Files") == 1
+        assert worksheet_names.count("Groups") == 1
+        assert worksheet_names.count("Modifications") == 1
 
     def test_manual_path_entry_clears_input_after_add(self):
         """

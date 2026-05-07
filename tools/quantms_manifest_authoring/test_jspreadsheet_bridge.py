@@ -19,7 +19,11 @@ Tests the actual bridge behavior for:
 
 import pytest
 import sys
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from copy import deepcopy
+from unittest.mock import MagicMock, patch
 from typing import Any, Dict, List
 
 # Add parent directory to path
@@ -28,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from gui_wizard_state import WizardState
 from spreadsheet_adapter import SpreadsheetAdapter, SpreadsheetRow
 from jspreadsheet_bridge import JSpreadsheetBridge
+from jspreadsheet_editor import JSpreadsheetEditor
 
 
 class TestJSpreadsheetBridge:
@@ -48,7 +53,7 @@ class TestJSpreadsheetBridge:
         # Verify structure
         assert "headers" in data
         assert "data" in data
-        assert data["headers"] == ["file", "fraction", "instrument"]
+        assert data["headers"] == ["file", "fraction", "instrument", "group_id"]
 
         # Verify data rows
         assert len(data["data"]) == 2
@@ -151,6 +156,25 @@ class TestJSpreadsheetBridge:
         bridge.handle_cell_edit(row_index=0, col_index=2, new_value="Orbitrap")
         assert wizard.runs[0]["instrument"] == "Orbitrap"
 
+    def test_bridge_exposes_group_membership_dropdown_for_runs(self):
+        """Runs spreadsheet should expose group membership as an editable dropdown."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+
+        bridge = JSpreadsheetBridge(wizard)
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"] == ["file", "fraction", "instrument", "group_id"]
+        assert data["data"][0][data["headers"].index("group_id")] is None
+        assert data["column_config"]["group_id"]["type"] == "dropdown"
+        assert data["column_config"]["group_id"]["source"] == [{"id": "group_1", "name": "group_1"}]
+
+        bridge.handle_cell_edit(row_index=0, col_index=data["headers"].index("group_id"), new_value="group_1")
+
+        assert wizard.runs[0]["group_id"] == "group_1"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+
     def test_bridge_clear_optional_field_with_empty_string(self):
         """
         AC8: Bridge allows clearing optional fields by setting empty string.
@@ -165,6 +189,73 @@ class TestJSpreadsheetBridge:
 
         # Verify field was removed (not in the dict)
         assert "instrument" not in wizard.runs[0] or wizard.runs[0]["instrument"] is None
+
+    def test_groups_bridge_exposes_read_only_groups_table(self):
+        """Groups spreadsheet should render authoring groups from WizardState as read-only rows."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"] == ["id", "name", "kind", "members", "description"]
+        assert data["data"][0][data["headers"].index("members")] == wizard.runs[0]["id"]
+        assert data["read_only_cells"] == [
+            {"row": 0, "col": 0},
+            {"row": 0, "col": 1},
+            {"row": 0, "col": 2},
+            {"row": 0, "col": 3},
+            {"row": 0, "col": 4},
+        ]
+        assert bridge.get_row_count() == 1
+
+    def test_groups_bridge_sync_paths_do_not_mutate_wizard_groups(self):
+        """Groups sync APIs should be inert in the read-only Phase 2 surface."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        initial_groups = deepcopy(wizard.groups)
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+
+        rows = bridge.adapter.wizard_groups_to_spreadsheet()
+        rows[0].name = "Edited name"
+        rows[0].members = "run_999"
+        bridge.adapter.sync_group_edits(rows)
+        assert wizard.groups == initial_groups
+
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
+        mutated_snapshot[0][spreadsheet_data["headers"].index("name")] = "Edited name"
+        mutated_snapshot[0][spreadsheet_data["headers"].index("members")] = "run_999"
+
+        bridge.sync_from_spreadsheet_data(mutated_snapshot)
+
+        assert wizard.groups == initial_groups
+
+    def test_groups_editor_flush_pending_edits_does_not_sync_groups(self):
+        """Groups editor flush should not attempt to round-trip read-only group data."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        initial_groups = deepcopy(wizard.groups)
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        editor = JSpreadsheetEditor(wizard, MagicMock(), bridge=bridge, worksheet_name="Groups")
+        editor.container = SimpleNamespace(html_id="groups-container")
+
+        with patch("jspreadsheet_editor.context") as mock_context:
+            mock_context.client.run_javascript = MagicMock(side_effect=AssertionError("run_javascript should not be called for groups flush"))
+
+            result = asyncio.run(editor.flush_pending_edits())
+
+        assert result == 0
+        assert wizard.groups == initial_groups
+        mock_context.client.run_javascript.assert_not_called()
 
     def test_bridge_edge_case_row_index_out_of_range(self):
         """

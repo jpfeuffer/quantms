@@ -130,7 +130,33 @@ class TestSpreadsheetAdapterIntegration:
 
         headers = adapter.get_column_headers()
 
-        assert headers == ["file", "fraction", "instrument"]
+        assert headers == ["file", "fraction", "instrument", "group_id"]
+
+    def test_spreadsheet_adapter_exposes_group_membership_and_groups_table(self):
+        """
+        AC5.1: Runs rows expose group membership and the adapter provides
+        a groups table view for authoring groups.
+        """
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        adapter = SpreadsheetAdapter(wizard)
+
+        assert adapter.get_column_headers() == ["file", "fraction", "instrument", "group_id"]
+
+        run_rows = adapter.wizard_to_spreadsheet()
+        assert run_rows[0].group_id == "group_1"
+
+        assert adapter.get_column_headers_groups() == ["id", "name", "kind", "members", "description"]
+
+        group_rows = adapter.wizard_groups_to_spreadsheet()
+        assert len(group_rows) == 1
+        assert group_rows[0].id == "group_1"
+        assert group_rows[0].name == "Replicate group"
+        assert group_rows[0].kind == "replicate"
+        assert group_rows[0].members == wizard.runs[0]["id"]
 
     def test_spreadsheet_row_validate_requires_file(self):
         """

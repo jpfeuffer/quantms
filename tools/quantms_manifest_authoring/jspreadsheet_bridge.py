@@ -16,6 +16,7 @@ from spreadsheet_adapter import (
     SampleFieldInfo,
     MixtureFieldInfo,
     RunFieldInfo,
+    GroupFieldInfo,
     ModificationFieldInfo,
     AssignmentFieldInfo,
     AssignmentSpreadsheetRow,
@@ -45,7 +46,7 @@ class JSpreadsheetBridge:
         self,
         wizard: WizardState,
         column_config_builder=None,
-        entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications"] = "runs",
+        entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications", "groups"] = "runs",
     ):
         """Initialize bridge with wizard state.
 
@@ -53,7 +54,7 @@ class JSpreadsheetBridge:
             wizard: WizardState instance
             column_config_builder: Optional ColumnConfigBuilder for dropdown config.
                                   If None, creates a new one.
-            entity_type: Type of entity ('runs', 'samples', 'mixtures', 'assignments', or 'modifications'). Default is 'runs'.
+            entity_type: Type of entity ('runs', 'samples', 'mixtures', 'assignments', 'modifications', or 'groups'). Default is 'runs'.
         """
         self.wizard = wizard
         self.entity_type = entity_type
@@ -100,6 +101,10 @@ class JSpreadsheetBridge:
             headers = self.adapter.get_column_headers_modifications()
             rows = self.adapter.wizard_modifications_to_spreadsheet()
             data = [[getattr(row, field, None) for field in headers] for row in rows]
+        elif self.entity_type == "groups":
+            headers = self.adapter.get_column_headers_groups()
+            rows = self.adapter.wizard_groups_to_spreadsheet()
+            data = [[getattr(row, field, None) for field in headers] for row in rows]
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -118,6 +123,13 @@ class JSpreadsheetBridge:
 
         if self.entity_type == "modifications":
             spreadsheet_data["read_only_cells"] = self._get_modification_read_only_cells(headers, rows)
+        elif self.entity_type == "groups":
+            spreadsheet_data["read_only_cells"] = [
+                {"row": row_index, "col": col_index}
+                for row_index, _ in enumerate(rows)
+                for col_index, _ in enumerate(headers)
+            ]
+            spreadsheet_data["allow_delete_row"] = False
 
         return spreadsheet_data
 
@@ -157,6 +169,8 @@ class JSpreadsheetBridge:
             return AssignmentFieldInfo.get_field_info(field)
         elif self.entity_type == "modifications":
             return ModificationFieldInfo.get_field_info(field)
+        elif self.entity_type == "groups":
+            return GroupFieldInfo.get_field_info(field)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -165,6 +179,9 @@ class JSpreadsheetBridge:
         if self.entity_type == "mixtures":
             sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
             return {header: sample_options for header in headers if header != "id"}
+        elif self.entity_type == "runs":
+            group_options = [{"id": group["id"], "name": group["id"]} for group in self.wizard.groups]
+            return {"group_id": group_options} if group_options else {}
         elif self.entity_type == "assignments":
             sources = {}
             if "sample" in headers:
@@ -200,11 +217,16 @@ class JSpreadsheetBridge:
             return len(self.wizard.runs)
         if self.entity_type == "modifications":
             return len(self.wizard.modifications)
+        if self.entity_type == "groups":
+            return len(self.wizard.groups)
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
         """Synchronize a full worksheet snapshot back into wizard state."""
         if not isinstance(spreadsheet_data, list):
+            return
+
+        if self.entity_type == "groups":
             return
 
         if self.entity_type == "runs":
@@ -304,6 +326,9 @@ class JSpreadsheetBridge:
             self.adapter.sync_modification_edits(rows)
             return
 
+        if self.entity_type == "groups":
+            return
+
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
 
@@ -329,6 +354,8 @@ class JSpreadsheetBridge:
             self._handle_cell_edit_assignments(row_index, col_index, new_value)
         elif self.entity_type == "modifications":
             self._handle_cell_edit_modifications(row_index, col_index, new_value)
+        elif self.entity_type == "groups":
+            return
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -356,6 +383,8 @@ class JSpreadsheetBridge:
                     raise ValueError(f"Fraction must be an integer, got: {new_value}")
         elif field_name == "file" and (new_value is None or new_value == ""):
             raise ValueError("File path is required")
+        elif field_name == "group_id" and (new_value is None or new_value == ""):
+            new_value = None
 
         # Validate dropdown constraints for allowed fields
         if field_name in self._dropdown_constraint_cache:
@@ -598,6 +627,8 @@ class JSpreadsheetBridge:
             if row_index < 0 or row_index >= len(self.wizard.modifications):
                 raise IndexError(f"Row index {row_index} out of range")
             del self.wizard.modifications[row_index]
+        elif self.entity_type == "groups":
+            pass
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 

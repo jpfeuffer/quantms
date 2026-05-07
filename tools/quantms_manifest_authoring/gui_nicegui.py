@@ -800,12 +800,11 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
 
 def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]:
     """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
-    runs_editor: Optional[JSpreadsheetEditor] = None
-    modifications_editor: Optional[JSpreadsheetEditor] = None
+    spreadsheet_editors: List[JSpreadsheetEditor] = []
 
     with ui.card().classes("w-full"):
         ui.label("Step 1: Add Raw/mzML Files").classes("text-lg font-semibold")
-        ui.label("Edit runs in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
+        ui.label("Edit files in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
         ui.label("(Sample and mixture assignment happens in the Assignments step)").classes("text-xs text-gray-500 italic")
 
         # File picker button at the top
@@ -862,34 +861,54 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
 
         JSpreadsheetEditor.prepare_client_runtime()
 
-        # Embedded jspreadsheet-ce widget
-        if wizard.runs:
-            ui.label(f"Runs Table ({len(wizard.runs)} file(s))").classes("text-md font-semibold mt-6")
+        with ui.row().classes("w-full gap-4 items-start mt-6"):
+            with ui.card().classes("w-full basis-0 grow"):
+                if wizard.runs:
+                    ui.label(f"Files Table ({len(wizard.runs)} file(s))").classes("text-md font-semibold")
 
-            # Create and render the spreadsheet editor
-            editor = JSpreadsheetEditor(wizard, refresh_ui)
-            editor.render()
-            runs_editor = editor
+                    bridge = JSpreadsheetBridge(wizard, entity_type="runs")
+                    files_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Files")
+                    files_editor.render()
+                    spreadsheet_editors.append(files_editor)
 
-            # Footer with instructions
-            ui.label(
-                "• Click cells to edit (file, fraction, instrument)\n"
-                "• Right-click rows to delete\n"
-                "• Drag-copy is supported when dragging cell borders\n"
-                "* File is required"
-            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
-        else:
-            ui.label("No runs added yet. Use 'Choose Local Files' to add MS data files.").classes(
-                "text-sm text-gray-500 italic mt-6"
-            )
+                    ui.label(
+                        "• Click cells to edit (file, fraction, instrument, group_id)\n"
+                        "• Right-click rows to delete\n"
+                        "• Drag-copy is supported when dragging cell borders\n"
+                        "* File is required"
+                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                else:
+                    ui.label("No files added yet. Use 'Choose Local Files' to add MS data files.").classes(
+                        "text-sm text-gray-500 italic"
+                    )
+
+            with ui.card().classes("w-full basis-0 grow"):
+                if wizard.groups:
+                    ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
+
+                    bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+                    groups_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Groups")
+                    groups_editor.render()
+                    spreadsheet_editors.append(groups_editor)
+
+                    ui.label(
+                        "• Groups are read-only in this phase\n"
+                        "• Group membership is shown in the Files table"
+                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                else:
+                    ui.label("No groups added yet. Group membership will appear here when groups exist.").classes(
+                        "text-sm text-gray-500 italic"
+                    )
 
     modifications_editor = create_modifications_surface(wizard, refresh_ui)
+    if modifications_editor:
+        spreadsheet_editors.append(modifications_editor)
 
-    if runs_editor and modifications_editor:
-        return SpreadsheetEditorFlushGroup([runs_editor, modifications_editor])
-    if runs_editor:
-        return runs_editor
-    return modifications_editor
+    if len(spreadsheet_editors) > 1:
+        return SpreadsheetEditorFlushGroup(spreadsheet_editors)
+    if spreadsheet_editors:
+        return spreadsheet_editors[0]
+    return None
 
 
 def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:

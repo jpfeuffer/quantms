@@ -216,6 +216,7 @@ class JSpreadsheetEditor:
         data_json = json.dumps(data)
         column_config_json = json.dumps(column_config)
         read_only_cells_json = json.dumps(spreadsheet_data.get("read_only_cells", []))
+        allow_delete_row_json = json.dumps(spreadsheet_data.get("allow_delete_row", True))
         widget_id_json = json.dumps(self.widget_id)
         container_id_json = json.dumps(container_id)
 
@@ -226,6 +227,7 @@ class JSpreadsheetEditor:
                 data: {data_json},
                 column_config: {column_config_json},
                 read_only_cells: {read_only_cells_json},
+                allow_delete_row: {allow_delete_row_json},
                 widget_id: {widget_id_json},
                 container_id: {container_id_json}
             }};
@@ -263,6 +265,7 @@ class JSpreadsheetEditor:
                 const data = spreadsheetData.data || [];
                 const columnConfig = spreadsheetData.column_config || {{}};
                 const readOnlyCells = spreadsheetData.read_only_cells || [];
+                const allowDeleteRow = spreadsheetData.allow_delete_row !== false;
                 const readOnlyCellKeys = new Set(readOnlyCells.map(cell => `${{cell.row}}:${{cell.col}}`));
                 const containerId = spreadsheetData.container_id;
                 const widgetId = spreadsheetData.widget_id;
@@ -456,6 +459,7 @@ class JSpreadsheetEditor:
                         editable: true,
                         allowInsertColumn: false,
                         allowDeleteColumn: false,
+                        allowDeleteRow: allowDeleteRow,
                         allowManualInsertColumn: false,
                         allowInsertRow: false,
                         allowManualInsertRow: false,
@@ -629,6 +633,9 @@ class JSpreadsheetEditor:
             0 if successful (no pending edits or all flushed)
         """
         if not self.wizard or self.bridge.get_row_count() == 0:
+            return 0
+
+        if getattr(self.bridge, "entity_type", None) == "groups":
             return 0
 
         # Get the container element to access the spreadsheet instance
