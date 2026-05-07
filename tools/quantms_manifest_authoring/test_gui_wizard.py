@@ -247,14 +247,21 @@ class TestWizardState:
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.runs[0]["group_id"] == "group_1"
 
-    def test_wizard_auto_groups_fractioned_files_by_basename(self):
-        """Test that fraction markers are stripped before auto-grouping runs."""
+    def test_wizard_seed_runs_from_filenames_groups_fractioned_files_only_when_requested(self):
+        """Test that fraction markers are grouped only after an explicit regroup request."""
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
         wizard.add_run(file="/data/sample_fraction1.raw")
         wizard.add_run(file="/data/sample_fraction2.raw")
 
+        assert "group_id" not in wizard.runs[0]
+        assert "group_id" not in wizard.runs[1]
+        assert wizard.groups == []
+
+        seeded_count = wizard.seed_runs_from_filenames(force=True)
+
+        assert seeded_count == 2
         assert wizard.runs[0]["group_id"] == wizard.runs[1]["group_id"]
         assert len(wizard.groups) == 1
         assert wizard.groups[0]["id"] == wizard.runs[0]["group_id"]
@@ -273,22 +280,31 @@ class TestWizardState:
         assert wizard.groups[0]["id"] == "new_group"
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
 
-    def test_wizard_cleared_group_assignment_is_not_reseeded_by_later_file_adds(self):
-        """Clearing an auto-seeded group should stick until the user explicitly regroups."""
+    def test_wizard_cleared_group_assignment_stays_cleared_until_explicit_regroup(self):
+        """Clearing a group assignment should stick until the user explicitly regroups."""
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
         wizard.add_run(file="/data/sample_fraction1.raw")
 
-        assert wizard.runs[0]["group_id"] == "sample"
+        assert "group_id" not in wizard.runs[0]
 
-        wizard.clear_run_field(0, "group_id")
         wizard.add_run(file="/data/sample_fraction2.raw")
 
         assert "group_id" not in wizard.runs[0]
+        assert "group_id" not in wizard.runs[1]
+        assert wizard.groups == []
+
+        wizard.seed_runs_from_filenames(force=True)
+
+        assert wizard.runs[0]["group_id"] == "sample"
+        assert wizard.runs[1]["group_id"] == "sample"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"], wizard.runs[1]["id"]]
+
+        wizard.clear_run_field(0, "group_id")
+        assert "group_id" not in wizard.runs[0]
         assert wizard.runs[0]["group_assignment_cleared"] is True
         assert wizard.runs[1]["group_id"] == "sample"
-        assert wizard.groups[0]["members"] == [wizard.runs[1]["id"]]
 
     def test_wizard_add_group_rejects_duplicate_ids(self):
         """Test that group IDs must be unique."""

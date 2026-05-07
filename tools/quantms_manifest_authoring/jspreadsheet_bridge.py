@@ -387,6 +387,10 @@ class JSpreadsheetBridge:
             new_value = None
             if "group_id" not in self.wizard.runs[row_index]:
                 self.wizard.clear_run_field(row_index, "group_id")
+        elif field_name == "group_id":
+            available_group_ids = {group["id"] for group in self.wizard.groups}
+            if str(new_value) not in available_group_ids:
+                raise ValueError(f"Group '{new_value}' not found in groups")
 
         # Validate dropdown constraints for allowed fields
         if field_name in self._dropdown_constraint_cache:

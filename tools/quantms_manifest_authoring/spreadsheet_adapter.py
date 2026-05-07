@@ -40,7 +40,6 @@ class RunFieldInfo:
             "type": "str",
             "required": False,
             "description": "Authoring group identifier",
-            "new_options": True,
         },
     }
 

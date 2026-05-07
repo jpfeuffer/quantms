@@ -245,7 +245,11 @@ class WizardState:
             if run.get("group_assignment_cleared") and not force:
                 continue
 
-            group_id = self._infer_group_id_from_file_name(run.get("file"))
+            file_name = run.get("file")
+            if file_name is None:
+                continue
+
+            group_id = self._infer_group_id_from_file_name(file_name)
             if not group_id:
                 continue
 
@@ -353,8 +357,6 @@ class WizardState:
         if group_id is not None:
             self._ensure_group_exists(group_id, kind="manual")
             self._assign_run_group(len(self.runs) - 1, group_id)
-        else:
-            self.seed_runs_from_filenames(force=False)
 
     def add_group(
         self,

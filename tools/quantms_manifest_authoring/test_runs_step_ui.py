@@ -170,6 +170,7 @@ class MockUIButton:
         self.text = text
         self.on_click_callback = on_click
         self.icon = icon
+        self.parent = None
 
     def classes(self, *args, **kwargs):
         return self
@@ -191,7 +192,9 @@ class MockUIButton:
 class MockUIRow:
     """Mock for ui.row context manager."""
 
-    def __init__(self):
+    def __init__(self, owner=None, kind="row"):
+        self.owner = owner
+        self.kind = kind
         self.children = []
         self.visible = True
 
@@ -219,16 +222,26 @@ class MockUIRow:
         return self
 
     def __enter__(self):
+        if self.owner is not None:
+            self.owner._container_stack.append(self)
+            parent = self.owner._container_stack[-2] if len(self.owner._container_stack) > 1 else None
+            self.parent = parent
+            if parent is not None:
+                parent.children.append(self)
         return self
 
     def __exit__(self, *args):
+        if self.owner is not None and self.owner._container_stack:
+            self.owner._container_stack.pop()
         pass
 
 
 class MockUICard:
     """Mock for ui.card context manager."""
 
-    def __init__(self):
+    def __init__(self, owner=None, kind="card"):
+        self.owner = owner
+        self.kind = kind
         self.children = []
         self.visible = True
 
@@ -256,9 +269,17 @@ class MockUICard:
         return self
 
     def __enter__(self):
+        if self.owner is not None:
+            self.owner._container_stack.append(self)
+            parent = self.owner._container_stack[-2] if len(self.owner._container_stack) > 1 else None
+            self.parent = parent
+            if parent is not None:
+                parent.children.append(self)
         return self
 
     def __exit__(self, *args):
+        if self.owner is not None and self.owner._container_stack:
+            self.owner._container_stack.pop()
         pass
 
 
@@ -270,6 +291,9 @@ class MockUIContext:
         self.inputs = []
         self.labels = []
         self.notifications = []
+        self.cards = []
+        self.rows = []
+        self._container_stack = []
 
     def notify(self, message, type=None):
         """Capture notifications (non-blocking)."""
@@ -278,6 +302,9 @@ class MockUIContext:
     def button(self, text="", on_click=None, icon="", **kwargs):
         """Create a mock button and capture callbacks."""
         btn = MockUIButton(text, on_click, icon)
+        btn.parent = self._container_stack[-1] if self._container_stack else None
+        if btn.parent is not None:
+            btn.parent.children.append(btn)
         self.buttons.append(btn)
         return btn
 
@@ -296,31 +323,45 @@ class MockUIContext:
         """Create a mock label."""
         lbl = MockUILabel(text)
         self.labels.append(lbl)
+        if self._container_stack:
+            self._container_stack[-1].children.append(lbl)
         return lbl
 
     def row(self):
         """Create a mock row."""
-        return MockUIRow()
+        row = MockUIRow(owner=self, kind="row")
+        self.rows.append(row)
+        return row
 
     def card(self):
         """Create a mock card."""
-        return MockUICard()
+        card = MockUICard(owner=self, kind="card")
+        self.cards.append(card)
+        return card
 
     def column(self):
         """Create a mock column."""
-        return MockUIRow()
+        column = MockUIRow(owner=self, kind="column")
+        self.rows.append(column)
+        return column
 
     def expansion(self, text="", icon="", value=None):
         """Create a mock expansion (deprecated in new design)."""
-        return MockUICard()
+        expansion = MockUICard(owner=self, kind="expansion")
+        self.cards.append(expansion)
+        return expansion
 
     def dialog(self):
         """Create a mock dialog."""
-        return MockUICard()
+        dialog = MockUICard(owner=self, kind="dialog")
+        self.cards.append(dialog)
+        return dialog
 
     def separator(self):
         """Create a mock separator."""
-        return MockUICard()
+        separator = MockUICard(owner=self, kind="separator")
+        self.cards.append(separator)
+        return separator
 
     def element(self, tag):
         """Create a mock element (container div)."""
@@ -339,8 +380,10 @@ class TestRunsStepCallbacks:
     """Tests that invoke real callback code in create_runs_step."""
 
     def test_runs_step_explains_filename_grouping_and_exposes_regroup_action(self):
-        """The Runs step should make filename-based grouping visible to the user."""
+        """The Runs step should keep regrouping explicit and place the button in the Groups pane."""
         wizard = WizardState()
+        wizard.add_run(file="/data/sample_fraction1.raw")
+        wizard.add_run(file="/data/sample_fraction2.raw")
         refresh_calls = []
 
         def refresh_ui():
@@ -349,15 +392,40 @@ class TestRunsStepCallbacks:
         mock_ui_ctx = MockUIContext()
 
         with patch("gui_nicegui.ui", mock_ui_ctx):
-            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda: None):
+            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda *args, **kwargs: None):
                 create_runs_step(wizard, refresh_ui=refresh_ui)
 
         label_text = " ".join(label.text for label in mock_ui_ctx.labels).lower()
         assert "fraction" in label_text
-        assert "basename" in label_text or "fraction markers" in label_text or "regroup" in label_text
+        assert "auto-grouped" not in label_text
+        assert "basename" in label_text or "fraction markers" in label_text or "group" in label_text
 
-        button_texts = [button.text for button in mock_ui_ctx.buttons]
-        assert any("group" in str(text).lower() for text in button_texts)
+        regroup_button = next(
+            button for button in mock_ui_ctx.buttons if button.text == "Suggest groups from filenames"
+        )
+        assert regroup_button.parent is not None
+
+        assert any(
+            isinstance(child, MockUILabel) and (
+                "group membership" in child.text.lower() or "no groups added yet" in child.text.lower()
+            )
+            for child in regroup_button.parent.children
+        )
+        assert not any(
+            isinstance(child, MockUILabel) and "files table" in child.text.lower()
+            for child in regroup_button.parent.children
+        )
+
+        assert wizard.groups == []
+
+        initial_group_count = len(wizard.groups)
+        regroup_button.trigger_click()
+
+        assert initial_group_count == 0
+        assert len(wizard.groups) == 1
+        assert wizard.groups[0]["id"] == "sample"
+        assert sorted(wizard.groups[0]["members"]) == ["run_1", "run_2"]
+        assert refresh_calls
 
     def test_file_picker_button_callback_adds_selected_files_and_refreshes(self):
         """

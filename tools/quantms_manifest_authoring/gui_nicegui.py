@@ -807,23 +807,9 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
         ui.label("Edit files in the spreadsheet below. Add files via picker or manual path entry.").classes("text-sm text-gray-600")
         ui.label("(Sample and mixture assignment happens in the Assignments step)").classes("text-xs text-gray-500 italic")
         ui.label(
-            "Files that share a basename after removing supported fraction markers are auto-grouped. "
-            "Use the button below to suggest groups for existing ungrouped files."
+            "Files that share a basename after removing supported fraction markers can be suggested as groups. "
+            "Use the button in the Groups pane to suggest groups for existing ungrouped files."
         ).classes("text-xs text-gray-600 mt-2 p-2 bg-blue-50 rounded")
-
-        def suggest_groups_from_filenames() -> None:
-            seeded_count = wizard.seed_runs_from_filenames(force=True)
-            if seeded_count:
-                ui.notify(f"Suggested {seeded_count} run(s) into filename-based groups")
-                refresh_ui()
-            else:
-                ui.notify("No ungrouped files matched the filename grouping heuristic", type="info")
-
-        ui.button(
-            "Suggest groups from filenames",
-            on_click=suggest_groups_from_filenames,
-            icon="auto_fix_high",
-        ).classes("w-full mt-2")
 
         # File picker button at the top
         async def pick_local_files():
@@ -901,6 +887,20 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     )
 
             with ui.card().classes("w-full basis-0 grow"):
+                def suggest_groups_from_filenames() -> None:
+                    seeded_count = wizard.seed_runs_from_filenames(force=True)
+                    if seeded_count:
+                        ui.notify(f"Suggested {seeded_count} run(s) into filename-based groups")
+                        refresh_ui()
+                    else:
+                        ui.notify("No ungrouped files matched the filename grouping heuristic", type="info")
+
+                ui.button(
+                    "Suggest groups from filenames",
+                    on_click=suggest_groups_from_filenames,
+                    icon="auto_fix_high",
+                ).classes("w-full mb-3")
+
                 if wizard.groups:
                     ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
 
