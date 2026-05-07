@@ -289,6 +289,7 @@ class MockUIContext:
     def __init__(self):
         self.buttons = []
         self.inputs = []
+        self.selects = []
         self.labels = []
         self.notifications = []
         self.cards = []
@@ -317,6 +318,7 @@ class MockUIContext:
     def select(self, options=None, value=None, label="", clearable=False):
         """Create a mock select and capture state."""
         sel = MockUISelect(options, value, label, clearable)
+        self.selects.append(sel)
         return sel
 
     def label(self, text=""):
@@ -403,7 +405,10 @@ class TestRunsStepCallbacks:
         regroup_button = next(
             button for button in mock_ui_ctx.buttons if button.text == "Suggest groups from filenames"
         )
+        add_group_button = next(button for button in mock_ui_ctx.buttons if button.text == "Add Group")
         assert regroup_button.parent is not None
+        assert add_group_button.parent is not None
+        assert add_group_button.parent is regroup_button.parent
 
         assert any(
             isinstance(child, MockUILabel) and (
@@ -418,14 +423,76 @@ class TestRunsStepCallbacks:
 
         assert wizard.groups == []
 
-        initial_group_count = len(wizard.groups)
-        regroup_button.trigger_click()
+    def test_runs_step_exposes_explicit_group_creation_affordance_when_no_groups_exist(self):
+        """The Groups pane should offer explicit group creation even before any groups exist."""
+        wizard = WizardState()
+        mock_ui_ctx = MockUIContext()
 
-        assert initial_group_count == 0
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda *args, **kwargs: None):
+                create_runs_step(wizard, refresh_ui=lambda: None)
+
+        group_id_input = next((inp for inp in mock_ui_ctx.inputs if inp.label == "Group ID"), None)
+        group_name_input = next((inp for inp in mock_ui_ctx.inputs if inp.label == "Group Name"), None)
+        group_description_input = next(
+            (inp for inp in mock_ui_ctx.inputs if inp.label == "Description (optional)"),
+            None,
+        )
+        group_kind_select = next((sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind"), None)
+        add_group_button = next((btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group"), None)
+        regroup_button = next((btn for btn in mock_ui_ctx.buttons if btn.text == "Suggest groups from filenames"), None)
+
+        assert group_id_input is not None
+        assert group_name_input is not None
+        assert group_description_input is not None
+        assert group_kind_select is not None
+        assert add_group_button is not None
+        assert regroup_button is not None
+        assert group_kind_select.options == {kind: kind for kind in wizard.get_allowed_group_kinds()}
+        assert group_kind_select.value == wizard.get_allowed_group_kinds()[0]
+        assert add_group_button.parent is regroup_button.parent
+        assert wizard.groups == []
+
+    def test_group_creation_callback_adds_group_and_refreshes(self):
+        """Adding a group from the Groups pane should update state and trigger a refresh."""
+        wizard = WizardState()
+        refresh_ui_calls = []
+
+        def mock_refresh_ui():
+            refresh_ui_calls.append(True)
+
+        mock_ui_ctx = MockUIContext()
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor:
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=mock_refresh_ui)
+
+        group_id_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group ID")
+        group_name_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group Name")
+        group_description_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Description (optional)")
+        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
+        add_group_button = next(btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group")
+
+        group_id_input.value = "replicate_1"
+        group_name_input.value = "Replicate group"
+        group_description_input.value = "Replicate samples from the same condition"
+        group_kind_select.value = wizard.get_allowed_group_kinds()[0]
+
+        add_group_button.trigger_click()
+
         assert len(wizard.groups) == 1
-        assert wizard.groups[0]["id"] == "sample"
-        assert sorted(wizard.groups[0]["members"]) == ["run_1", "run_2"]
-        assert refresh_calls
+        assert wizard.groups[0]["id"] == "replicate_1"
+        assert wizard.groups[0]["name"] == "Replicate group"
+        assert wizard.groups[0]["kind"] == wizard.get_allowed_group_kinds()[0]
+        assert wizard.groups[0]["description"] == "Replicate samples from the same condition"
+        assert wizard.groups[0]["members"] == []
+        assert refresh_ui_calls
+        assert group_id_input.value == ""
+        assert group_name_input.value == ""
+        assert group_description_input.value == ""
 
     def test_suggest_groups_from_filenames_flushes_pending_file_edits_before_regrouping(self):
         """Regrouping should flush pending Files edits before seeding filename-based groups."""

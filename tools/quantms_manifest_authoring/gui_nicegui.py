@@ -808,10 +808,9 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
         ui.label("(Sample and mixture assignment happens in the Assignments step)").classes("text-xs text-gray-500 italic")
         ui.label(
             "Files that share a basename after removing supported fraction markers can be suggested as groups. "
-            "Use the button in the Groups pane to suggest groups for existing ungrouped files."
+            "Use the form in the Groups pane to create groups manually, or the button there to suggest groups for existing ungrouped files."
         ).classes("text-xs text-gray-600 mt-2 p-2 bg-blue-50 rounded")
 
-        # File picker button at the top
         async def pick_local_files():
             selected_files = await MsFilePickerDialog(multiple=True)
             if not selected_files:
@@ -837,7 +836,6 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
             "text-xs text-gray-500 mt-2"
         )
 
-        # Manual path entry section
         with ui.row().classes("w-full gap-2 items-end mt-4"):
             manual_path_input = ui.input(
                 label="Or enter file path manually",
@@ -887,6 +885,11 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     )
 
             with ui.card().classes("w-full basis-0 grow"):
+                allowed_group_kinds = wizard.get_allowed_group_kinds()
+                default_group_kind = allowed_group_kinds[0] if allowed_group_kinds else None
+
+                ui.label("Groups").classes("text-md font-semibold")
+
                 async def suggest_groups_from_filenames() -> None:
                     def safe_notify(message: str, **kwargs: Any) -> None:
                         try:
@@ -908,6 +911,68 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     on_click=suggest_groups_from_filenames,
                     icon="auto_fix_high",
                 ).classes("w-full mb-3")
+
+                ui.label("Create Group").classes("text-md font-semibold mt-2")
+
+                with ui.row().classes("w-full gap-2 items-end mt-2"):
+                    group_id_input = ui.input(
+                        label="Group ID",
+                        placeholder="e.g., replicate_1",
+                    ).classes("flex-grow")
+                    group_name_input = ui.input(
+                        label="Group Name",
+                        placeholder="e.g., Replicate group",
+                    ).classes("flex-grow")
+                    group_kind_input = ui.select(
+                        options={kind: kind for kind in allowed_group_kinds},
+                        value=default_group_kind,
+                        label="Group Kind",
+                    ).classes("flex-grow")
+
+                with ui.row().classes("w-full gap-2 items-end"):
+                    group_description_input = ui.input(
+                        label="Description (optional)",
+                        placeholder="e.g., biological replicates from the same condition",
+                    ).classes("flex-grow")
+
+                    def add_group() -> None:
+                        group_id = group_id_input.value.strip()
+                        group_name = group_name_input.value.strip()
+                        group_kind = group_kind_input.value
+                        group_description = group_description_input.value.strip()
+
+                        if not group_id:
+                            ui.notify("Group ID is required", type="warning")
+                            return
+                        if not group_name:
+                            ui.notify("Group name is required", type="warning")
+                            return
+                        if not group_kind:
+                            ui.notify("Group kind is required", type="warning")
+                            return
+
+                        try:
+                            wizard.add_group(
+                                id=group_id,
+                                name=group_name,
+                                kind=group_kind,
+                                description=group_description or None,
+                            )
+                            ui.notify(f"Group '{group_id}' added")
+                            group_id_input.value = ""
+                            group_name_input.value = ""
+                            group_description_input.value = ""
+                            group_kind_input.value = default_group_kind
+                            group_kind_input.update()
+                            refresh_ui()
+                        except Exception as e:
+                            ui.notify(f"Error adding group: {e}", type="negative")
+
+                ui.button(
+                    "Add Group",
+                    on_click=add_group,
+                    icon="add",
+                ).classes("px-4 py-0.5")
 
                 if wizard.groups:
                     ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")

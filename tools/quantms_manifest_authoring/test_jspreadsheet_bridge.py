@@ -214,6 +214,21 @@ class TestJSpreadsheetBridge:
         assert "source" not in data["column_config"]["group_id"]
         assert "new_options" not in data["column_config"]["group_id"]
 
+    def test_bridge_group_dropdown_updates_after_new_group_creation(self):
+        """Adding a group should make it available in the Files-side group dropdown on rerender."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+
+        bridge = JSpreadsheetBridge(wizard)
+        initial_data = bridge.get_spreadsheet_data()
+        assert initial_data["column_config"]["group_id"]["type"] != "dropdown"
+
+        wizard.add_group(id="group_1", name="Replicate group", kind="LFQ")
+
+        refreshed_data = bridge.get_spreadsheet_data()
+        assert refreshed_data["column_config"]["group_id"]["type"] == "dropdown"
+        assert refreshed_data["column_config"]["group_id"]["source"] == [{"id": "group_1", "name": "group_1"}]
+
     def test_bridge_clear_optional_field_with_empty_string(self):
         """
         AC8: Bridge allows clearing optional fields by setting empty string.
