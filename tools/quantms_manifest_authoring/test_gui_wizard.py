@@ -41,9 +41,15 @@ class TestWizardStep:
     def test_wizard_steps_ordered(self):
         """Test that wizard steps have a defined order."""
         from gui_wizard_state import WizardStep
-        steps = [WizardStep.RUNS, WizardStep.SAMPLES, WizardStep.MIXTURES,
-                 WizardStep.ASSIGNMENTS, WizardStep.EXPERIMENT, WizardStep.REVIEW]
-        assert len(steps) == 6
+
+        assert WizardStep.ordered_steps() == [
+            WizardStep.RUNS,
+            WizardStep.SAMPLES,
+            WizardStep.MIXTURES,
+            WizardStep.EXPERIMENT,
+            WizardStep.ASSIGNMENTS,
+            WizardStep.REVIEW,
+        ]
 
     def test_assignments_step_exists(self):
         """Test that ASSIGNMENTS step is defined in the wizard."""
@@ -69,6 +75,7 @@ class TestWizardState:
         assert len(wizard.runs) == 0
         assert len(wizard.samples) == 0
         assert len(wizard.mixtures) == 0
+        assert len(wizard.groups) == 0
         assert wizard.experiment is None
 
     def test_wizard_starts_at_runs_step(self):
@@ -223,6 +230,62 @@ class TestWizardState:
         assert len(wizard.mixtures) == 1
         assert wizard.mixtures[0]["id"] == "mix_1"
 
+    def test_wizard_add_group_and_assign_run_to_group(self):
+        """Test adding an authoring group and assigning a run to it."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="run_1.raw")
+
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        assert len(wizard.groups) == 1
+        assert wizard.groups[0]["id"] == "group_1"
+        assert wizard.groups[0]["name"] == "Replicate group"
+        assert wizard.groups[0]["kind"] == "replicate"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+        assert wizard.runs[0]["group_id"] == "group_1"
+
+    def test_wizard_add_group_rejects_duplicate_ids(self):
+        """Test that group IDs must be unique."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+
+        with pytest.raises(ValueError, match="already exists"):
+            wizard.add_group(id="group_1", name="Duplicate group", kind="replicate")
+
+    def test_wizard_reassign_run_moves_membership_between_groups(self):
+        """Test that reassigning a run updates both group memberships."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="run_1.raw")
+        wizard.add_group(id="group_1", name="Group 1", kind="replicate")
+        wizard.add_group(id="group_2", name="Group 2", kind="replicate")
+
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.assign_run(run_index=0, group_id="group_2")
+
+        assert wizard.runs[0]["group_id"] == "group_2"
+        assert wizard.groups[0]["members"] == []
+        assert wizard.groups[1]["members"] == [wizard.runs[0]["id"]]
+
+    def test_wizard_get_available_groups_returns_copy(self):
+        """Test retrieving available authoring groups without exposing internal state."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+
+        groups = wizard.get_available_groups()
+
+        assert len(groups) == 1
+        groups[0]["name"] = "mutated"
+        assert wizard.groups[0]["name"] == "Replicate group"
+
     def test_wizard_mixture_channels_reference_existing_samples(self):
         """Test that mixture channels can only reference existing samples."""
         from gui_wizard_state import WizardState
@@ -252,6 +315,8 @@ class TestWizardState:
         wizard = WizardState()
         wizard.add_run(file="test.raw", mixture=None, fraction=1, modification_profile="default")
         wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=0, group_id="group_1")
         wizard.add_modification(
             mode="fixed",
             kind="ontology",
@@ -275,6 +340,8 @@ class TestWizardState:
         assert manifest.experiment.acquisition_method == "DDA"
         assert manifest.runs[0].modification_profile == "default"
         assert manifest.modifications[0].profile == "default"
+        assert not hasattr(manifest.runs[0], "group_id")
+        assert "group_id" not in manifest.to_dict()["runs"][0]
 
     def test_wizard_validation_deferred_to_review(self):
         """Test that validation only happens in review step."""
@@ -792,6 +859,23 @@ class TestWizardStateRowMutations:
         assert len(wizard.runs) == 2
         assert wizard.runs[0]["file"] == "file1.raw"
         assert wizard.runs[1]["file"] == "file3.raw"
+
+    def test_wizard_remove_run_clears_group_membership(self):
+        """Test that removing a run also removes it from its group membership."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="file1.raw")
+        wizard.add_run(file="file2.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.assign_run(run_index=1, group_id="group_1")
+
+        run_id = wizard.runs[1]["id"]
+        wizard.remove_run(1)
+
+        assert len(wizard.runs) == 1
+        assert wizard.groups[0]["members"] == []
+        assert run_id not in wizard.groups[0]["members"]
 
     def test_wizard_update_run(self):
         """Test updating a run in wizard state."""

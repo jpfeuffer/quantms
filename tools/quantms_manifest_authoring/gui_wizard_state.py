@@ -58,12 +58,14 @@ class WizardState:
         self.runs: List[Dict[str, Any]] = []
         self.samples: List[Dict[str, Any]] = []
         self.mixtures: List[Dict[str, Any]] = []
+        self.groups: List[Dict[str, Any]] = []
         self.modifications: List[Dict[str, Any]] = []
         self.modification_profiles: List[str] = []
         self.active_modification_profile: Optional[str] = None
         self.experiment: Optional[Dict[str, Any]] = None
         self._experiment_settings_saved = False
         self._active_editor: Optional[Any] = None
+        self._run_counter = 0
 
     def get_current_step(self) -> WizardStep:
         """Get the current wizard step."""
@@ -185,6 +187,47 @@ class WizardState:
 
         return None
 
+    def _next_run_id(self) -> str:
+        """Generate a stable internal run identifier for wizard-only relationships."""
+        self._run_counter += 1
+        return f"run_{self._run_counter}"
+
+    def _get_group_index(self, group_id: str) -> int:
+        """Return the index of a group by id."""
+        for index, group in enumerate(self.groups):
+            if group["id"] == group_id:
+                return index
+        raise ValueError(f"Group '{group_id}' not found in groups")
+
+    def _remove_run_from_group_members(self, run_id: str, group_id: Optional[str]) -> None:
+        """Remove a run reference from a group's members list if present."""
+        if not group_id:
+            return
+
+        group_index = self._get_group_index(group_id)
+        members = self.groups[group_index].setdefault("members", [])
+        if run_id in members:
+            members.remove(run_id)
+
+    def _assign_run_group(self, run_index: int, group_id: Optional[str]) -> None:
+        """Keep run and group membership in sync for wizard-only authoring groups."""
+        run = self.runs[run_index]
+        run_id = run["id"]
+        previous_group_id = run.get("group_id")
+
+        if previous_group_id and previous_group_id != group_id:
+            self._remove_run_from_group_members(run_id, previous_group_id)
+
+        if group_id is None:
+            run.pop("group_id", None)
+            return
+
+        group_index = self._get_group_index(group_id)
+        members = self.groups[group_index].setdefault("members", [])
+        if run_id not in members:
+            members.append(run_id)
+        run["group_id"] = group_id
+
     def add_run(
         self,
         file: str,
@@ -193,6 +236,7 @@ class WizardState:
         fraction: Optional[int] = None,
         instrument: Optional[str] = None,
         modification_profile: Optional[str] = None,
+        group_id: Optional[str] = None,
     ) -> None:
         """
         Add a raw/mzML file run.
@@ -210,7 +254,10 @@ class WizardState:
         if fraction is None:
             fraction = self._infer_fraction_from_file_name(file)
 
+        run_id = self._next_run_id()
+
         run = {
+            "id": run_id,
             "file": file,
         }
         if sample is not None:
@@ -223,8 +270,51 @@ class WizardState:
             run["instrument"] = instrument
         if modification_profile is not None:
             run["modification_profile"] = modification_profile
+        if group_id is not None:
+            run["group_id"] = group_id
 
         self.runs.append(run)
+
+        if group_id is not None:
+            self._assign_run_group(len(self.runs) - 1, group_id)
+
+    def add_group(
+        self,
+        id: str,
+        name: str,
+        kind: Optional[str] = None,
+        group_type: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        """Add an authoring-level group for runs without changing manifest export."""
+        if not id:
+            raise ValueError("Group ID is required")
+        if not name:
+            raise ValueError("Group name is required")
+        if any(group["id"] == id for group in self.groups):
+            raise ValueError(f"Group '{id}' already exists")
+
+        group_kind = (kind or group_type or "").strip()
+        if not group_kind:
+            raise ValueError("Group kind or type is required")
+
+        group = {
+            "id": id,
+            "name": name,
+            "kind": group_kind,
+            "members": [],
+        }
+        if description:
+            group["description"] = description
+
+        self.groups.append(group)
+
+    def get_available_groups(self) -> List[Dict[str, Any]]:
+        """Get list of all authoring groups added so far."""
+        return [
+            {**group, "members": list(group.get("members", []))}
+            for group in self.groups
+        ]
 
     def add_modification(self, **kwargs) -> None:
         """Add a modification definition to the wizard state."""
@@ -366,6 +456,7 @@ class WizardState:
         mixture: Optional[str] = None,
         fraction: Optional[int] = None,
         instrument: Optional[str] = None,
+        group_id: Optional[str] = None,
     ) -> None:
         """
         Assign run metadata (sample, mixture, fraction, instrument) with validation.
@@ -398,6 +489,9 @@ class WizardState:
             if mixture not in mixture_ids:
                 raise ValueError(f"Mixture '{mixture}' not found in mixtures")
 
+        if group_id is not None:
+            self._get_group_index(group_id)
+
         # Update run with assignment
         run = self.runs[run_index]
         if sample is not None:
@@ -408,6 +502,8 @@ class WizardState:
             run["fraction"] = fraction
         if instrument is not None:
             run["instrument"] = instrument
+        if group_id is not None or "group_id" in run:
+            self._assign_run_group(run_index, group_id)
 
     def get_run_assignment(self, run_index: int) -> Dict[str, Any]:
         """
@@ -482,6 +578,10 @@ class WizardState:
         if run_index < 0 or run_index >= len(self.runs):
             raise IndexError(f"Run index {run_index} out of range")
 
+        if "group_id" in kwargs:
+            self.assign_run(run_index, group_id=kwargs["group_id"])
+            kwargs = {key: value for key, value in kwargs.items() if key != "group_id"}
+
         for key, value in kwargs.items():
             self.runs[run_index][key] = value
 
@@ -506,6 +606,12 @@ class WizardState:
         if field == "file":
             raise ValueError("Cannot remove required field 'file'")
 
+        if field == "group_id":
+            run = self.runs[run_index]
+            self._remove_run_from_group_members(run["id"], run.get("group_id"))
+            run.pop("group_id", None)
+            return
+
         if field in self.runs[run_index]:
             del self.runs[run_index][field]
 
@@ -521,6 +627,9 @@ class WizardState:
         """
         if run_index < 0 or run_index >= len(self.runs):
             raise IndexError(f"Run index {run_index} out of range")
+
+        run = self.runs[run_index]
+        self._remove_run_from_group_members(run["id"], run.get("group_id"))
         del self.runs[run_index]
 
     def update_sample(self, sample_index: int, **kwargs) -> None:
