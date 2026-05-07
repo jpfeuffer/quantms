@@ -23,7 +23,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from copy import deepcopy
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from typing import Any, Dict, List
 
 # Add parent directory to path
@@ -266,10 +266,10 @@ class TestJSpreadsheetBridge:
         assert wizard.runs[0]["group_assignment_cleared"] is True
 
     def test_groups_bridge_exposes_read_only_groups_table(self):
-        """Groups spreadsheet should render authoring groups from WizardState as read-only rows."""
+        """Groups spreadsheet should render editable authoring groups except for the identifier."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
@@ -277,60 +277,171 @@ class TestJSpreadsheetBridge:
 
         assert data["headers"] == ["id", "name", "kind", "members", "description"]
         assert data["data"][0][data["headers"].index("members")] == wizard.runs[0]["id"]
-        assert data["read_only_cells"] == [
-            {"row": 0, "col": 0},
-            {"row": 0, "col": 1},
-            {"row": 0, "col": 2},
-            {"row": 0, "col": 3},
-            {"row": 0, "col": 4},
+        assert data["column_config"]["id"]["read_only"] is True
+        assert "read_only" not in data["column_config"]["name"]
+        assert "read_only" not in data["column_config"]["kind"]
+        assert "read_only" not in data["column_config"]["members"]
+        assert "read_only" not in data["column_config"]["description"]
+        assert data["column_config"]["kind"]["type"] == "dropdown"
+        assert data["column_config"]["kind"]["source"] == [
+            {"id": "LFQ", "name": "LFQ"},
+            {"id": "TMT", "name": "TMT"},
+            {"id": "iTRAQ", "name": "iTRAQ"},
+            {"id": "SILAC", "name": "SILAC"},
         ]
+        assert data["read_only_cells"] == [{"row": 0, "col": 0}]
         assert bridge.get_row_count() == 1
 
-    def test_groups_bridge_sync_paths_do_not_mutate_wizard_groups(self):
-        """Groups sync APIs should be inert in the read-only Phase 2 surface."""
+    def test_groups_bridge_sync_paths_update_wizard_groups(self):
+        """Groups sync APIs should round-trip edits back into WizardState."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_run(file="/data/other.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
-        initial_groups = deepcopy(wizard.groups)
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
 
         rows = bridge.adapter.wizard_groups_to_spreadsheet()
         rows[0].name = "Edited name"
-        rows[0].members = "run_999"
+        rows[0].kind = "TMT"
+        rows[0].members = wizard.runs[1]["id"]
+        rows[0].description = "Edited description"
         bridge.adapter.sync_group_edits(rows)
-        assert wizard.groups == initial_groups
+
+        assert wizard.groups[0]["name"] == "Edited name"
+        assert wizard.groups[0]["kind"] == "TMT"
+        assert wizard.groups[0]["members"] == [wizard.runs[1]["id"]]
+        assert wizard.groups[0]["description"] == "Edited description"
+        assert "group_id" not in wizard.runs[0]
+        assert wizard.runs[1]["group_id"] == "group_1"
 
         spreadsheet_data = bridge.get_spreadsheet_data()
         mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
         mutated_snapshot[0][spreadsheet_data["headers"].index("name")] = "Edited name"
-        mutated_snapshot[0][spreadsheet_data["headers"].index("members")] = "run_999"
+        mutated_snapshot[0][spreadsheet_data["headers"].index("kind")] = "LFQ"
+        mutated_snapshot[0][spreadsheet_data["headers"].index("members")] = wizard.runs[0]["id"]
+        mutated_snapshot[0][spreadsheet_data["headers"].index("description")] = "Browser edit"
 
         bridge.sync_from_spreadsheet_data(mutated_snapshot)
 
-        assert wizard.groups == initial_groups
+        assert wizard.groups[0]["name"] == "Edited name"
+        assert wizard.groups[0]["kind"] == "LFQ"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+        assert wizard.groups[0]["description"] == "Browser edit"
+        assert wizard.runs[0]["group_id"] == "group_1"
+        assert "group_id" not in wizard.runs[1]
 
-    def test_groups_editor_flush_pending_edits_does_not_sync_groups(self):
-        """Groups editor flush should not attempt to round-trip read-only group data."""
+    def test_groups_editor_flush_pending_edits_round_trips_groups(self):
+        """Groups editor flush should round-trip editable group rows back to wizard state."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
-        initial_groups = deepcopy(wizard.groups)
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         editor = JSpreadsheetEditor(wizard, MagicMock(), bridge=bridge, worksheet_name="Groups")
         editor.container = SimpleNamespace(html_id="groups-container")
 
         with patch("jspreadsheet_editor.context") as mock_context:
-            mock_context.client.run_javascript = MagicMock(side_effect=AssertionError("run_javascript should not be called for groups flush"))
+            mock_context.client.run_javascript = AsyncMock(return_value=[
+                ["group_1", "Updated group", "SILAC", wizard.runs[0]["id"], "Updated via flush"],
+            ])
 
             result = asyncio.run(editor.flush_pending_edits())
 
         assert result == 0
-        assert wizard.groups == initial_groups
-        mock_context.client.run_javascript.assert_not_called()
+        assert wizard.groups[0]["name"] == "Updated group"
+        assert wizard.groups[0]["kind"] == "SILAC"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+        assert wizard.groups[0]["description"] == "Updated via flush"
+        mock_context.client.run_javascript.assert_called()
+
+    def test_groups_bridge_rejects_unknown_members_and_respects_kind_restrictions(self):
+        """Groups edits must reject unknown members and honor experiment-driven kind restrictions."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            quantification_method="TMT",
+            dissociation_method="HCD",
+        )
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["kind"]["source"] == [{"id": "TMT", "name": "TMT"}]
+
+        with pytest.raises(ValueError, match="Allowed options: TMT"):
+            bridge.handle_cell_edit(
+                row_index=0,
+                col_index=data["headers"].index("kind"),
+                new_value="LFQ",
+            )
+
+        with pytest.raises(ValueError, match="Run 'run_999' not found"):
+            bridge.handle_cell_edit(
+                row_index=0,
+                col_index=data["headers"].index("members"),
+                new_value="run_999",
+            )
+
+    def test_runs_group_id_edits_keep_groups_membership_view_in_sync(self):
+        """Changing a run's group_id should move membership between groups."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group 1", kind="LFQ")
+        wizard.add_group(id="group_2", name="LFQ group 2", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard)
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="group_1")
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="group_2")
+
+        assert wizard.groups[0]["members"] == []
+        assert wizard.groups[1]["members"] == [wizard.runs[0]["id"]]
+
+    def test_runs_full_sheet_sync_applies_group_id_edits(self):
+        """Full-sheet sync should keep run-side group_id edits working."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw", instrument="Orbitrap")
+        wizard.add_group(id="group_1", name="Group 1", kind="DDA")
+        wizard.add_group(id="group_2", name="Group 2", kind="DDA")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        bridge = JSpreadsheetBridge(wizard)
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
+        mutated_snapshot[0][spreadsheet_data["headers"].index("group_id")] = "group_2"
+
+        bridge.sync_from_spreadsheet_data(mutated_snapshot)
+
+        assert wizard.runs[0]["group_id"] == "group_2"
+        assert wizard.groups[0]["members"] == []
+        assert wizard.groups[1]["members"] == [wizard.runs[0]["id"]]
+        assert wizard.runs[0]["instrument"] == "Orbitrap"
+
+    def test_groups_full_sheet_sync_rejects_id_edits(self):
+        """Groups full-sheet sync should reject edits to the immutable group identifier."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw")
+        wizard.add_group(id="group_1", name="Group 1", kind="DDA")
+        wizard.assign_run(run_index=0, group_id="group_1")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
+        mutated_snapshot[0][spreadsheet_data["headers"].index("id")] = "group_edited"
+
+        with pytest.raises(ValueError, match="Group ID is read-only"):
+            bridge.sync_from_spreadsheet_data(mutated_snapshot)
+
+        assert wizard.groups[0]["id"] == "group_1"
+        assert wizard.runs[0]["group_id"] == "group_1"
 
     def test_bridge_edge_case_row_index_out_of_range(self):
         """

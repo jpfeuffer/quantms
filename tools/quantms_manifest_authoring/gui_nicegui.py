@@ -887,13 +887,21 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     )
 
             with ui.card().classes("w-full basis-0 grow"):
-                def suggest_groups_from_filenames() -> None:
+                async def suggest_groups_from_filenames() -> None:
+                    def safe_notify(message: str, **kwargs: Any) -> None:
+                        try:
+                            ui.notify(message, **kwargs)
+                        except Exception:
+                            pass
+
+                    if spreadsheet_editors:
+                        await SpreadsheetEditorFlushGroup(spreadsheet_editors).flush_pending_edits()
                     seeded_count = wizard.seed_runs_from_filenames(force=True)
                     if seeded_count:
-                        ui.notify(f"Suggested {seeded_count} run(s) into filename-based groups")
+                        safe_notify(f"Suggested {seeded_count} run(s) into filename-based groups")
                         refresh_ui()
                     else:
-                        ui.notify("No ungrouped files matched the filename grouping heuristic", type="info")
+                        safe_notify("No ungrouped files matched the filename grouping heuristic", type="info")
 
                 ui.button(
                     "Suggest groups from filenames",
@@ -910,7 +918,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     spreadsheet_editors.append(groups_editor)
 
                     ui.label(
-                        "• Groups are read-only in this phase\n"
+                        "• Group ID is read-only in this phase\n"
+                        "• Group name, kind, members, and description can be edited\n"
                         "• Group membership is shown in the Files table"
                     ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
                 else:

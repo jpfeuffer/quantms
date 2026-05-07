@@ -199,25 +199,25 @@ class GroupFieldInfo:
             "type": "str",
             "required": True,
             "description": "Group label",
-            "read_only": True,
+            "read_only": False,
         },
         "kind": {
             "type": "str",
             "required": True,
             "description": "Group kind",
-            "read_only": True,
+            "read_only": False,
         },
         "members": {
             "type": "str",
             "required": False,
             "description": "Run identifiers belonging to this group",
-            "read_only": True,
+            "read_only": False,
         },
         "description": {
             "type": "str",
             "required": False,
             "description": "Optional group description",
-            "read_only": True,
+            "read_only": False,
         },
     }
 
@@ -658,11 +658,14 @@ class SpreadsheetAdapter:
         for idx, row in enumerate(rows):
             # Get the updated fields from the spreadsheet row
             updated_fields = {}
+            group_id = row.group_id
 
             for field in RunFieldInfo.get_all_fields():
                 if field == "file":
                     # File is always required
                     updated_fields[field] = getattr(row, field)
+                elif field == "group_id":
+                    continue
                 else:
                     # For optional fields, only include if not None/empty
                     value = getattr(row, field)
@@ -672,9 +675,17 @@ class SpreadsheetAdapter:
             # Update the run in wizard (only with fields that have values)
             self.wizard.update_run(idx, **updated_fields)
 
+            if group_id is not None:
+                available_group_ids = {group["id"] for group in self.wizard.groups}
+                if group_id not in available_group_ids:
+                    raise ValueError(f"Group '{group_id}' not found in groups")
+                self.wizard.assign_run(idx, group_id=group_id, create_missing_group=False)
+            elif "group_id" in self.wizard.runs[idx]:
+                self.wizard.clear_run_field(idx, "group_id")
+
             # Remove fields that were explicitly cleared (None or empty string for optional fields)
             for field in RunFieldInfo.get_all_fields():
-                if field != "file":  # Never remove the required file field
+                if field not in {"file", "group_id"}:  # Never remove the required file field
                     value = getattr(row, field)
                     # If the field is None or empty string, remove it from wizard run
                     if value is None or (isinstance(value, str) and value.strip() == ""):
@@ -708,9 +719,36 @@ class SpreadsheetAdapter:
     def sync_group_edits(self, rows: List[GroupSpreadsheetRow]) -> None:
         """Synchronize group rows back to WizardState.
 
-        Groups are read-only in the Phase 2 authoring surface, so syncing is a no-op.
+        Groups are editable in the Phase 2 authoring surface, so syncing
+        validates and round-trips the worksheet rows back into WizardState.
         """
-        return
+        if len(rows) != len(self.wizard.groups):
+            raise ValueError(
+                f"row count mismatch: spreadsheet has {len(rows)} rows but wizard has {len(self.wizard.groups)} groups"
+            )
+
+        for row in rows:
+            row.validate()
+
+        for row in rows:
+            current_group = next(group for group in self.wizard.groups if group["id"] == row.id)
+            update_kwargs = {
+                "name": row.name,
+                "members": row.members,
+                "description": row.description,
+            }
+
+            if not (
+                isinstance(current_group.get("kind"), str)
+                and isinstance(row.kind, str)
+                and current_group["kind"].strip().casefold() == row.kind.strip().casefold()
+            ):
+                update_kwargs["kind"] = row.kind
+
+            self.wizard.update_group(
+                row.id,
+                **update_kwargs,
+            )
 
     def get_row_by_index(self, index: int) -> Optional[SpreadsheetRow]:
         """

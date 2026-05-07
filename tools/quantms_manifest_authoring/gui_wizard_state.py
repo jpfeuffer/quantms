@@ -26,6 +26,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from manifest_core import ManifestState, Run, Sample, Mixture, Experiment
 
 
+GROUP_KIND_OPTIONS = ["LFQ", "TMT", "iTRAQ", "SILAC"]
+_UNSET = object()
+
+
 class WizardStep(Enum):
     """Enumeration of wizard steps in order."""
     RUNS = auto()
@@ -236,6 +240,111 @@ class WizardState:
             description=description,
         )
 
+    def get_allowed_group_kinds(self) -> List[str]:
+        """Return the allowed group kind options for the current experiment state."""
+        quantification_method = self.experiment.get("quantification_method") if self.experiment else None
+        if quantification_method:
+            normalized_method = str(quantification_method).strip()
+            for allowed_kind in GROUP_KIND_OPTIONS:
+                if allowed_kind.casefold() == normalized_method.casefold():
+                    return [allowed_kind]
+        return GROUP_KIND_OPTIONS.copy()
+
+    def _normalize_group_kind(self, kind: Any) -> Optional[str]:
+        """Normalize a canonical group kind value to its expected casing."""
+        if kind is None:
+            return None
+
+        normalized_kind = str(kind).strip()
+        if not normalized_kind:
+            return None
+
+        for allowed_kind in GROUP_KIND_OPTIONS:
+            if allowed_kind.casefold() == normalized_kind.casefold():
+                return allowed_kind
+
+        return None
+
+    def _get_run_index_by_id(self, run_id: str) -> int:
+        """Return the index of a run by its internal identifier."""
+        for index, run in enumerate(self.runs):
+            if run.get("id") == run_id:
+                return index
+        raise ValueError(f"Run '{run_id}' not found in runs")
+
+    def update_group(
+        self,
+        group_id: str,
+        *,
+        name: Any = _UNSET,
+        kind: Any = _UNSET,
+        members: Any = _UNSET,
+        description: Any = _UNSET,
+    ) -> None:
+        """Update an existing authoring group and keep run membership in sync."""
+        group_index = self._get_group_index(group_id)
+        group = self.groups[group_index]
+
+        if name is not _UNSET:
+            normalized_name = str(name).strip() if name is not None else ""
+            if not normalized_name:
+                raise ValueError("Group name is required")
+            group["name"] = normalized_name
+
+        if kind is not _UNSET:
+            normalized_kind = str(kind).strip() if kind is not None else ""
+            if not normalized_kind:
+                raise ValueError("Group kind is required")
+
+            allowed_kinds = self.get_allowed_group_kinds()
+            canonical_kind = next(
+                (allowed for allowed in allowed_kinds if allowed.casefold() == normalized_kind.casefold()),
+                None,
+            )
+            if canonical_kind is None:
+                raise ValueError(f"Group kind '{kind}' is not allowed. Allowed options: {', '.join(allowed_kinds)}")
+            group["kind"] = canonical_kind
+
+        if description is not _UNSET:
+            normalized_description = str(description).strip() if description is not None else ""
+            if normalized_description:
+                group["description"] = normalized_description
+            else:
+                group.pop("description", None)
+
+        if members is not _UNSET:
+            if members is None:
+                member_ids: List[str] = []
+            elif isinstance(members, str):
+                member_ids = [member.strip() for member in members.split(",") if member.strip()]
+            else:
+                member_ids = []
+                for member in members:
+                    member_text = str(member).strip()
+                    if member_text:
+                        member_ids.append(member_text)
+
+            deduped_member_ids: List[str] = []
+            for member_id in member_ids:
+                if member_id not in deduped_member_ids:
+                    deduped_member_ids.append(member_id)
+
+            for member_id in deduped_member_ids:
+                self._get_run_index_by_id(member_id)
+
+            current_members = list(group.get("members", []))
+            for member_id in deduped_member_ids:
+                run_index = self._get_run_index_by_id(member_id)
+                self._assign_run_group(run_index, group_id)
+
+            for member_id in current_members:
+                if member_id not in deduped_member_ids:
+                    run_index = self._get_run_index_by_id(member_id)
+                    if self.runs[run_index].get("group_id") == group_id:
+                        self.clear_run_field(run_index, "group_id")
+
+            group["members"] = deduped_member_ids
+
     def seed_runs_from_filenames(self, force: bool = False) -> int:
         """Assign ungrouped runs to filename-derived groups when a fraction marker is present."""
         seeded_count = 0
@@ -255,7 +364,7 @@ class WizardState:
 
             self._ensure_group_exists(
                 group_id,
-                kind="auto",
+                kind=self.get_allowed_group_kinds()[0],
                 name=group_id,
                 description="Auto-created from matching filename fraction markers",
             )
@@ -355,7 +464,7 @@ class WizardState:
         self.runs.append(run)
 
         if group_id is not None:
-            self._ensure_group_exists(group_id, kind="manual")
+            self._ensure_group_exists(group_id, kind=self.get_allowed_group_kinds()[0])
             self._assign_run_group(len(self.runs) - 1, group_id)
 
     def add_group(
@@ -606,6 +715,7 @@ class WizardState:
         fraction: Optional[int] = None,
         instrument: Optional[str] = None,
         group_id: Optional[str] = None,
+        create_missing_group: bool = True,
     ) -> None:
         """
         Assign run metadata (sample, mixture, fraction, instrument) with validation.
@@ -638,8 +748,8 @@ class WizardState:
             if mixture not in mixture_ids:
                 raise ValueError(f"Mixture '{mixture}' not found in mixtures")
 
-        if group_id is not None:
-            self._ensure_group_exists(group_id, kind="manual")
+        if group_id is not None and create_missing_group:
+            self._ensure_group_exists(group_id, kind=self.get_allowed_group_kinds()[0])
 
         # Update run with assignment
         run = self.runs[run_index]

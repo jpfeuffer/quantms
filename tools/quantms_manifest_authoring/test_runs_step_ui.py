@@ -427,6 +427,52 @@ class TestRunsStepCallbacks:
         assert sorted(wizard.groups[0]["members"]) == ["run_1", "run_2"]
         assert refresh_calls
 
+    def test_suggest_groups_from_filenames_flushes_pending_file_edits_before_regrouping(self):
+        """Regrouping should flush pending Files edits before seeding filename-based groups."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample_fraction1.raw")
+        wizard.add_run(file="/data/sample_fraction2.raw")
+
+        events = []
+
+        async def flush_pending_edits():
+            events.append("flush")
+            wizard.runs[0]["instrument"] = "Orbitrap"
+            return 0
+
+        refresh_ui_calls = []
+
+        def refresh_ui():
+            events.append("refresh")
+            refresh_ui_calls.append(True)
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=refresh_ui)
+
+        assert RecordingSpreadsheetEditor.created
+        RecordingSpreadsheetEditor.created[0].flush_pending_edits = flush_pending_edits
+
+        regroup_button = next(
+            button for button in mock_ui_ctx.buttons if button.text == "Suggest groups from filenames"
+        )
+
+        regroup_button.trigger_click()
+
+        assert events == ["flush", "refresh"]
+        assert wizard.runs[0]["instrument"] == "Orbitrap"
+        assert wizard.groups[0]["id"] == "sample"
+        assert sorted(wizard.groups[0]["members"]) == ["run_1", "run_2"]
+        assert refresh_ui_calls
+
     def test_file_picker_button_callback_adds_selected_files_and_refreshes(self):
         """
         AC1: Test that the 'Choose Local Files' button callback (pick_local_files)

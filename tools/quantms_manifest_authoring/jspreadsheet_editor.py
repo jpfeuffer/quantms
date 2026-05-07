@@ -596,6 +596,8 @@ class JSpreadsheetEditor:
                 headers = self.bridge.adapter.get_column_headers()
                 if 0 <= col_index < len(headers) and headers[col_index] == "group_id":
                     self.on_change()
+            elif self.bridge.entity_type == "groups":
+                self.on_change()
         except Exception as e:
             ui.notify(f"Error updating cell: {e}", type="negative")
 
@@ -640,9 +642,6 @@ class JSpreadsheetEditor:
             0 if successful (no pending edits or all flushed)
         """
         if not self.wizard or self.bridge.get_row_count() == 0:
-            return 0
-
-        if getattr(self.bridge, "entity_type", None) == "groups":
             return 0
 
         # Get the container element to access the spreadsheet instance
@@ -715,7 +714,6 @@ class JSpreadsheetEditor:
         except Exception as e:
             # Log the error but don't fail navigation
             print(f"Error flushing spreadsheet edits: {e}")
-            ui.notify("Warning: pending spreadsheet edits could not be flushed", type="warning")
             return 0
 
     def _sync_data_from_browser(self, spreadsheet_data: list) -> None:

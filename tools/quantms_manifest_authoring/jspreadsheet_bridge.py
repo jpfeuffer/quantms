@@ -127,7 +127,8 @@ class JSpreadsheetBridge:
             spreadsheet_data["read_only_cells"] = [
                 {"row": row_index, "col": col_index}
                 for row_index, _ in enumerate(rows)
-                for col_index, _ in enumerate(headers)
+                for col_index, field_name in enumerate(headers)
+                if field_name == "id"
             ]
             spreadsheet_data["allow_delete_row"] = False
 
@@ -191,6 +192,10 @@ class JSpreadsheetBridge:
                 mixture_options = [{"id": mixture["id"], "name": mixture["id"]} for mixture in self.wizard.mixtures]
                 sources["mixture"] = mixture_options
             return sources
+        elif self.entity_type == "groups":
+            return {
+                "kind": [{"id": kind, "name": kind} for kind in self.wizard.get_allowed_group_kinds()],
+            }
         elif self.entity_type == "modifications":
             return {
                 "mode": [
@@ -224,9 +229,6 @@ class JSpreadsheetBridge:
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
         """Synchronize a full worksheet snapshot back into wizard state."""
         if not isinstance(spreadsheet_data, list):
-            return
-
-        if self.entity_type == "groups":
             return
 
         if self.entity_type == "runs":
@@ -327,6 +329,24 @@ class JSpreadsheetBridge:
             return
 
         if self.entity_type == "groups":
+            rows = self.adapter.wizard_groups_to_spreadsheet()
+            headers = self.adapter.get_column_headers_groups()
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    value = row_data[col_index]
+                    if field_name == "id":
+                        normalized_value = None if value == "" else value
+                        if normalized_value != row.id:
+                            raise ValueError("Group ID is read-only in full-sheet sync")
+                        continue
+                    if field_name in {"members", "description"} and value == "":
+                        value = None if field_name == "description" else ""
+                    row.update(**{field_name: value})
+                row.validate()
+            self.adapter.sync_group_edits(rows)
             return
 
         raise ValueError(f"Unknown entity type: {self.entity_type}")
@@ -355,7 +375,7 @@ class JSpreadsheetBridge:
         elif self.entity_type == "modifications":
             self._handle_cell_edit_modifications(row_index, col_index, new_value)
         elif self.entity_type == "groups":
-            return
+            self._handle_cell_edit_groups(row_index, col_index, new_value)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -554,6 +574,32 @@ class JSpreadsheetBridge:
         current_rows[row_index] = edited_row
         self.adapter.sync_modification_edits(current_rows)
 
+    def _handle_cell_edit_groups(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for editable group rows."""
+        headers = self.adapter.get_column_headers_groups()
+        field_name = headers[col_index]
+
+        if field_name == "id":
+            raise ValueError("Group ID is read-only")
+
+        current_rows = self.adapter.wizard_groups_to_spreadsheet()
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        if field_name == "kind":
+            self._validate_dropdown_value(field_name, new_value)
+        elif field_name == "members" and new_value is None:
+            new_value = ""
+
+        edited_row.update(**{field_name: new_value})
+        edited_row.validate()
+
+        current_rows[row_index] = edited_row
+        self.adapter.sync_group_edits(current_rows)
+
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
         Build a cache of dropdown constraints for validation.
@@ -578,6 +624,8 @@ class JSpreadsheetBridge:
         if self.entity_type == "modifications":
             constraints["mode"] = {"fixed", "variable"}
             constraints["kind"] = {"ontology", "custom"}
+        elif self.entity_type == "groups":
+            constraints["kind"] = set(self.wizard.get_allowed_group_kinds())
 
         return constraints
 

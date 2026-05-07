@@ -139,7 +139,7 @@ class TestSpreadsheetAdapterIntegration:
         """
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         adapter = SpreadsheetAdapter(wizard)
@@ -154,8 +154,8 @@ class TestSpreadsheetAdapterIntegration:
         group_rows = adapter.wizard_groups_to_spreadsheet()
         assert len(group_rows) == 1
         assert group_rows[0].id == "group_1"
-        assert group_rows[0].name == "Replicate group"
-        assert group_rows[0].kind == "replicate"
+        assert group_rows[0].name == "LFQ group"
+        assert group_rows[0].kind == "LFQ"
         assert group_rows[0].members == wizard.runs[0]["id"]
 
     def test_spreadsheet_row_validate_requires_file(self):
