@@ -80,6 +80,8 @@ class ColumnConfigBuilder:
                     # Store original type from metadata
                     col_config["type"] = field_meta.get("type", "str")
                     col_config["required"] = field_meta.get("required", False)
+                    if field_meta.get("new_options"):
+                        col_config["new_options"] = True
                     # Include read_only marker if present
                     if field_meta.get("read_only"):
                         col_config["read_only"] = True
@@ -90,10 +92,12 @@ class ColumnConfigBuilder:
             # Prefer explicit dropdown sources supplied by the caller.
             if dropdown_sources and header in dropdown_sources:
                 options = dropdown_sources[header]
-                if options:
+                if options or col_config.get("new_options"):
                     col_config["type"] = "dropdown"
                     col_config["source"] = self._convert_options_to_jspreadsheet_format(options)
                     col_config["filter_mode"] = self._filter_modes.get(header, "prefix")
+                    if col_config.get("new_options"):
+                        col_config["new_options"] = True
 
             # Check if this field should be a dropdown
             elif header in self.DROPDOWN_FIELD_MAPPING:
@@ -106,6 +110,8 @@ class ColumnConfigBuilder:
                     # Convert options to jspreadsheet-ce format (id/name)
                     col_config["source"] = self._convert_options_to_jspreadsheet_format(options)
                     col_config["filter_mode"] = self._filter_modes.get(header, "prefix")
+                    if col_config.get("new_options"):
+                        col_config["new_options"] = True
 
             config[header] = col_config
 

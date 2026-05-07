@@ -169,11 +169,50 @@ class TestJSpreadsheetBridge:
         assert data["data"][0][data["headers"].index("group_id")] is None
         assert data["column_config"]["group_id"]["type"] == "dropdown"
         assert data["column_config"]["group_id"]["source"] == [{"id": "group_1", "name": "group_1"}]
+        assert data["column_config"]["group_id"]["new_options"] is True
 
         bridge.handle_cell_edit(row_index=0, col_index=data["headers"].index("group_id"), new_value="group_1")
 
         assert wizard.runs[0]["group_id"] == "group_1"
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+
+    def test_bridge_creates_missing_group_when_group_id_is_edited(self):
+        """Runs spreadsheet edits should create a group when the user types a new group_id."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+
+        bridge = JSpreadsheetBridge(wizard)
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="new_group")
+
+        assert wizard.runs[0]["group_id"] == "new_group"
+        assert wizard.groups[0]["id"] == "new_group"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+
+    def test_bridge_group_dropdown_allows_free_text_creation_metadata(self):
+        """Runs spreadsheet should advertise that group_id supports creating new values."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+
+        bridge = JSpreadsheetBridge(wizard)
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["group_id"]["type"] == "dropdown"
+        assert data["column_config"]["group_id"]["new_options"] is True
+
+    def test_bridge_group_dropdown_new_options_when_no_groups_exist(self):
+        """The first group should still be creatable from a dropdown-style group_id column."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+
+        bridge = JSpreadsheetBridge(wizard)
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["group_id"]["type"] == "dropdown"
+        assert data["column_config"]["group_id"]["source"] == []
+        assert data["column_config"]["group_id"]["new_options"] is True
 
     def test_bridge_clear_optional_field_with_empty_string(self):
         """
@@ -189,6 +228,36 @@ class TestJSpreadsheetBridge:
 
         # Verify field was removed (not in the dict)
         assert "instrument" not in wizard.runs[0] or wizard.runs[0]["instrument"] is None
+
+    def test_bridge_cleared_group_id_blocks_future_heuristic_reseed(self):
+        """Clearing group_id through the bridge should suppress future implicit reseeding for that run."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample_fraction1.raw")
+
+        bridge = JSpreadsheetBridge(wizard)
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="")
+        wizard.add_run(file="/data/sample_fraction2.raw")
+
+        assert "group_id" not in wizard.runs[0]
+        assert wizard.runs[0]["group_assignment_cleared"] is True
+        assert wizard.runs[1]["group_id"] == "sample"
+        assert wizard.groups[0]["members"] == [wizard.runs[1]["id"]]
+
+    def test_bridge_explicit_empty_group_id_marks_never_grouped_run_as_cleared(self):
+        """Explicitly clearing an empty group cell should still suppress future heuristic grouping for that run."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw")
+
+        bridge = JSpreadsheetBridge(wizard)
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="")
+        wizard.add_run(file="/data/sample_fraction2.raw")
+
+        assert "group_id" not in wizard.runs[0]
+        assert wizard.runs[0]["group_assignment_cleared"] is True
 
     def test_groups_bridge_exposes_read_only_groups_table(self):
         """Groups spreadsheet should render authoring groups from WizardState as read-only rows."""

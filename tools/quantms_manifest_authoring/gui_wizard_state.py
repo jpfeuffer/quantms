@@ -189,6 +189,78 @@ class WizardState:
 
         return None
 
+    @staticmethod
+    def _infer_group_id_from_file_name(file: str) -> Optional[str]:
+        """Infer a group seed from the basename after removing supported fraction markers."""
+        file_name = re.split(r"[\\/]", str(file or ""))[-1]
+        file_stem = Path(file_name).stem
+
+        normalized_stem = file_stem
+        fraction_marker_found = False
+        for pattern in (
+            r"(?i)fraction(\d+)",
+            r"(?i)frac(\d+)",
+            r"(?i)(?:^|[^A-Za-z])f(\d+)",
+        ):
+            updated_stem, replacements = re.subn(pattern, "", normalized_stem)
+            if replacements:
+                fraction_marker_found = True
+                normalized_stem = updated_stem
+
+        if not fraction_marker_found:
+            return None
+
+        normalized_stem = re.sub(r"[\s._-]+", " ", normalized_stem).strip()
+        normalized_stem = re.sub(r"\s+", " ", normalized_stem)
+        return normalized_stem or None
+
+    def _ensure_group_exists(
+        self,
+        group_id: str,
+        *,
+        kind: str = "manual",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        """Create a group record if it does not already exist."""
+        if not group_id:
+            return
+
+        if any(group["id"] == group_id for group in self.groups):
+            return
+
+        self.add_group(
+            id=group_id,
+            name=name or group_id,
+            kind=kind,
+            description=description,
+        )
+
+    def seed_runs_from_filenames(self, force: bool = False) -> int:
+        """Assign ungrouped runs to filename-derived groups when a fraction marker is present."""
+        seeded_count = 0
+        for run_index, run in enumerate(self.runs):
+            if run.get("group_id"):
+                continue
+            if run.get("group_assignment_cleared") and not force:
+                continue
+
+            group_id = self._infer_group_id_from_file_name(run.get("file"))
+            if not group_id:
+                continue
+
+            self._ensure_group_exists(
+                group_id,
+                kind="auto",
+                name=group_id,
+                description="Auto-created from matching filename fraction markers",
+            )
+            self._assign_run_group(run_index, group_id)
+            run.pop("group_assignment_cleared", None)
+            seeded_count += 1
+
+        return seeded_count
+
     def _next_run_id(self) -> str:
         """Generate a stable internal run identifier for wizard-only relationships."""
         self._run_counter += 1
@@ -229,6 +301,7 @@ class WizardState:
         if run_id not in members:
             members.append(run_id)
         run["group_id"] = group_id
+        run.pop("group_assignment_cleared", None)
 
     def add_run(
         self,
@@ -278,7 +351,10 @@ class WizardState:
         self.runs.append(run)
 
         if group_id is not None:
+            self._ensure_group_exists(group_id, kind="manual")
             self._assign_run_group(len(self.runs) - 1, group_id)
+        else:
+            self.seed_runs_from_filenames(force=False)
 
     def add_group(
         self,
@@ -561,7 +637,7 @@ class WizardState:
                 raise ValueError(f"Mixture '{mixture}' not found in mixtures")
 
         if group_id is not None:
-            self._get_group_index(group_id)
+            self._ensure_group_exists(group_id, kind="manual")
 
         # Update run with assignment
         run = self.runs[run_index]
@@ -681,6 +757,7 @@ class WizardState:
             run = self.runs[run_index]
             self._remove_run_from_group_members(run["id"], run.get("group_id"))
             run.pop("group_id", None)
+            run["group_assignment_cleared"] = True
             return
 
         if field in self.runs[run_index]:

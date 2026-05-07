@@ -338,6 +338,27 @@ class MockUIContext:
 class TestRunsStepCallbacks:
     """Tests that invoke real callback code in create_runs_step."""
 
+    def test_runs_step_explains_filename_grouping_and_exposes_regroup_action(self):
+        """The Runs step should make filename-based grouping visible to the user."""
+        wizard = WizardState()
+        refresh_calls = []
+
+        def refresh_ui():
+            refresh_calls.append(True)
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda: None):
+                create_runs_step(wizard, refresh_ui=refresh_ui)
+
+        label_text = " ".join(label.text for label in mock_ui_ctx.labels).lower()
+        assert "fraction" in label_text
+        assert "basename" in label_text or "fraction markers" in label_text or "regroup" in label_text
+
+        button_texts = [button.text for button in mock_ui_ctx.buttons]
+        assert any("group" in str(text).lower() for text in button_texts)
+
     def test_file_picker_button_callback_adds_selected_files_and_refreshes(self):
         """
         AC1: Test that the 'Choose Local Files' button callback (pick_local_files)

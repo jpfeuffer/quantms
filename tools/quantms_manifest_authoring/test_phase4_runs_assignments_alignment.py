@@ -34,15 +34,15 @@ class TestRunsStepOwnership:
     """Tests for Runs step ownership - file/fraction/instrument only."""
 
     def test_runs_spreadsheet_schema_excludes_sample_mixture(self):
-        """Verify Runs spreadsheet schema only has file, fraction, instrument."""
+        """Verify Runs spreadsheet schema keeps run fields plus editable group_id."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw", fraction=1, instrument="Orbitrap")
 
         adapter = SpreadsheetAdapter(wizard)
         headers = adapter.get_column_headers()
 
-        # Should only have these fields
-        expected_fields = {"file", "fraction", "instrument"}
+        # Runs owns file/fraction/instrument and the editable group_id field.
+        expected_fields = {"file", "fraction", "instrument", "group_id"}
         actual_fields = set(headers)
 
         assert actual_fields == expected_fields, (
@@ -51,9 +51,9 @@ class TestRunsStepOwnership:
         )
 
     def test_run_field_info_defines_only_correct_fields(self):
-        """Verify RunFieldInfo metadata is limited to file, fraction, instrument."""
+        """Verify RunFieldInfo metadata includes the editable group_id field."""
         all_fields = RunFieldInfo.get_all_fields()
-        expected = ["file", "fraction", "instrument"]
+        expected = ["file", "fraction", "instrument", "group_id"]
 
         assert set(all_fields) == set(expected), (
             f"RunFieldInfo should only define {expected}, but has {all_fields}"
@@ -81,8 +81,8 @@ class TestRunsStepOwnership:
         bridge = JSpreadsheetBridge(wizard)
         data = bridge.get_spreadsheet_data()
 
-        # Should have exactly 3 columns
-        assert set(data["headers"]) == {"file", "fraction", "instrument"}
+        # Should have exactly 4 columns, including editable group_id.
+        assert set(data["headers"]) == {"file", "fraction", "instrument", "group_id"}
 
         # No sample or mixture columns
         assert "sample" not in data["headers"]

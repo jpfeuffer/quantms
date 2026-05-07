@@ -428,6 +428,9 @@ class JSpreadsheetEditor:
                             columns[index].source = config.source;
                             columns[index].autocomplete = true;
                             columns[index].filterMode = config.filter_mode || 'prefix';
+                            if (config.new_options) {{
+                                columns[index].newOptions = true;
+                            }}
                         }}
                         // Merge read_only flag into readOnly property for jspreadsheet
                         if (config.read_only) {{
@@ -589,6 +592,10 @@ class JSpreadsheetEditor:
         """Handle a cell edit from the spreadsheet."""
         try:
             self.bridge.handle_cell_edit(row_index, col_index, new_value)
+            if self.bridge.entity_type == "runs":
+                headers = self.bridge.adapter.get_column_headers()
+                if 0 <= col_index < len(headers) and headers[col_index] == "group_id":
+                    self.on_change()
         except Exception as e:
             ui.notify(f"Error updating cell: {e}", type="negative")
 

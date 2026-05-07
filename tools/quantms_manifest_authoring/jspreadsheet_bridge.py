@@ -181,7 +181,7 @@ class JSpreadsheetBridge:
             return {header: sample_options for header in headers if header != "id"}
         elif self.entity_type == "runs":
             group_options = [{"id": group["id"], "name": group["id"]} for group in self.wizard.groups]
-            return {"group_id": group_options} if group_options else {}
+            return {"group_id": group_options}
         elif self.entity_type == "assignments":
             sources = {}
             if "sample" in headers:
@@ -385,6 +385,8 @@ class JSpreadsheetBridge:
             raise ValueError("File path is required")
         elif field_name == "group_id" and (new_value is None or new_value == ""):
             new_value = None
+            if "group_id" not in self.wizard.runs[row_index]:
+                self.wizard.clear_run_field(row_index, "group_id")
 
         # Validate dropdown constraints for allowed fields
         if field_name in self._dropdown_constraint_cache:

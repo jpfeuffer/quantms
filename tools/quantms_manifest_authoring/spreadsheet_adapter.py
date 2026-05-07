@@ -40,6 +40,7 @@ class RunFieldInfo:
             "type": "str",
             "required": False,
             "description": "Authoring group identifier",
+            "new_options": True,
         },
     }
 
@@ -678,8 +679,9 @@ class SpreadsheetAdapter:
                     value = getattr(row, field)
                     # If the field is None or empty string, remove it from wizard run
                     if value is None or (isinstance(value, str) and value.strip() == ""):
-                        # Use public API to remove field
-                        self.wizard.clear_run_field(idx, field)
+                        if field in self.wizard.runs[idx]:
+                            # Use public API to remove fields that were previously present.
+                            self.wizard.clear_run_field(idx, field)
 
     def sync_modification_edits(self, rows: List[ModificationSpreadsheetRow]) -> None:
         """
