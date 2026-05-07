@@ -424,6 +424,31 @@ class TestJSpreadsheetEditorNavigationPersistence:
             "jspreadsheet closeEditor path is unavailable"
         )
 
+    def test_flush_script_commits_selected_cell_if_focus_moved_to_navigation(self):
+        """
+        Regression: page navigation can move focus to the Next button before
+        the flush runs, so the script must still close the selected worksheet
+        cell instead of depending only on document.activeElement.
+        """
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample1.raw", fraction=1)
+
+        editor = JSpreadsheetEditor(wizard, MagicMock())
+
+        import inspect
+
+        source = inspect.getsource(editor.flush_pending_edits)
+
+        assert "selectedCell" in source, (
+            "Flush method must fall back to worksheet.selectedCell when "
+            "navigation changes focus before the pending cell edit is saved"
+        )
+
+        assert "records" in source, (
+            "Flush method must resolve the selected worksheet cell element "
+            "so closeEditor can still commit the pending value"
+        )
+
     def test_flush_pending_edits_is_awaitable(self):
         """
         Contract test: flush_pending_edits MUST be async/awaitable since it

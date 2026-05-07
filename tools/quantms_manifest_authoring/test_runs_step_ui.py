@@ -791,6 +791,130 @@ class TestRunsStepCallbacks:
         assert worksheet_names.count("Groups") == 1
         assert worksheet_names.count("Modifications") == 1
 
+    def test_group_detail_surface_branches_by_group_kind(self):
+        """The dedicated group detail surface should branch into multiplexed and LFQ flows."""
+        from gui_nicegui import create_group_detail_step
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(
+            id="tmt_group",
+            name="TMT group",
+            kind="TMT",
+            labeling_strategy="TMT6",
+        )
+        wizard.add_group(
+            id="lfq_group",
+            name="LFQ group",
+            kind="LFQ",
+        )
+        wizard.add_run(file="/data/sample1.raw", group_id="tmt_group")
+        wizard.add_run(file="/data/sample2.raw", group_id="lfq_group")
+        wizard.assign_run(run_index=0, group_id="tmt_group")
+        wizard.assign_run(run_index=1, group_id="lfq_group")
+
+        mock_ui_ctx = MockUIContext()
+        wizard.set_active_group_id("tmt_group")
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
+        assert any("Group Details" in text for text in label_texts)
+        assert any("Channel" in text for text in label_texts)
+        assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
+        assert len(mock_ui_ctx.selects) >= 1
+
+        mock_ui_ctx = MockUIContext()
+        wizard.set_active_group_id("lfq_group")
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
+        assert any("Sample target" in text for text in label_texts)
+        assert any("member" in text.lower() for text in label_texts)
+        assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
+        assert len(mock_ui_ctx.selects) == 1
+
+    def test_lfq_detail_select_callback_updates_group_sample_target(self):
+        """Changing the LFQ sample target should persist through the real select callback."""
+        from gui_nicegui import create_group_detail_step
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.set_active_group_id("lfq_group")
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        sample_target_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Sample target")
+
+        sample_target_select.trigger_value_change("sample_2")
+
+        assert wizard.get_group_sample_target("lfq_group") == "sample_2"
+
+    def test_multiplex_detail_select_callback_updates_channel_assignments(self):
+        """Changing a multiplex channel select should persist through the real callback."""
+        from gui_nicegui import create_group_detail_step
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(id="tmt_group", name="TMT group", kind="TMT", labeling_strategy="TMT6")
+        wizard.set_active_group_id("tmt_group")
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        channel_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Sample for TMT126")
+
+        channel_select.trigger_value_change("sample_2")
+
+        assert wizard.get_group_channel_assignments("tmt_group").get("TMT126") == "sample_2"
+
+    def test_back_to_groups_button_clears_active_group_and_returns_to_runs_table(self):
+        """The Back to Groups callback should close detail view and restore the Runs table state."""
+        from gui_nicegui import create_group_detail_step, create_runs_step
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_sample(id="sample_1")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.set_active_group_id("lfq_group")
+
+        refresh_calls = []
+
+        def refresh_ui():
+            refresh_calls.append(True)
+
+        detail_ui = MockUIContext()
+        with patch("gui_nicegui.ui", detail_ui):
+            create_group_detail_step(wizard, refresh_ui=refresh_ui)
+
+        back_button = next(btn for btn in detail_ui.buttons if btn.text == "Back to Groups")
+        back_button.trigger_click()
+
+        assert wizard.get_active_group_id() is None
+        assert refresh_calls
+
+        runs_ui = MockUIContext()
+        with patch("gui_nicegui.ui", runs_ui), patch("jspreadsheet_editor.context") as mock_context_editor:
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        assert any("Groups Table" in lbl.text for lbl in runs_ui.labels)
+        assert not any("Group Details" in lbl.text for lbl in runs_ui.labels)
+        assert wizard.get_active_group_id() is None
+
     def test_manual_path_entry_clears_input_after_add(self):
         """
         Test that after clicking Add, the manual path input is cleared.

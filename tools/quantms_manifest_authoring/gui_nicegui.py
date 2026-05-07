@@ -798,6 +798,114 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
     return active_editor
 
 
+def create_group_detail_step(wizard: WizardState, refresh_ui: Callable) -> None:
+    """Create the active group detail page for multiplexed and LFQ groups."""
+    active_group = wizard.get_active_group()
+
+    with ui.card().classes("w-full mt-6"):
+        if not active_group:
+            ui.label("No group is open.").classes("text-sm text-gray-600")
+            ui.button("Back to Groups", on_click=lambda: (wizard.clear_active_group(), refresh_ui())).props(
+                "flat no-caps"
+            )
+            return
+
+        group_id: str = str(active_group.get("id") or "")
+        if not group_id:
+            ui.label("No group is open.").classes("text-sm text-gray-600")
+            ui.button("Back to Groups", on_click=lambda: (wizard.clear_active_group(), refresh_ui())).props(
+                "flat no-caps"
+            )
+            return
+
+        group_name = active_group.get("name") or group_id or "Group"
+        group_kind: str = wizard.normalize_group_kind(active_group.get("kind")) or str(
+            active_group.get("kind") or ""
+        )
+
+        with ui.row().classes("w-full items-center justify-between gap-3"):
+            with ui.column().classes("gap-0"):
+                ui.label(f"Group Details: {group_name}").classes("text-lg font-semibold")
+                ui.label(f"Kind: {group_kind}").classes("text-sm text-gray-600")
+            ui.button(
+                "Back to Groups",
+                on_click=lambda: (wizard.clear_active_group(), refresh_ui()),
+                icon="arrow_back",
+            ).props("flat no-caps")
+
+        members = list(active_group.get("members", []) or [])
+        if members:
+            ui.label(f"Group members ({len(members)} run(s))").classes("text-sm font-semibold mt-4")
+            for member_id in members:
+                run = next((candidate for candidate in wizard.runs if candidate.get("id") == member_id), None)
+                if run:
+                    member_text = run.get("file") or member_id
+                    if run.get("fraction") is not None:
+                        member_text = f"{member_text} | fraction {run.get('fraction')}"
+                else:
+                    member_text = member_id
+                ui.label(f"• {member_text}").classes("text-sm text-gray-700")
+        else:
+            ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500 mt-4")
+
+        sample_options = {sample["id"]: sample["id"] for sample in wizard.samples}
+        if not sample_options:
+            ui.label("Add reusable samples to author this group.").classes("text-sm text-amber-600 mt-4")
+
+        if group_kind == "LFQ":
+            ui.label("Sample target").classes("text-md font-semibold mt-6")
+            sample_target_select = ui.select(
+                options=sample_options,
+                value=active_group.get("sample_target"),
+                label="Sample target",
+                clearable=True,
+            ).classes("w-full max-w-lg")
+
+            def update_sample_target(event: Any) -> None:
+                selected_value = getattr(event, "value", event)
+                wizard.set_group_sample_target(group_id, selected_value or None)
+                refresh_ui()
+
+            sample_target_select.on_value_change(update_sample_target)
+            return
+
+        ui.label("Channel sample associations").classes("text-md font-semibold mt-6")
+        strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(group_kind)
+        if not strategy:
+            ui.label("No labeling strategy is available for this group kind.").classes("text-sm text-amber-600")
+            return
+
+        try:
+            channels = ChannelBuilder(strategy).get_available_channels()
+        except Exception as e:
+            ui.label(f"Unable to load channels for {strategy}: {e}").classes("text-sm text-red-600")
+            return
+
+        current_assignments = wizard.get_group_channel_assignments(group_id)
+        if not channels:
+            ui.label("No channels are available for this labeling strategy.").classes("text-sm text-amber-600")
+            return
+
+        for channel_name in channels:
+            with ui.row().classes("w-full items-end gap-3 mt-2"):
+                ui.label(channel_name).classes("w-40 text-sm font-medium")
+                channel_select = ui.select(
+                    options=sample_options,
+                    value=current_assignments.get(channel_name),
+                    label=f"Sample for {channel_name}",
+                    clearable=True,
+                ).classes("w-full max-w-lg")
+
+                def update_channel_assignment(event: Any, channel: str = channel_name) -> None:
+                    selected_value = getattr(event, "value", event)
+                    updated_assignments = wizard.get_group_channel_assignments(group_id)
+                    updated_assignments[channel] = selected_value or None
+                    wizard.set_group_channel_assignments(group_id, updated_assignments)
+                    refresh_ui()
+
+                channel_select.on_value_change(update_channel_assignment)
+
+
 def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]:
     """Create the RUNS step UI with embedded jspreadsheet-ce editor."""
     spreadsheet_editors: List[JSpreadsheetEditor] = []
@@ -1017,19 +1125,48 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                 ).classes("px-4 py-0.5")
 
                 if wizard.groups:
-                    ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
+                    if wizard.get_active_group_id():
+                        create_group_detail_step(wizard, refresh_ui)
+                    else:
+                        open_group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
 
-                    bridge = JSpreadsheetBridge(wizard, entity_type="groups")
-                    groups_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Groups")
-                    groups_editor.render()
-                    spreadsheet_editors.append(groups_editor)
+                        with ui.row().classes("w-full items-end gap-3 mt-4"):
+                            open_group_select = ui.select(
+                                options=open_group_options,
+                                value=wizard.groups[0]["id"] if wizard.groups else None,
+                                label="Open Group Details",
+                            ).classes("flex-grow")
 
-                    ui.label(
-                        "• Group ID is read-only in this phase\n"
-                        "• Group name, kind, labeling strategy, members, and description can be edited\n"
-                        "• Channel count is derived from the labeling strategy\n"
-                        "• Group membership is shown in the Files table"
-                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                            def open_group_details() -> None:
+                                selected_group_id = open_group_select.value
+                                if not selected_group_id:
+                                    ui.notify("Choose a group to open", type="warning")
+                                    return
+                                try:
+                                    wizard.set_active_group_id(selected_group_id)
+                                    refresh_ui()
+                                except Exception as e:
+                                    ui.notify(f"Error opening group: {e}", type="negative")
+
+                            ui.button(
+                                "Open Group Details",
+                                on_click=open_group_details,
+                                icon="arrow_forward",
+                            ).classes("px-4 py-0.5")
+
+                        ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
+
+                        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+                        groups_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Groups")
+                        groups_editor.render()
+                        spreadsheet_editors.append(groups_editor)
+
+                        ui.label(
+                            "• Group ID is read-only in this phase\n"
+                            "• Group name, kind, labeling strategy, members, and description can be edited\n"
+                            "• Channel count is derived from the labeling strategy\n"
+                            "• Open a group to author its channel or LFQ detail page"
+                        ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
                 else:
                     ui.label("No groups added yet. Group membership will appear here when groups exist.").classes(
                         "text-sm text-gray-500 italic"

@@ -340,6 +340,45 @@ class TestNoSyntheticLFQMixtures:
             "LFQ assignment should not create synthetic mixtures"
         )
 
+
+class TestGroupDetailState:
+    """Tests for authoring-only active-group navigation state."""
+
+    def test_active_group_can_be_set_and_cleared(self):
+        """Wizard state should track the currently open group detail page."""
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="Group 1", kind="LFQ")
+
+        assert wizard.get_active_group_id() is None
+
+        wizard.set_active_group_id("group_1")
+
+        assert wizard.get_active_group_id() == "group_1"
+        assert wizard.get_active_group()["id"] == "group_1"
+
+        wizard.clear_active_group()
+
+        assert wizard.get_active_group_id() is None
+        assert wizard.get_active_group() is None
+
+    def test_active_group_clears_when_moving_between_steps(self):
+        """Step transitions should close any open group detail page by default."""
+        wizard = WizardState()
+        wizard.add_run(file="test.raw")
+        wizard.add_group(id="group_1", name="Group 1", kind="LFQ")
+        wizard.set_active_group_id("group_1")
+
+        wizard.next_step()
+
+        assert wizard.get_current_step() == WizardStep.SAMPLES
+        assert wizard.get_active_group_id() is None
+
+        wizard.set_active_group_id("group_1")
+        wizard.previous_step()
+
+        assert wizard.get_current_step() == WizardStep.RUNS
+        assert wizard.get_active_group_id() is None
+
     def test_lfq_manifest_preserves_only_real_samples(self):
         """Test that LFQ manifest doesn't add synthetic entities."""
         wizard = WizardState()

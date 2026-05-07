@@ -61,6 +61,7 @@ class WizardState:
     def __init__(self):
         """Initialize wizard state."""
         self.current_step_index = 0
+        self.active_group_id: Optional[str] = None
         self.runs: List[Dict[str, Any]] = []
         self.samples: List[Dict[str, Any]] = []
         self.mixtures: List[Dict[str, Any]] = []
@@ -111,6 +112,9 @@ class WizardState:
                 if not self._experiment_settings_saved:
                     raise ValueError("Experiment settings must be saved before advancing to the review step")
 
+        if index != self.current_step_index:
+            self.clear_active_group()
+
         self.current_step_index = index
 
     def set_active_editor(self, editor: Optional[Any]) -> None:
@@ -160,6 +164,7 @@ class WizardState:
         if self.current_step_index <= 0:
             raise ValueError("Cannot go back from the first step (RUNS)")
 
+        self.clear_active_group()
         self.current_step_index -= 1
 
     def _flush_active_editor(self) -> None:
@@ -272,6 +277,82 @@ class WizardState:
                     strategies.append(strategy)
         return strategies
 
+    def set_active_group_id(self, group_id: Optional[str]) -> None:
+        """Set the currently open group detail page."""
+        if group_id is None:
+            self.active_group_id = None
+            return
+
+        self._get_group_index(group_id)
+        self.active_group_id = group_id
+
+    def get_active_group_id(self) -> Optional[str]:
+        """Return the group currently shown in the detail flow, if any."""
+        return self.active_group_id
+
+    def clear_active_group(self) -> None:
+        """Close the active group detail flow."""
+        self.active_group_id = None
+
+    def get_active_group(self) -> Optional[Dict[str, Any]]:
+        """Return a defensive copy of the group currently shown in the detail flow."""
+        if not self.active_group_id:
+            return None
+
+        try:
+            group_index = self._get_group_index(self.active_group_id)
+        except ValueError:
+            self.active_group_id = None
+            return None
+
+        return deepcopy(self.groups[group_index])
+
+    def set_group_sample_target(self, group_id: str, sample_id: Optional[str]) -> None:
+        """Store the LFQ sample target for an authoring group."""
+        group_index = self._get_group_index(group_id)
+        if sample_id is None:
+            self.groups[group_index].pop("sample_target", None)
+            return
+
+        sample_ids = {sample["id"] for sample in self.samples}
+        if sample_id not in sample_ids:
+            raise ValueError(f"Sample '{sample_id}' not found in samples")
+
+        self.groups[group_index]["sample_target"] = sample_id
+
+    def get_group_sample_target(self, group_id: str) -> Optional[str]:
+        """Get the stored LFQ sample target for a group."""
+        group_index = self._get_group_index(group_id)
+        return self.groups[group_index].get("sample_target")
+
+    def set_group_channel_assignments(self, group_id: str, channel_assignments: Dict[str, Optional[str]]) -> None:
+        """Store channel-to-sample assignments for a multiplexed group."""
+        group_index = self._get_group_index(group_id)
+        normalized_assignments: Dict[str, Optional[str]] = {}
+        sample_ids = {sample["id"] for sample in self.samples}
+
+        for channel, sample_id in channel_assignments.items():
+            if sample_id is None:
+                normalized_assignments[str(channel)] = None
+                continue
+
+            sample_text = str(sample_id).strip()
+            if not sample_text:
+                normalized_assignments[str(channel)] = None
+                continue
+
+            if sample_text not in sample_ids:
+                raise ValueError(f"Sample '{sample_text}' not found in samples")
+
+            normalized_assignments[str(channel)] = sample_text
+
+        self.groups[group_index]["channel_sample_assignments"] = normalized_assignments
+
+    def get_group_channel_assignments(self, group_id: str) -> Dict[str, Optional[str]]:
+        """Get the stored channel-to-sample assignments for a group."""
+        group_index = self._get_group_index(group_id)
+        return dict(self.groups[group_index].get("channel_sample_assignments", {}))
+
     def get_default_labeling_strategy(self, kind: Optional[str]) -> Optional[str]:
         """Get the first supported labeling strategy for a kind, if any."""
         strategies = self.get_allowed_labeling_strategies(kind)
@@ -371,6 +452,10 @@ class WizardState:
                 return allowed_kind
 
         return None
+
+    def normalize_group_kind(self, kind: Any) -> Optional[str]:
+        """Public wrapper for normalizing a group kind value."""
+        return self._normalize_group_kind(kind)
 
     def _get_run_index_by_id(self, run_id: str) -> int:
         """Return the index of a run by its internal identifier."""
