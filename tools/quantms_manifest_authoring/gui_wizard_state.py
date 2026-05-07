@@ -13,6 +13,7 @@ non-skippable wizard workflow for YAML manifest creation. This module has
 no UI dependencies and can be imported and tested independently.
 """
 
+from copy import deepcopy
 from enum import Enum, auto
 import re
 from typing import Optional, Dict, List, Any
@@ -62,6 +63,7 @@ class WizardState:
         self.modifications: List[Dict[str, Any]] = []
         self.modification_profiles: List[str] = []
         self.active_modification_profile: Optional[str] = None
+        self._pending_modification_draft: Dict[str, Any] = {}
         self.experiment: Optional[Dict[str, Any]] = None
         self._experiment_settings_saved = False
         self._active_editor: Optional[Any] = None
@@ -256,7 +258,7 @@ class WizardState:
 
         run_id = self._next_run_id()
 
-        run = {
+        run: Dict[str, Any] = {
             "id": run_id,
             "file": file,
         }
@@ -325,17 +327,86 @@ class WizardState:
         if profile:
             self.register_modification_profile(profile)
 
+    def normalize_modification_profile_name(self, profile: Any) -> Optional[str]:
+        """Normalize a profile name for storage and comparisons."""
+        profile_name = re.sub(r"\s+", " ", str(profile or "")).strip()
+        return profile_name or None
+
+    def find_modification_profile_name(self, profile: Any) -> Optional[str]:
+        """Find a registered profile using case-insensitive matching."""
+        profile_name = self.normalize_modification_profile_name(profile)
+        if not profile_name:
+            return None
+
+        for existing in self.modification_profiles:
+            if existing.casefold() == profile_name.casefold():
+                return existing
+        return None
+
     def register_modification_profile(self, profile: str) -> None:
         """Register a modification profile so it survives rerenders."""
-        profile_name = (profile or "").strip()
+        profile_name = self.normalize_modification_profile_name(profile)
         if not profile_name:
             return
-        if profile_name not in self.modification_profiles:
+        if self.find_modification_profile_name(profile_name) is None:
             self.modification_profiles.append(profile_name)
+
+    def rename_modification_profile(self, current: str, new_name: str) -> None:
+        """Rename a profile and update all wizard state references."""
+        current_name = self.find_modification_profile_name(current)
+        if current_name is None:
+            raise ValueError(f"Profile '{current}' not found")
+
+        normalized_new_name = self.normalize_modification_profile_name(new_name)
+        if not normalized_new_name:
+            raise ValueError("Profile name cannot be empty")
+
+        existing_name = self.find_modification_profile_name(normalized_new_name)
+        if existing_name is not None and existing_name != current_name:
+            raise ValueError(f"Profile '{existing_name}' already exists")
+
+        profile_index = self.modification_profiles.index(current_name)
+        self.modification_profiles[profile_index] = normalized_new_name
+
+        if self.active_modification_profile == current_name:
+            self.active_modification_profile = normalized_new_name
+
+        for modification in self.modifications:
+            if modification.get("profile") == current_name:
+                modification["profile"] = normalized_new_name
+
+        for run in self.runs:
+            if run.get("modification_profile") == current_name:
+                run["modification_profile"] = normalized_new_name
+
+        if self._pending_modification_draft.get("profile") == current_name:
+            self._pending_modification_draft["profile"] = normalized_new_name
+
+    def get_pending_modification_draft(self) -> Dict[str, Any]:
+        """Return a defensive copy of the pending modification draft."""
+        return deepcopy(self._pending_modification_draft)
+
+    def update_pending_modification_draft(self, **kwargs: Any) -> None:
+        """Update the transient modification draft used by the Runs step."""
+        for key, value in kwargs.items():
+            if key == "profile":
+                normalized_profile = self.normalize_modification_profile_name(value)
+                if normalized_profile:
+                    self.register_modification_profile(normalized_profile)
+                    self._pending_modification_draft[key] = normalized_profile
+                else:
+                    self._pending_modification_draft.pop(key, None)
+                continue
+
+            self._pending_modification_draft[key] = deepcopy(value)
+
+    def clear_pending_modification_draft(self) -> None:
+        """Clear the transient modification draft state."""
+        self._pending_modification_draft = {}
 
     def set_active_modification_profile(self, profile: Optional[str]) -> None:
         """Set the currently active modification profile."""
-        profile_name = (profile or "").strip() if profile else None
+        profile_name = self.normalize_modification_profile_name(profile) if profile else None
         self.active_modification_profile = profile_name
         if profile_name:
             self.register_modification_profile(profile_name)
@@ -381,7 +452,7 @@ class WizardState:
         if not id:
             raise ValueError("Sample ID is required")
 
-        sample = {"id": id}
+        sample: Dict[str, Any] = {"id": id}
         if organism:
             sample["organism"] = organism
         if organism_part:
