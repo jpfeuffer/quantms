@@ -149,7 +149,7 @@ class TestSpreadsheetAdapterIntegration:
         run_rows = adapter.wizard_to_spreadsheet()
         assert run_rows[0].group_id == "group_1"
 
-        assert adapter.get_column_headers_groups() == ["id", "name", "kind", "members", "description"]
+        assert adapter.get_column_headers_groups() == ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
 
         group_rows = adapter.wizard_groups_to_spreadsheet()
         assert len(group_rows) == 1

@@ -207,6 +207,18 @@ class GroupFieldInfo:
             "description": "Group kind",
             "read_only": False,
         },
+        "labeling_strategy": {
+            "type": "str",
+            "required": False,
+            "description": "Labeling strategy or plex type",
+            "read_only": False,
+        },
+        "channel_count": {
+            "type": "int",
+            "required": False,
+            "description": "Derived channel count",
+            "read_only": True,
+        },
         "members": {
             "type": "str",
             "required": False,
@@ -423,6 +435,8 @@ class GroupSpreadsheetRow:
     id: Optional[str] = None
     name: Optional[str] = None
     kind: Optional[str] = None
+    labeling_strategy: Optional[str] = None
+    channel_count: Optional[int] = None
     members: Optional[str] = None
     description: Optional[str] = None
     row_index: int = 0
@@ -439,6 +453,8 @@ class GroupSpreadsheetRow:
             id=group.get("id"),
             name=group.get("name"),
             kind=group.get("kind"),
+            labeling_strategy=group.get("labeling_strategy"),
+            channel_count=group.get("channel_count"),
             members=members_text,
             description=group.get("description"),
             row_index=row_index,
@@ -452,6 +468,8 @@ class GroupSpreadsheetRow:
             result["name"] = self.name
         if self.kind is not None:
             result["kind"] = self.kind
+        if self.labeling_strategy is not None:
+            result["labeling_strategy"] = self.labeling_strategy
         if self.members is not None:
             members = [member.strip() for member in str(self.members).split(",") if member.strip()]
             result["members"] = members
@@ -507,7 +525,7 @@ class SpreadsheetAdapter:
         Returns:
             List of field names representing columns
         """
-        return ["id", "name", "kind", "members", "description"]
+        return ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
 
     def get_column_headers_modifications(self) -> List[str]:
         """
@@ -599,6 +617,8 @@ class SpreadsheetAdapter:
         """
         rows = []
         for idx, group in enumerate(self.wizard.groups):
+            if hasattr(self.wizard, "ensure_group_labeling_metadata"):
+                self.wizard.ensure_group_labeling_metadata(group)
             row = GroupSpreadsheetRow.from_wizard_group(group, row_index=idx)
             rows.append(row)
         return rows
@@ -737,6 +757,9 @@ class SpreadsheetAdapter:
                 "members": row.members,
                 "description": row.description,
             }
+
+            if row.labeling_strategy is not None:
+                update_kwargs["labeling_strategy"] = row.labeling_strategy
 
             if not (
                 isinstance(current_group.get("kind"), str)

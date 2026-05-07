@@ -128,7 +128,7 @@ class JSpreadsheetBridge:
                 {"row": row_index, "col": col_index}
                 for row_index, _ in enumerate(rows)
                 for col_index, field_name in enumerate(headers)
-                if field_name == "id"
+                if field_name in {"id", "channel_count"}
             ]
             spreadsheet_data["allow_delete_row"] = False
 
@@ -195,6 +195,10 @@ class JSpreadsheetBridge:
         elif self.entity_type == "groups":
             return {
                 "kind": [{"id": kind, "name": kind} for kind in self.wizard.get_allowed_group_kinds()],
+                "labeling_strategy": [
+                    {"id": strategy, "name": strategy}
+                    for strategy in self._get_group_labeling_strategy_options()
+                ],
             }
         elif self.entity_type == "modifications":
             return {
@@ -209,6 +213,22 @@ class JSpreadsheetBridge:
             }
         else:
             return {}
+
+    def _get_group_labeling_strategy_options(self) -> list[str]:
+        """Get the current groups-table strategy options using the existing wizard catalog."""
+        if not self.wizard.groups:
+            return self.wizard.get_allowed_labeling_strategies()
+
+        supported_kinds: list[str] = []
+        for group in self.wizard.groups:
+            kind = self.wizard._normalize_group_kind(group.get("kind"))
+            if kind and kind not in supported_kinds:
+                supported_kinds.append(kind)
+
+        if len(supported_kinds) == 1:
+            return self.wizard.get_allowed_labeling_strategies(supported_kinds[0])
+
+        return self.wizard.get_allowed_labeling_strategies()
 
     def get_row_count(self) -> int:
         """Return the number of rows managed by the current bridge."""
@@ -342,6 +362,10 @@ class JSpreadsheetBridge:
                         if normalized_value != row.id:
                             raise ValueError("Group ID is read-only in full-sheet sync")
                         continue
+                    if field_name == "channel_count":
+                        continue
+                    if field_name == "labeling_strategy" and value == "":
+                        value = None
                     if field_name in {"members", "description"} and value == "":
                         value = None if field_name == "description" else ""
                     row.update(**{field_name: value})
@@ -581,6 +605,8 @@ class JSpreadsheetBridge:
 
         if field_name == "id":
             raise ValueError("Group ID is read-only")
+        if field_name == "channel_count":
+            raise ValueError("Channel count is read-only")
 
         current_rows = self.adapter.wizard_groups_to_spreadsheet()
 
@@ -591,6 +617,8 @@ class JSpreadsheetBridge:
 
         if field_name == "kind":
             self._validate_dropdown_value(field_name, new_value)
+        elif field_name == "labeling_strategy":
+            self._validate_dropdown_value(field_name, new_value)
         elif field_name == "members" and new_value is None:
             new_value = ""
 
@@ -599,6 +627,7 @@ class JSpreadsheetBridge:
 
         current_rows[row_index] = edited_row
         self.adapter.sync_group_edits(current_rows)
+        self._dropdown_constraint_cache = self._build_dropdown_constraints()
 
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
@@ -626,6 +655,7 @@ class JSpreadsheetBridge:
             constraints["kind"] = {"ontology", "custom"}
         elif self.entity_type == "groups":
             constraints["kind"] = set(self.wizard.get_allowed_group_kinds())
+            constraints["labeling_strategy"] = set(self._get_group_labeling_strategy_options())
 
         return constraints
 

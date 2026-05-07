@@ -290,11 +290,15 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "kind", "members", "description"]
+        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
+        assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
+        assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["data"][0][data["headers"].index("members")] == wizard.runs[0]["id"]
         assert data["column_config"]["id"]["read_only"] is True
         assert "read_only" not in data["column_config"]["name"]
         assert "read_only" not in data["column_config"]["kind"]
+        assert "read_only" not in data["column_config"]["labeling_strategy"]
+        assert data["column_config"]["channel_count"]["read_only"] is True
         assert "read_only" not in data["column_config"]["members"]
         assert "read_only" not in data["column_config"]["description"]
         assert data["column_config"]["kind"]["type"] == "dropdown"
@@ -304,8 +308,76 @@ class TestJSpreadsheetBridge:
             {"id": "iTRAQ", "name": "iTRAQ"},
             {"id": "SILAC", "name": "SILAC"},
         ]
-        assert data["read_only_cells"] == [{"row": 0, "col": 0}]
+        assert data["read_only_cells"] == [{"row": 0, "col": 0}, {"row": 0, "col": 4}]
         assert bridge.get_row_count() == 1
+
+    def test_groups_bridge_includes_labeling_strategy_and_channel_count_columns(self):
+        """Groups spreadsheet should expose labeling strategy and derived channel count."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
+        assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
+        assert data["data"][0][data["headers"].index("channel_count")] == 1
+        assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
+        assert data["column_config"]["channel_count"]["read_only"] is True
+
+    def test_groups_bridge_backfills_missing_labeling_strategy_from_kind(self):
+        """Legacy groups without strategy metadata should be normalized when the sheet renders."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.groups.append({"id": "group_1", "name": "LFQ group", "kind": "LFQ", "members": []})
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+        assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
+        assert data["data"][0][data["headers"].index("channel_count")] == 1
+
+    def test_groups_bridge_keeps_kind_and_labeling_strategy_synced_on_full_sheet_edit(self):
+        """Full-sheet group sync should keep derived channel counts aligned with the chosen strategy."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Multiplex group", kind="TMT", labeling_strategy="TMT6")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+        headers = data["headers"]
+        snapshot = [row[:] for row in data["data"]]
+
+        snapshot[0][headers.index("kind")] = "LFQ"
+        snapshot[0][headers.index("labeling_strategy")] = "label free sample"
+        snapshot[0][headers.index("channel_count")] = 99
+
+        bridge.sync_from_spreadsheet_data(snapshot)
+
+        assert wizard.groups[0]["kind"] == "LFQ"
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+
+    def test_groups_bridge_allows_labeling_strategy_edit_after_kind_change(self):
+        """Groups cell edits should accept a newly valid strategy after the kind is changed."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        tmt_strategy = wizard.get_allowed_labeling_strategies("TMT")[0]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("kind"), new_value="TMT")
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("labeling_strategy"), new_value=tmt_strategy)
+
+        assert wizard.groups[0]["kind"] == "TMT"
+        assert wizard.groups[0]["labeling_strategy"] == tmt_strategy
+        assert wizard.groups[0]["channel_count"] == wizard.get_labeling_strategy_channel_count(tmt_strategy)
 
     def test_groups_bridge_sync_paths_update_wizard_groups(self):
         """Groups sync APIs should round-trip edits back into WizardState."""
@@ -360,7 +432,15 @@ class TestJSpreadsheetBridge:
 
         with patch("jspreadsheet_editor.context") as mock_context:
             mock_context.client.run_javascript = AsyncMock(return_value=[
-                ["group_1", "Updated group", "SILAC", wizard.runs[0]["id"], "Updated via flush"],
+                [
+                    "group_1",
+                    "Updated group",
+                    "SILAC",
+                    "SILAC_2plex",
+                    2,
+                    wizard.runs[0]["id"],
+                    "Updated via flush",
+                ],
             ])
 
             result = asyncio.run(editor.flush_pending_edits())

@@ -887,6 +887,25 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
             with ui.card().classes("w-full basis-0 grow"):
                 allowed_group_kinds = wizard.get_allowed_group_kinds()
                 default_group_kind = allowed_group_kinds[0] if allowed_group_kinds else None
+                default_group_strategy_options = wizard.get_allowed_labeling_strategies(default_group_kind) if default_group_kind else []
+                default_group_strategy = default_group_strategy_options[0] if default_group_strategy_options else None
+                default_group_channel_count = wizard.get_labeling_strategy_channel_count(default_group_strategy)
+
+                def update_group_strategy_controls(selected_kind: Optional[str]) -> None:
+                    strategy_options = wizard.get_allowed_labeling_strategies(selected_kind)
+                    strategy_select.options = {strategy: strategy for strategy in strategy_options}
+                    if strategy_options:
+                        if strategy_select.value not in strategy_options:
+                            strategy_select.value = strategy_options[0]
+                    else:
+                        strategy_select.value = None
+
+                    channel_count = wizard.get_labeling_strategy_channel_count(strategy_select.value)
+                    channel_count_label.text = (
+                        f"Channel Count: {channel_count}" if channel_count is not None else "Channel Count: n/a"
+                    )
+                    strategy_select.update()
+                    channel_count_label.update()
 
                 ui.label("Groups").classes("text-md font-semibold")
 
@@ -930,6 +949,24 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     ).classes("flex-grow")
 
                 with ui.row().classes("w-full gap-2 items-end"):
+                    strategy_select = ui.select(
+                        options={strategy: strategy for strategy in default_group_strategy_options},
+                        value=default_group_strategy,
+                        label="Labeling Strategy",
+                    ).classes("flex-grow")
+                    channel_count_label = ui.label(
+                        f"Channel Count: {default_group_channel_count if default_group_channel_count is not None else 'n/a'}"
+                    ).classes("text-sm text-gray-600 px-2 pb-1")
+
+                    def on_group_kind_change(event: Any) -> None:
+                        selected_kind = getattr(event, "value", event)
+                        if selected_kind is None:
+                            selected_kind = group_kind_input.value
+                        update_group_strategy_controls(selected_kind)
+
+                    group_kind_input.on_value_change(on_group_kind_change)
+
+                with ui.row().classes("w-full gap-2 items-end"):
                     group_description_input = ui.input(
                         label="Description (optional)",
                         placeholder="e.g., biological replicates from the same condition",
@@ -950,6 +987,9 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                         if not group_kind:
                             ui.notify("Group kind is required", type="warning")
                             return
+                        if not strategy_select.value:
+                            ui.notify("Labeling strategy is required", type="warning")
+                            return
 
                         try:
                             wizard.add_group(
@@ -957,6 +997,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                                 name=group_name,
                                 kind=group_kind,
                                 description=group_description or None,
+                                labeling_strategy=strategy_select.value,
                             )
                             ui.notify(f"Group '{group_id}' added")
                             group_id_input.value = ""
@@ -964,6 +1005,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                             group_description_input.value = ""
                             group_kind_input.value = default_group_kind
                             group_kind_input.update()
+                            update_group_strategy_controls(default_group_kind)
                             refresh_ui()
                         except Exception as e:
                             ui.notify(f"Error adding group: {e}", type="negative")
@@ -984,7 +1026,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
 
                     ui.label(
                         "• Group ID is read-only in this phase\n"
-                        "• Group name, kind, members, and description can be edited\n"
+                        "• Group name, kind, labeling strategy, members, and description can be edited\n"
+                        "• Channel count is derived from the labeling strategy\n"
                         "• Group membership is shown in the Files table"
                     ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
                 else:

@@ -310,6 +310,46 @@ class TestWizardState:
         with pytest.raises(ValueError, match="Allowed options: SILAC"):
             wizard.update_group("group_1", kind="LFQ")
 
+    def test_wizard_group_labeling_strategy_defaults_from_kind(self):
+        """Test that supported group kinds backfill a labeling strategy and derived channel count."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+
+    def test_wizard_labeling_strategies_follow_current_kind(self):
+        """Test that supported labeling strategies are filtered from the current group kind."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+
+        assert wizard.get_allowed_labeling_strategies("LFQ") == ["label free sample"]
+        assert wizard.get_allowed_labeling_strategies("TMT") == [
+            plex_type for plex_type in ChannelBuilder.get_supported_plex_types() if plex_type.startswith("TMT")
+        ]
+        assert wizard.get_allowed_labeling_strategies("iTRAQ") == [
+            plex_type for plex_type in ChannelBuilder.get_supported_plex_types() if plex_type.startswith("iTRAQ")
+        ]
+        assert wizard.get_allowed_labeling_strategies("SILAC") == [
+            plex_type for plex_type in ChannelBuilder.get_supported_plex_types() if plex_type.startswith("SILAC")
+        ]
+
+    def test_wizard_group_kind_change_keeps_strategy_and_channel_count_in_sync(self):
+        """Test that changing a group kind refreshes the stored strategy and derived channel count."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="Multiplex group", kind="TMT", labeling_strategy="TMT6")
+
+        wizard.update_group("group_1", kind="LFQ")
+
+        assert wizard.groups[0]["kind"] == "LFQ"
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+
     def test_wizard_seed_runs_from_filenames_groups_fractioned_files_only_when_requested(self):
         """Test that fraction markers are grouped only after an explicit regroup request."""
         from gui_wizard_state import WizardState

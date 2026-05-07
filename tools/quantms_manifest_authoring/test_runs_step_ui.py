@@ -23,6 +23,7 @@ import pytest
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 # Add parent directory to path
@@ -132,6 +133,12 @@ class MockUISelect:
 
     def on_value_change(self, callback):
         self._callbacks.append(callback)
+        return self
+
+    def trigger_value_change(self, value):
+        self.value = value
+        for callback in self._callbacks:
+            callback(SimpleNamespace(value=value))
         return self
 
     def set_visibility(self, *_args, **_kwargs):
@@ -452,6 +459,66 @@ class TestRunsStepCallbacks:
         assert group_kind_select.value == wizard.get_allowed_group_kinds()[0]
         assert add_group_button.parent is regroup_button.parent
         assert wizard.groups == []
+
+    def test_group_creation_form_updates_labeling_strategy_options_when_kind_changes(self):
+        """Changing the group kind should refresh the available labeling strategies and derived count."""
+        wizard = WizardState()
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda *args, **kwargs: None):
+                create_runs_step(wizard, refresh_ui=lambda: None)
+
+        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
+        group_strategy_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy")
+        channel_count_label = next(lbl for lbl in mock_ui_ctx.labels if "Channel Count" in lbl.text)
+
+        assert group_strategy_select.options == {
+            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies("LFQ")
+        }
+        assert group_strategy_select.value == "label free sample"
+        assert "1" in channel_count_label.text
+
+        group_kind_select.trigger_value_change("TMT")
+
+        assert group_strategy_select.options == {
+            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies("TMT")
+        }
+        assert group_strategy_select.value == wizard.get_allowed_labeling_strategies("TMT")[0]
+        assert str(wizard.get_labeling_strategy_channel_count(group_strategy_select.value)) in channel_count_label.text
+
+    def test_group_creation_form_adds_group_with_strategy_and_derived_count(self):
+        """The Add Group callback should persist the selected strategy and derived count."""
+        wizard = WizardState()
+        refresh_ui_calls = []
+
+        def mock_refresh_ui():
+            refresh_ui_calls.append(True)
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda *args, **kwargs: None):
+                create_runs_step(wizard, refresh_ui=mock_refresh_ui)
+
+        group_id_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group ID")
+        group_name_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group Name")
+        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
+        group_strategy_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy")
+        add_group_button = next(btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group")
+
+        group_id_input.value = "lfq_1"
+        group_name_input.value = "LFQ group"
+        group_kind_select.trigger_value_change("LFQ")
+        group_strategy_select.value = "label free sample"
+
+        add_group_button.trigger_click()
+
+        assert len(wizard.groups) == 1
+        assert wizard.groups[0]["id"] == "lfq_1"
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+        assert refresh_ui_calls
 
     def test_group_creation_callback_adds_group_and_refreshes(self):
         """Adding a group from the Groups pane should update state and trigger a refresh."""
