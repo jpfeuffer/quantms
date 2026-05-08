@@ -915,6 +915,27 @@ class TestRunsStepCallbacks:
         assert not any("Group Details" in lbl.text for lbl in runs_ui.labels)
         assert wizard.get_active_group_id() is None
 
+    def test_runs_step_does_not_inline_group_detail_when_group_is_open(self):
+        """The Runs step should not render the group-detail page inside its own card."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_sample(id="sample_1")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.set_active_group_id("lfq_group")
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), patch(
+            "jspreadsheet_editor.context"
+        ) as mock_context_editor:
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        assert any("Groups Table" in lbl.text for lbl in mock_ui_ctx.labels)
+        assert not any("Group Details" in lbl.text for lbl in mock_ui_ctx.labels)
+        assert not any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
+
     def test_manual_path_entry_clears_input_after_add(self):
         """
         Test that after clicking Add, the manual path input is cleared.

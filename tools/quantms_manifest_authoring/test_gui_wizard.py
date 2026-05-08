@@ -1721,6 +1721,125 @@ class TestNavigationPreFlushBoundary:
         assert "sample" in lower_code or "mixture" in lower_code, \
             "Assignments step should explicitly mention sample or mixture"
 
+
+class TestGroupDetailPageRouting:
+    """Tests for routing the active group detail view through the main wizard renderer."""
+
+    class _RoutingMockNode:
+        def __init__(self, owner=None):
+            self.owner = owner
+            self.children = []
+            self.visible = True
+
+        def classes(self, *args, **kwargs):
+            return self
+
+        def clear(self):
+            self.children = []
+            return self
+
+        def set_visibility(self, visible):
+            self.visible = visible
+            return self
+
+        def update(self):
+            return self
+
+        def props(self, *args, **kwargs):
+            return self
+
+        def __enter__(self):
+            if self.owner is not None:
+                self.owner._container_stack.append(self)
+                parent = self.owner._container_stack[-2] if len(self.owner._container_stack) > 1 else None
+                self.parent = parent
+                if parent is not None:
+                    parent.children.append(self)
+            return self
+
+        def __exit__(self, *args):
+            if self.owner is not None and self.owner._container_stack:
+                self.owner._container_stack.pop()
+
+    class _RoutingMockUI:
+        def __init__(self):
+            self.buttons = []
+            self.inputs = []
+            self.selects = []
+            self.labels = []
+            self.cards = []
+            self.rows = []
+            self.notifications = []
+            self._container_stack = []
+
+        def add_head_html(self, html):
+            return None
+
+        def notify(self, message, type=None):
+            self.notifications.append({"message": message, "type": type})
+
+        def button(self, text="", on_click=None, icon="", **kwargs):
+            btn = MagicMock()
+            btn.text = text
+            btn.icon = icon
+            btn.on_click = MagicMock(return_value=btn)
+            btn.enabled = True
+            btn.classes.return_value = btn
+            btn.props.return_value = btn
+            self.buttons.append(btn)
+            return btn
+
+        def label(self, text=""):
+            lbl = MagicMock()
+            lbl.text = text
+            lbl.classes.return_value = lbl
+            lbl.update.return_value = lbl
+            self.labels.append(lbl)
+            if self._container_stack:
+                self._container_stack[-1].children.append(lbl)
+            return lbl
+
+        def row(self):
+            row = TestGroupDetailPageRouting._RoutingMockNode(owner=self)
+            self.rows.append(row)
+            return row
+
+        def column(self):
+            column = TestGroupDetailPageRouting._RoutingMockNode(owner=self)
+            self.rows.append(column)
+            return column
+
+        def card(self):
+            card = TestGroupDetailPageRouting._RoutingMockNode(owner=self)
+            self.cards.append(card)
+            return card
+
+    def test_active_group_routes_to_dedicated_page_in_main_renderer(self):
+        """The main renderer should open active groups on a separate page instead of the Runs step."""
+        from gui_nicegui import WizardEditor, create_manifest_editor_ui
+
+        wizard_editor = WizardEditor()
+        wizard_editor.wizard.add_run(file="/data/test.raw")
+        wizard_editor.wizard.add_sample(id="sample_1")
+        wizard_editor.wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard_editor.wizard.set_active_group_id("lfq_group")
+
+        routing_ui = self._RoutingMockUI()
+        render_calls = []
+
+        def fake_runs_step(*_args, **_kwargs):
+            render_calls.append("runs")
+
+        def fake_group_detail_step(*_args, **_kwargs):
+            render_calls.append("group")
+
+        with patch("gui_nicegui.ui", routing_ui), patch(
+            "gui_nicegui.create_runs_step", side_effect=fake_runs_step
+        ), patch("gui_nicegui.create_group_detail_step", side_effect=fake_group_detail_step):
+            create_manifest_editor_ui(wizard_editor)
+
+        assert render_calls == ["group"]
+
     def test_wizard_navigation_guards_against_pending_edit_loss(self):
         """
         Integration test: Verify the complete pre-navigation flush flow.

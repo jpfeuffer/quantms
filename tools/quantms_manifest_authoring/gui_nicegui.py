@@ -1125,48 +1125,45 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                 ).classes("px-4 py-0.5")
 
                 if wizard.groups:
-                    if wizard.get_active_group_id():
-                        create_group_detail_step(wizard, refresh_ui)
-                    else:
-                        open_group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
+                    open_group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
 
-                        with ui.row().classes("w-full items-end gap-3 mt-4"):
-                            open_group_select = ui.select(
-                                options=open_group_options,
-                                value=wizard.groups[0]["id"] if wizard.groups else None,
-                                label="Open Group Details",
-                            ).classes("flex-grow")
+                    with ui.row().classes("w-full items-end gap-3 mt-4"):
+                        open_group_select = ui.select(
+                            options=open_group_options,
+                            value=wizard.groups[0]["id"] if wizard.groups else None,
+                            label="Open Group Details",
+                        ).classes("flex-grow")
 
-                            def open_group_details() -> None:
-                                selected_group_id = open_group_select.value
-                                if not selected_group_id:
-                                    ui.notify("Choose a group to open", type="warning")
-                                    return
-                                try:
-                                    wizard.set_active_group_id(selected_group_id)
-                                    refresh_ui()
-                                except Exception as e:
-                                    ui.notify(f"Error opening group: {e}", type="negative")
+                        def open_group_details() -> None:
+                            selected_group_id = open_group_select.value
+                            if not selected_group_id:
+                                ui.notify("Choose a group to open", type="warning")
+                                return
+                            try:
+                                wizard.set_active_group_id(selected_group_id)
+                                refresh_ui()
+                            except Exception as e:
+                                ui.notify(f"Error opening group: {e}", type="negative")
 
-                            ui.button(
-                                "Open Group Details",
-                                on_click=open_group_details,
-                                icon="arrow_forward",
-                            ).classes("px-4 py-0.5")
+                        ui.button(
+                            "Open Group Details",
+                            on_click=open_group_details,
+                            icon="arrow_forward",
+                        ).classes("px-4 py-0.5")
 
-                        ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
+                    ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
 
-                        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
-                        groups_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Groups")
-                        groups_editor.render()
-                        spreadsheet_editors.append(groups_editor)
+                    bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+                    groups_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Groups")
+                    groups_editor.render()
+                    spreadsheet_editors.append(groups_editor)
 
-                        ui.label(
-                            "• Group ID is read-only in this phase\n"
-                            "• Group name, kind, labeling strategy, members, and description can be edited\n"
-                            "• Channel count is derived from the labeling strategy\n"
-                            "• Open a group to author its channel or LFQ detail page"
-                        ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                    ui.label(
+                        "• Group ID is read-only in this phase\n"
+                        "• Group name, kind, labeling strategy, members, and description can be edited\n"
+                        "• Channel count is derived from the labeling strategy\n"
+                        "• Open a group to author its channel or LFQ detail page"
+                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
                 else:
                     ui.label("No groups added yet. Group membership will appear here when groups exist.").classes(
                         "text-sm text-gray-500 italic"
@@ -1569,6 +1566,7 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
         # Step content containers are mounted once and reused to avoid
         # remounting heavy spreadsheet widgets on every navigation.
         step_content = ui.column().classes("w-full")
+        group_detail_content = ui.column().classes("w-full")
         steps = WizardStep.ordered_steps()
         step_names = [
             "Runs",
@@ -1596,6 +1594,16 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                 container = ui.column().classes("w-full")
                 container.set_visibility(False)
                 step_containers[step] = container
+
+        group_detail_content.set_visibility(False)
+
+        def render_group_detail_page() -> None:
+            """Render the transient active-group page outside the main step stack."""
+            group_detail_content.clear()
+            with group_detail_content:
+                create_group_detail_step(editor.wizard, refresh_ui)
+
+            group_detail_content.set_visibility(True)
 
         def render_progress() -> None:
             """Refresh the read-only wizard progress indicator."""
@@ -1634,9 +1642,19 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
 
         def show_current_step(rerender_current_step: bool) -> None:
             """Show the active step and reuse any previously mounted content."""
+            active_group_id = editor.wizard.get_active_group_id()
+            if active_group_id:
+                for step, container in step_containers.items():
+                    container.set_visibility(False)
+                group_detail_content.set_visibility(True)
+                render_group_detail_page()
+                editor.wizard.set_active_editor(None)
+                return
+
             current_step = editor.wizard.get_current_step()
             render_step_content(current_step, force=rerender_current_step)
 
+            group_detail_content.set_visibility(False)
             for step, container in step_containers.items():
                 container.set_visibility(step == current_step)
 
@@ -1649,6 +1667,11 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
 
         def update_nav_buttons():
             """Update button states based on current step and progression prerequisites."""
+            if editor.wizard.get_active_group_id():
+                back_btn.enabled = False
+                next_btn.enabled = False
+                return
+
             current_idx = editor.wizard.current_step_index
             # Back button disabled on first step
             back_btn.enabled = current_idx > 0
