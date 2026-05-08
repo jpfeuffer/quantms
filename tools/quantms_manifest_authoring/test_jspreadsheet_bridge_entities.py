@@ -30,7 +30,7 @@ class TestJSpreadsheetBridgeForSamples:
         """Test that bridge can be initialized with entity_type='samples'."""
         wizard = WizardState()
         wizard.add_sample(id="sample1", organism="homo sapiens")
-        
+
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
         assert bridge.entity_type == "samples"
 
@@ -46,13 +46,13 @@ class TestJSpreadsheetBridgeForSamples:
         assert "headers" in data
         assert "data" in data
         assert "column_config" in data
-        
+
         # Verify headers include sample fields
         assert "id" in data["headers"]
-        
+
         # Verify data has correct number of rows
         assert len(data["data"]) == 2
-        
+
         # Verify first row maps to sample1
         assert data["data"][0][0] == "sample1"  # id column
 
@@ -62,10 +62,10 @@ class TestJSpreadsheetBridgeForSamples:
         wizard.add_sample(id="sample1", organism="homo sapiens")
 
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         # Edit organism column (assuming column 1)
         bridge.handle_cell_edit(row_index=0, col_index=1, new_value="mus musculus")
-        
+
         # Verify wizard state was updated
         assert wizard.samples[0]["organism"] == "mus musculus"
 
@@ -75,7 +75,7 @@ class TestJSpreadsheetBridgeForSamples:
         wizard.add_sample(id="sample1")
 
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         # Try to clear id field (should fail)
         with pytest.raises(ValueError, match="required"):
             bridge.handle_cell_edit(row_index=0, col_index=0, new_value="")
@@ -88,7 +88,7 @@ class TestJSpreadsheetBridgeForSamples:
 
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
         bridge.handle_row_delete(row_index=0)
-        
+
         # Verify first sample was deleted
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample2"
@@ -112,7 +112,7 @@ class TestJSpreadsheetBridgeForMixtures:
         wizard = WizardState()
         wizard.add_sample(id="sample1")
         wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
-        
+
         bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
         assert bridge.entity_type == "mixtures"
 
@@ -128,15 +128,15 @@ class TestJSpreadsheetBridgeForMixtures:
 
         assert "headers" in data
         assert "data" in data
-        
+
         # Verify headers include id and channel columns
         assert "id" in data["headers"]
         assert "TMT126" in data["headers"]
         assert "TMT127N" in data["headers"]
-        
+
         # Verify data has correct number of rows
         assert len(data["data"]) == 1
-        
+
         # Verify mix1 data
         assert data["data"][0][0] == "mix1"  # id column
 
@@ -148,13 +148,13 @@ class TestJSpreadsheetBridgeForMixtures:
         wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
 
         bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
-        
+
         # Edit channel assignment - find TMT126 column
         headers = bridge.adapter.get_column_headers_mixtures()
         col_index = headers.index("TMT126")
-        
+
         bridge.handle_cell_edit(row_index=0, col_index=col_index, new_value="sample2")
-        
+
         # Verify wizard state was updated
         assert wizard.mixtures[0]["channels"]["TMT126"] == "sample2"
 
@@ -167,7 +167,7 @@ class TestJSpreadsheetBridgeForMixtures:
 
         bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
         bridge.handle_row_delete(row_index=0)
-        
+
         # Verify first mixture was deleted
         assert len(wizard.mixtures) == 1
         assert wizard.mixtures[0]["id"] == "mix2"
@@ -180,7 +180,7 @@ class TestJSpreadsheetBridgeBackwardCompatibility:
         """Test that bridge defaults to entity_type='runs' for backward compatibility."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
-        
+
         bridge = JSpreadsheetBridge(wizard)
         assert bridge.entity_type == "runs"
 
@@ -188,7 +188,7 @@ class TestJSpreadsheetBridgeBackwardCompatibility:
         """Test that bridge accepts explicit entity_type='runs'."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
-        
+
         bridge = JSpreadsheetBridge(wizard, entity_type="runs")
         assert bridge.entity_type == "runs"
 

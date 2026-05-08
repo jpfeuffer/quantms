@@ -34,10 +34,10 @@ class TestJSpreadsheetEditorWithEntityType:
         """Test that editor can be initialized for samples entity type."""
         wizard = WizardState()
         wizard.add_sample(id="sample1")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
         assert editor.bridge.entity_type == "samples"
 
@@ -46,10 +46,10 @@ class TestJSpreadsheetEditorWithEntityType:
         wizard = WizardState()
         wizard.add_sample(id="sample1")
         wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
         assert editor.bridge.entity_type == "mixtures"
 
@@ -57,9 +57,9 @@ class TestJSpreadsheetEditorWithEntityType:
         """Test that editor remains backward compatible for runs."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
-        
+
         refresh_ui = MagicMock()
-        
+
         # Initialize without bridge (old behavior)
         editor = JSpreadsheetEditor(wizard, refresh_ui)
         assert editor.bridge.entity_type == "runs"
@@ -68,10 +68,10 @@ class TestJSpreadsheetEditorWithEntityType:
         """Test that editor accepts and uses provided bridge."""
         wizard = WizardState()
         wizard.add_sample(id="sample1")
-        
+
         refresh_ui = MagicMock()
         custom_bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=custom_bridge)
         assert editor.bridge is custom_bridge
 
@@ -79,13 +79,13 @@ class TestJSpreadsheetEditorWithEntityType:
         """Test that editor uses worksheet_name parameter in widget configuration."""
         wizard = WizardState()
         wizard.add_sample(id="sample1")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(
-            wizard, 
-            refresh_ui, 
+            wizard,
+            refresh_ui,
             bridge=bridge,
             worksheet_name="SamplesSheet"
         )
@@ -96,30 +96,30 @@ class TestJSpreadsheetEditorWithEntityType:
         """Test that editor registers itself as active editor with wizard."""
         wizard = WizardState()
         wizard.add_sample(id="sample1")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
         editor.register_with_wizard()
-        
+
         assert wizard.get_active_editor() is editor
 
     def test_editor_flush_syncs_spreadsheet_state(self):
         """Test that editor.flush() syncs spreadsheet state before navigation."""
         wizard = WizardState()
         wizard.add_sample(id="sample1", condition="treated")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
-        
+
         # Simulate a state change that needs flushing
         # (In real usage, this would be triggered by spreadsheet events)
         # For now, just verify flush can be called
         editor.flush()
-        
+
         # Should not raise
 
 
@@ -130,16 +130,16 @@ class TestEditorEventDispatching:
         """Test that editor can dispatch cell edit events for samples."""
         wizard = WizardState()
         wizard.add_sample(id="sample1", organism="homo sapiens")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
-        
+
         # Simulate event reception and dispatch
         # Column index 1 is organism
         editor.handle_event("cell_edit", row_index=0, col_index=1, new_value="mus musculus")
-        
+
         # Verify the wizard state was updated
         assert wizard.samples[0]["organism"] == "mus musculus"
 
@@ -148,15 +148,15 @@ class TestEditorEventDispatching:
         wizard = WizardState()
         wizard.add_sample(id="sample1")
         wizard.add_sample(id="sample2")
-        
+
         refresh_ui = MagicMock()
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-        
+
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
-        
+
         # Simulate row delete event
         editor.handle_event("row_delete", row_index=0)
-        
+
         # Verify row was deleted
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample2"
@@ -171,21 +171,21 @@ class TestMultipleEditorCoexistence:
         wizard.add_run(file="/data/sample.raw")
         wizard.add_sample(id="sample1")
         wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
-        
+
         refresh_ui = MagicMock()
-        
+
         runs_editor = JSpreadsheetEditor(wizard, refresh_ui)
         samples_editor = JSpreadsheetEditor(
-            wizard, 
-            refresh_ui, 
+            wizard,
+            refresh_ui,
             bridge=JSpreadsheetBridge(wizard, entity_type="samples")
         )
         mixtures_editor = JSpreadsheetEditor(
-            wizard, 
-            refresh_ui, 
+            wizard,
+            refresh_ui,
             bridge=JSpreadsheetBridge(wizard, entity_type="mixtures")
         )
-        
+
         # Each should have unique widget IDs
         assert runs_editor.widget_id != samples_editor.widget_id
         assert samples_editor.widget_id != mixtures_editor.widget_id
@@ -196,24 +196,24 @@ class TestMultipleEditorCoexistence:
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
         wizard.add_sample(id="sample1")
-        
+
         refresh_ui = MagicMock()
-        
+
         runs_editor = JSpreadsheetEditor(wizard, refresh_ui)
         samples_editor = JSpreadsheetEditor(
-            wizard, 
-            refresh_ui, 
+            wizard,
+            refresh_ui,
             bridge=JSpreadsheetBridge(wizard, entity_type="samples")
         )
-        
+
         # Register both editors
         runs_editor.register_with_wizard()
         samples_editor.register_with_wizard()
-        
+
         # Both should be flushable
         runs_editor.flush()
         samples_editor.flush()
-        
+
         # Should not raise
 
     def test_editor_instance_registry_uses_weak_references(self):

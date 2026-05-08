@@ -753,7 +753,7 @@ class JSpreadsheetEditor:
     def flush(self) -> None:
         """
         Flush pending edits (synchronous wrapper for testing).
-        
+
         In a real browser context, this would fetch data from the spreadsheet.
         For testing, this is a no-op that verifies the editor is callable.
         """
@@ -764,4 +764,3 @@ class JSpreadsheetEditor:
                 pass
         except Exception as e:
             print(f"Error flushing editor: {e}")
-

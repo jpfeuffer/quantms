@@ -101,11 +101,22 @@ class MockUIInput:
         self.label = label
         self.type = type
         self._callbacks = {}
+        self._value_change_callbacks = []
 
     def classes(self, *args, **kwargs):
         return self
 
     def set_visibility(self, *_args, **_kwargs):
+        return self
+
+    def on_value_change(self, callback):
+        self._value_change_callbacks.append(callback)
+        return self
+
+    def trigger_value_change(self, value):
+        self.value = value
+        for callback in self._value_change_callbacks:
+            callback(SimpleNamespace(value=value))
         return self
 
     def __enter__(self):
@@ -183,6 +194,10 @@ class MockUIButton:
         return self
 
     def props(self, *args, **kwargs):
+        return self
+
+    def on_click(self, callback):
+        self.on_click_callback = callback
         return self
 
     def trigger_click(self):
@@ -290,6 +305,58 @@ class MockUICard:
         pass
 
 
+class MockUIExpansion:
+    """Mock for ui.expansion context manager."""
+
+    def __init__(self, owner=None, kind="expansion", text="", icon="", value=False):
+        self.owner = owner
+        self.kind = kind
+        self.text = text
+        self.icon = icon
+        self.value = value
+        self.children = []
+        self.visible = True
+
+    def classes(self, *args, **kwargs):
+        return self
+
+    def clear(self):
+        self.children = []
+        return self
+
+    def set_visibility(self, visible):
+        self.visible = visible
+        return self
+
+    def update(self):
+        return self
+
+    def props(self, *args, **kwargs):
+        return self
+
+    def open(self):
+        self.value = True
+        return self
+
+    def close(self):
+        self.value = False
+        return self
+
+    def __enter__(self):
+        if self.owner is not None:
+            self.owner._container_stack.append(self)
+            parent = self.owner._container_stack[-2] if len(self.owner._container_stack) > 1 else None
+            self.parent = parent
+            if parent is not None:
+                parent.children.append(self)
+        return self
+
+    def __exit__(self, *args):
+        if self.owner is not None and self.owner._container_stack:
+            self.owner._container_stack.pop()
+        pass
+
+
 class MockUIContext:
     """Captures UI structure and state during create_runs_step."""
 
@@ -298,6 +365,7 @@ class MockUIContext:
         self.inputs = []
         self.selects = []
         self.labels = []
+        self.expansions = []
         self.notifications = []
         self.cards = []
         self.rows = []
@@ -354,10 +422,13 @@ class MockUIContext:
         self.rows.append(column)
         return column
 
-    def expansion(self, text="", icon="", value=None):
-        """Create a mock expansion (deprecated in new design)."""
-        expansion = MockUICard(owner=self, kind="expansion")
-        self.cards.append(expansion)
+    def expansion(self, text="", icon="", value=False, **kwargs):
+        """Create a mock expansion."""
+        expansion = MockUIExpansion(owner=self, text=text, icon=icon, value=value)
+        expansion.parent = self._container_stack[-1] if self._container_stack else None
+        if expansion.parent is not None:
+            expansion.parent.children.append(expansion)
+        self.expansions.append(expansion)
         return expansion
 
     def dialog(self):
@@ -416,6 +487,7 @@ class TestRunsStepCallbacks:
         assert regroup_button.parent is not None
         assert add_group_button.parent is not None
         assert add_group_button.parent is regroup_button.parent
+        assert not any(button.text == "Open Group Details" for button in mock_ui_ctx.buttons)
 
         assert any(
             isinstance(child, MockUILabel) and (
@@ -815,31 +887,45 @@ class TestRunsStepCallbacks:
         wizard.assign_run(run_index=1, group_id="lfq_group")
 
         mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
         wizard.set_active_group_id("tmt_group")
 
-        with patch("gui_nicegui.ui", mock_ui_ctx):
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
         label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
         assert any("Group Details" in text for text in label_texts)
-        assert any("Channel" in text for text in label_texts)
+        assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
-        assert len(mock_ui_ctx.selects) >= 1
+        assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
+        assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "TMT6" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
         mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
         wizard.set_active_group_id("lfq_group")
 
-        with patch("gui_nicegui.ui", mock_ui_ctx):
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
         label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
-        assert any("Sample target" in text for text in label_texts)
-        assert any("member" in text.lower() for text in label_texts)
+        assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
-        assert len(mock_ui_ctx.selects) == 1
+        assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
+        assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
-    def test_lfq_detail_select_callback_updates_group_sample_target(self):
-        """Changing the LFQ sample target should persist through the real select callback."""
+    def test_lfq_detail_workspace_uses_sheet_edits_instead_of_sample_target_select(self):
+        """LFQ group details should be driven by the spreadsheet workspace, not a legacy sample-target select."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -849,18 +935,21 @@ class TestRunsStepCallbacks:
         wizard.set_active_group_id("lfq_group")
 
         mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
 
-        with patch("gui_nicegui.ui", mock_ui_ctx):
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
-        sample_target_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Sample target")
+        assert not any(sel.label == "Sample target" for sel in mock_ui_ctx.selects)
+        assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
-        sample_target_select.trigger_value_change("sample_2")
-
-        assert wizard.get_group_sample_target("lfq_group") == "sample_2"
-
-    def test_multiplex_detail_select_callback_updates_channel_assignments(self):
-        """Changing a multiplex channel select should persist through the real callback."""
+    def test_multiplex_detail_workspace_uses_sheet_edits_instead_of_channel_selects(self):
+        """Multiplex group details should be driven by spreadsheet sheets, not legacy per-channel selects."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -870,15 +959,18 @@ class TestRunsStepCallbacks:
         wizard.set_active_group_id("tmt_group")
 
         mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
 
-        with patch("gui_nicegui.ui", mock_ui_ctx):
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
-        channel_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Sample for TMT126")
-
-        channel_select.trigger_value_change("sample_2")
-
-        assert wizard.get_group_channel_assignments("tmt_group").get("TMT126") == "sample_2"
+        assert not any(sel.label.startswith("Sample for ") for sel in mock_ui_ctx.selects)
+        assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "TMT6" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
     def test_back_to_groups_button_clears_active_group_and_returns_to_runs_table(self):
         """The Back to Groups callback should close detail view and restore the Runs table state."""
@@ -935,6 +1027,171 @@ class TestRunsStepCallbacks:
         assert any("Groups Table" in lbl.text for lbl in mock_ui_ctx.labels)
         assert not any("Group Details" in lbl.text for lbl in mock_ui_ctx.labels)
         assert not any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
+
+    def test_runs_step_does_not_render_open_group_details_button(self):
+        """The Runs step should no longer expose a per-row group details opener."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        assert not any(button.text == "Open Group Details" for button in mock_ui_ctx.buttons)
+
+    def test_runs_step_includes_experiment_controls_inline_on_first_page(self):
+        """The first page should expose experiment controls except for quantification."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
+        button_texts = [btn.text for btn in mock_ui_ctx.buttons]
+        select_labels = [sel.label for sel in mock_ui_ctx.selects]
+        input_labels = [inp.label for inp in mock_ui_ctx.inputs]
+
+        assert any("Experiment" in text for text in label_texts)
+        assert "Save Experiment Settings" not in button_texts
+        assert "Acquisition Method" in select_labels or "Acquisition Method" in input_labels
+        assert "Quantification Method" not in select_labels
+        assert "Quantification Method" not in input_labels
+
+    def test_runs_step_autosaves_experiment_settings_without_save_button(self):
+        """Experiment settings should persist on change and not render a manual save button."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+        refresh_ui = MagicMock()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=refresh_ui)
+
+        button_texts = [btn.text for btn in mock_ui_ctx.buttons]
+        assert "Save Experiment Settings" not in button_texts
+
+        acquisition_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Acquisition Method")
+        enzyme_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Enzyme (required)")
+        dissociation_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Dissociation Method (required)")
+
+        acquisition_select.trigger_value_change("DIA")
+        enzyme_input.trigger_value_change("Trypsin")
+        dissociation_input.trigger_value_change("HCD")
+
+        assert wizard.experiment is not None
+        assert wizard.experiment["acquisition_method"] == "DIA"
+        assert wizard.experiment["enzyme"] == "Trypsin"
+        assert wizard.experiment["dissociation_method"] == "HCD"
+        assert refresh_ui.call_count >= 1
+
+    def test_runs_step_persists_default_experiment_settings_for_forward_progress(self):
+        """Default experiment values should already count as saved before any manual interaction."""
+        from gui_nicegui import ManifestEditingWizard
+
+        editor = ManifestEditingWizard()
+        wizard = editor.wizard
+        wizard.add_run(file="/data/test.raw")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_runs_step(wizard, refresh_ui=lambda: None)
+
+        wizard.next_step()
+
+        assert wizard.experiment is not None
+        assert wizard.experiment["acquisition_method"] == "DDA"
+        assert wizard.experiment["enzyme"] == "Trypsin"
+        assert wizard.experiment["dissociation_method"] == "HCD"
+
+        wizard.next_step()
+        assert editor.can_go_forward_for_visible_page() is True
+
+    def test_group_detail_page_exposes_selector_when_no_group_is_active(self):
+        """The Group Details page should provide a selector instead of relying on an open button."""
+        from gui_nicegui import create_group_detail_step
+
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_sample(id="sample_1")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="tmt_group", name="TMT group", kind="TMT", labeling_strategy="TMT6")
+
+        mock_ui_ctx = MockUIContext()
+
+        with patch("gui_nicegui.ui", mock_ui_ctx):
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        selector = next((sel for sel in mock_ui_ctx.selects if sel.label == "Group"), None)
+        assert selector is not None
+        assert selector.options == {"lfq_group": "LFQ group", "tmt_group": "TMT group"}
+        assert wizard.get_active_group_id() == "lfq_group"
+
+    def test_group_detail_workspace_renders_shared_sample_sheet_and_strategy_sheets(self):
+        """The Group Details workspace should render a shared Sample sheet and separate strategy sheets."""
+        from gui_nicegui import create_group_detail_step
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="tmt6_group", name="TMT6 group", kind="TMT", labeling_strategy="TMT6")
+        wizard.add_group(id="tmt11_group", name="TMT11 group", kind="TMT", labeling_strategy="TMT11")
+        wizard.set_active_group_id("tmt6_group")
+
+        mock_ui_ctx = MockUIContext()
+        RecordingSpreadsheetEditor.created = []
+
+        with patch("gui_nicegui.ui", mock_ui_ctx), \
+             patch("jspreadsheet_editor.context") as mock_context_editor, \
+             patch("gui_nicegui.JSpreadsheetEditor", RecordingSpreadsheetEditor):
+
+            mock_context_obj = MockContext()
+            mock_context_editor.client = mock_context_obj.client
+
+            create_group_detail_step(wizard, refresh_ui=lambda: None)
+
+        worksheet_names = [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "Samples" in worksheet_names
+        assert "TMT6" in worksheet_names
+        assert "TMT11" in worksheet_names
+        assert any("Group Details" in lbl.text for lbl in mock_ui_ctx.labels)
+        assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
+        assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
 
     def test_manual_path_entry_clears_input_after_add(self):
         """

@@ -33,6 +33,7 @@ from gui_wizard_state import WizardState
 from spreadsheet_adapter import SpreadsheetAdapter, SpreadsheetRow
 from jspreadsheet_bridge import JSpreadsheetBridge
 from jspreadsheet_editor import JSpreadsheetEditor
+from manifest_core import ChannelBuilder
 
 
 class TestJSpreadsheetBridge:
@@ -280,8 +281,8 @@ class TestJSpreadsheetBridge:
         assert "group_id" not in wizard.runs[0]
         assert wizard.runs[0]["group_assignment_cleared"] is True
 
-    def test_groups_bridge_exposes_read_only_groups_table(self):
-        """Groups spreadsheet should render editable authoring groups except for the identifier."""
+    def test_groups_bridge_exposes_groups_table_without_members_column(self):
+        """Groups spreadsheet should not expose membership editing from the Groups side."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -290,16 +291,14 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
+        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
         assert data["data"][0][data["headers"].index("channel_count")] == 1
-        assert data["data"][0][data["headers"].index("members")] == wizard.runs[0]["id"]
         assert data["column_config"]["id"]["read_only"] is True
         assert "read_only" not in data["column_config"]["name"]
         assert "read_only" not in data["column_config"]["kind"]
         assert "read_only" not in data["column_config"]["labeling_strategy"]
         assert data["column_config"]["channel_count"]["read_only"] is True
-        assert "read_only" not in data["column_config"]["members"]
         assert "read_only" not in data["column_config"]["description"]
         assert data["column_config"]["kind"]["type"] == "dropdown"
         assert data["column_config"]["kind"]["source"] == [
@@ -308,6 +307,8 @@ class TestJSpreadsheetBridge:
             {"id": "iTRAQ", "name": "iTRAQ"},
             {"id": "SILAC", "name": "SILAC"},
         ]
+        assert "members" not in data["headers"]
+        assert "members" not in data["column_config"]
         assert data["read_only_cells"] == [{"row": 0, "col": 0}, {"row": 0, "col": 4}]
         assert bridge.get_row_count() == 1
 
@@ -320,7 +321,7 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
+        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
         assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
@@ -380,7 +381,7 @@ class TestJSpreadsheetBridge:
         assert wizard.groups[0]["channel_count"] == wizard.get_labeling_strategy_channel_count(tmt_strategy)
 
     def test_groups_bridge_sync_paths_update_wizard_groups(self):
-        """Groups sync APIs should round-trip edits back into WizardState."""
+        """Groups sync APIs should keep membership owned by the Files side."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_run(file="/data/other.raw")
@@ -398,16 +399,15 @@ class TestJSpreadsheetBridge:
 
         assert wizard.groups[0]["name"] == "Edited name"
         assert wizard.groups[0]["kind"] == "TMT"
-        assert wizard.groups[0]["members"] == [wizard.runs[1]["id"]]
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.groups[0]["description"] == "Edited description"
-        assert "group_id" not in wizard.runs[0]
-        assert wizard.runs[1]["group_id"] == "group_1"
+        assert wizard.runs[0]["group_id"] == "group_1"
+        assert "group_id" not in wizard.runs[1]
 
         spreadsheet_data = bridge.get_spreadsheet_data()
         mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
         mutated_snapshot[0][spreadsheet_data["headers"].index("name")] = "Edited name"
         mutated_snapshot[0][spreadsheet_data["headers"].index("kind")] = "LFQ"
-        mutated_snapshot[0][spreadsheet_data["headers"].index("members")] = wizard.runs[0]["id"]
         mutated_snapshot[0][spreadsheet_data["headers"].index("description")] = "Browser edit"
 
         bridge.sync_from_spreadsheet_data(mutated_snapshot)
@@ -419,8 +419,55 @@ class TestJSpreadsheetBridge:
         assert wizard.runs[0]["group_id"] == "group_1"
         assert "group_id" not in wizard.runs[1]
 
+    def test_group_channels_bridge_uses_sample_dropdowns_for_strategy_columns(self):
+        """Group channel sheets should expose strategy-specific channel columns with Sample-sheet dropdowns."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(id="tmt6_group", name="TMT6 group", kind="TMT", labeling_strategy="TMT6")
+        wizard.set_group_channel_assignments("tmt6_group", {"TMT126": "sample_1"})
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy="TMT6")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"] == ["id", "TMT126", "TMT127N", "TMT127C", "TMT128N", "TMT128C", "TMT129N"]
+        assert data["data"][0][0] == "tmt6_group"
+        assert data["data"][0][1] == "sample_1"
+        assert data["column_config"]["TMT126"]["type"] == "dropdown"
+        assert data["column_config"]["TMT126"]["source"] == [
+            {"id": "sample_1", "name": "sample_1"},
+            {"id": "sample_2", "name": "sample_2"},
+        ]
+        assert data["read_only_cells"] == [{"row": 0, "col": 0}]
+        assert data["allow_delete_row"] is False
+
+    def test_group_channels_bridge_supports_lfq_sample_target_columns(self):
+        """LFQ group channel sheets should use a single sample target column sourced from Samples."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.set_group_sample_target("lfq_group", "sample_1")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy="LFQ")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"] == ["id", "sample_target"]
+        assert data["data"][0][0] == "lfq_group"
+        assert data["data"][0][1] == "sample_1"
+        assert data["column_config"]["sample_target"]["type"] == "dropdown"
+        assert data["column_config"]["sample_target"]["source"] == [{"id": "sample_1", "name": "sample_1"}]
+
+    def test_channel_catalog_includes_provenance_for_known_strategies(self):
+        """Bundled channel catalog entries should carry strategy provenance when available."""
+        catalog = ChannelBuilder.get_channel_catalog()
+
+        assert "TMT6" in catalog
+        assert catalog["TMT6"][0]["channel"] == "TMT126"
+        assert catalog["TMT6"][0]["provenance"]
+        assert "PSI-MS" in catalog["TMT6"][0]["provenance"] or "PRIDE" in catalog["TMT6"][0]["provenance"]
+
     def test_groups_editor_flush_pending_edits_round_trips_groups(self):
-        """Groups editor flush should round-trip editable group rows back to wizard state."""
+        """Groups editor flush should round-trip editable group rows without changing membership ownership."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -438,7 +485,6 @@ class TestJSpreadsheetBridge:
                     "SILAC",
                     "SILAC_2plex",
                     2,
-                    wizard.runs[0]["id"],
                     "Updated via flush",
                 ],
             ])
@@ -453,7 +499,7 @@ class TestJSpreadsheetBridge:
         mock_context.client.run_javascript.assert_called()
 
     def test_groups_bridge_rejects_unknown_members_and_respects_kind_restrictions(self):
-        """Groups edits must reject unknown members and honor experiment-driven kind restrictions."""
+        """Groups edits must honor experiment-driven kind restrictions without exposing member edits."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -477,12 +523,7 @@ class TestJSpreadsheetBridge:
                 new_value="LFQ",
             )
 
-        with pytest.raises(ValueError, match="Run 'run_999' not found"):
-            bridge.handle_cell_edit(
-                row_index=0,
-                col_index=data["headers"].index("members"),
-                new_value="run_999",
-            )
+        assert "members" not in data["headers"]
 
     def test_runs_group_id_edits_keep_groups_membership_view_in_sync(self):
         """Changing a run's group_id should move membership between groups."""

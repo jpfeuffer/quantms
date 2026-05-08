@@ -16,6 +16,11 @@ Key principles:
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
+from manifest_core import ChannelBuilder
+
+
+LFQ_LABELING_STRATEGY = "label free sample"
+
 
 class RunFieldInfo:
     """Metadata about run fields for the adapter."""
@@ -491,6 +496,57 @@ class GroupSpreadsheetRow:
             raise ValueError("Required field 'kind' is missing")
 
 
+@dataclass
+class GroupChannelSpreadsheetRow:
+    """Represents a single spreadsheet row for group-channel assignments."""
+
+    id: Optional[str] = None
+    channels: Dict[str, Optional[str]] = None
+    row_index: int = 0
+
+    def __post_init__(self):
+        if self.channels is None:
+            self.channels = {}
+
+    @classmethod
+    def from_wizard_group(
+        cls,
+        group: Dict[str, Any],
+        channel_headers: List[str],
+        row_index: int = 0,
+    ) -> "GroupChannelSpreadsheetRow":
+        channels: Dict[str, Optional[str]] = {}
+        if channel_headers == ["sample_target"]:
+            channels["sample_target"] = group.get("sample_target")
+        else:
+            assignments = group.get("channel_sample_assignments", {}) or {}
+            for channel in channel_headers:
+                channels[channel] = assignments.get(channel)
+
+        return cls(
+            id=group.get("id"),
+            channels=channels,
+            row_index=row_index,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        if self.id is not None:
+            result["id"] = self.id
+        if self.channels:
+            result["channels"] = dict(self.channels)
+        return result
+
+    def update(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+    def validate(self) -> None:
+        if not self.id:
+            raise ValueError("Required field 'id' is missing")
+
+
 class SpreadsheetAdapter:
     """
     Adapter for translating between WizardState and spreadsheet rows.
@@ -525,7 +581,7 @@ class SpreadsheetAdapter:
         Returns:
             List of field names representing columns
         """
-        return ["id", "name", "kind", "labeling_strategy", "channel_count", "members", "description"]
+        return ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
 
     def get_column_headers_modifications(self) -> List[str]:
         """
@@ -593,6 +649,115 @@ class SpreadsheetAdapter:
         headers.extend(sorted(channel_keys))
 
         return headers
+
+    def _normalize_group_channel_strategy(self, labeling_strategy: Optional[str]) -> Optional[str]:
+        if labeling_strategy is None:
+            return None
+
+        normalized = str(labeling_strategy).strip()
+        if not normalized:
+            return None
+
+        if normalized.casefold() == LFQ_LABELING_STRATEGY.casefold():
+            return LFQ_LABELING_STRATEGY
+
+        for strategy in ChannelBuilder.get_supported_plex_types():
+            if strategy.casefold() == normalized.casefold():
+                return strategy
+
+        for kind in ("LFQ", "TMT", "iTRAQ", "SILAC"):
+            if kind.casefold() == normalized.casefold():
+                if kind == "LFQ":
+                    return LFQ_LABELING_STRATEGY
+                return self._default_strategy_for_kind(kind)
+
+        return normalized
+
+    def _default_strategy_for_kind(self, kind: str) -> Optional[str]:
+        if kind == "LFQ":
+            return LFQ_LABELING_STRATEGY
+        for strategy in ChannelBuilder.get_supported_plex_types():
+            if strategy.startswith(kind):
+                return strategy
+        return None
+
+    def get_group_channel_headers(self, labeling_strategy: Optional[str]) -> List[str]:
+        """Get column headers for a group-channel sheet."""
+        normalized_strategy = self._normalize_group_channel_strategy(labeling_strategy)
+        if normalized_strategy == LFQ_LABELING_STRATEGY:
+            return ["id", "sample_target"]
+
+        if not normalized_strategy:
+            return ["id"]
+
+        try:
+            channels = ChannelBuilder(normalized_strategy).get_available_channels()
+        except ValueError:
+            channels = []
+
+        return ["id", *channels]
+
+    def wizard_group_channels_to_spreadsheet(
+        self,
+        labeling_strategy: Optional[str],
+    ) -> List[GroupChannelSpreadsheetRow]:
+        """Convert groups for a labeling strategy into spreadsheet rows."""
+        normalized_strategy = self._normalize_group_channel_strategy(labeling_strategy)
+        rows: List[GroupChannelSpreadsheetRow] = []
+
+        for idx, group in enumerate(self.wizard.groups):
+            group_strategy = self._normalize_group_channel_strategy(group.get("labeling_strategy"))
+            if not group_strategy:
+                group_strategy = self._default_strategy_for_kind(str(group.get("kind") or ""))
+
+            if normalized_strategy and group_strategy != normalized_strategy:
+                continue
+
+            channel_headers = self.get_group_channel_headers(group_strategy)
+            row = GroupChannelSpreadsheetRow.from_wizard_group(group, channel_headers[1:], row_index=idx)
+            rows.append(row)
+
+        return rows
+
+    def sync_group_channel_edits(
+        self,
+        rows: List[GroupChannelSpreadsheetRow],
+        labeling_strategy: Optional[str],
+    ) -> None:
+        """Synchronize group-channel spreadsheet rows back to WizardState."""
+        normalized_strategy = self._normalize_group_channel_strategy(labeling_strategy)
+        sample_ids = {sample["id"] for sample in self.wizard.samples}
+
+        for row in rows:
+            row.validate()
+
+        for row in rows:
+            group_index = self.wizard._get_group_index(row.id)
+            group = self.wizard.groups[group_index]
+            group_strategy = self._normalize_group_channel_strategy(group.get("labeling_strategy"))
+            if not group_strategy:
+                group_strategy = self._default_strategy_for_kind(str(group.get("kind") or ""))
+
+            if normalized_strategy and group_strategy != normalized_strategy:
+                continue
+
+            if group_strategy == LFQ_LABELING_STRATEGY:
+                sample_target = row.channels.get("sample_target")
+                if sample_target is not None and str(sample_target).strip() and str(sample_target) not in sample_ids:
+                    raise ValueError(f"Sample '{sample_target}' not found in samples")
+                self.wizard.set_group_sample_target(row.id, sample_target if sample_target not in (None, "") else None)
+                continue
+
+            normalized_assignments: Dict[str, Optional[str]] = {}
+            for channel, sample_id in row.channels.items():
+                if sample_id is None or (isinstance(sample_id, str) and sample_id.strip() == ""):
+                    normalized_assignments[channel] = None
+                    continue
+                if str(sample_id) not in sample_ids:
+                    raise ValueError(f"Sample '{sample_id}' not found in samples")
+                normalized_assignments[channel] = str(sample_id)
+
+            self.wizard.set_group_channel_assignments(row.id, normalized_assignments)
 
 
     def wizard_to_spreadsheet(self) -> List[SpreadsheetRow]:
@@ -754,7 +919,6 @@ class SpreadsheetAdapter:
             current_group = next(group for group in self.wizard.groups if group["id"] == row.id)
             update_kwargs = {
                 "name": row.name,
-                "members": row.members,
                 "description": row.description,
             }
 

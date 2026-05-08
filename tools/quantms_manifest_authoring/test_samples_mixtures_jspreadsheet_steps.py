@@ -34,15 +34,15 @@ class TestCreateSamplesStepWithSpreadsheet:
         """
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class:
-            
+
             from gui_nicegui import create_samples_step
-            
+
             wizard = WizardState()
             wizard.add_sample(id="sample1", organism="homo sapiens")
             wizard.add_sample(id="sample2", organism="mus musculus")
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -51,13 +51,13 @@ class TestCreateSamplesStepWithSpreadsheet:
             mock_ui.row.return_value.__enter__.return_value = MagicMock()
             mock_ui.input.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             mock_editor = MagicMock()
             mock_editor_class.return_value = mock_editor
-            
+
             # Call the step
             create_samples_step(wizard, refresh_ui)
-            
+
             # Verify JSpreadsheetEditor was instantiated
             # (Should be called with wizard and refresh_ui)
             mock_editor_class.assert_called()
@@ -66,14 +66,14 @@ class TestCreateSamplesStepWithSpreadsheet:
         """Test that create_samples_step does not render spreadsheet when no samples exist."""
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class:
-            
+
             from gui_nicegui import create_samples_step
-            
+
             wizard = WizardState()
             # No samples added
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -82,10 +82,10 @@ class TestCreateSamplesStepWithSpreadsheet:
             mock_ui.row.return_value.__enter__.return_value = MagicMock()
             mock_ui.input.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             # Call the step
             create_samples_step(wizard, refresh_ui)
-            
+
             # JSpreadsheetEditor should NOT be called when no samples
             mock_editor_class.assert_not_called()
 
@@ -94,14 +94,14 @@ class TestCreateSamplesStepWithSpreadsheet:
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class, \
              patch('gui_nicegui.JSpreadsheetBridge') as mock_bridge_class:
-            
+
             from gui_nicegui import create_samples_step
-            
+
             wizard = WizardState()
             wizard.add_sample(id="sample1")
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -110,16 +110,16 @@ class TestCreateSamplesStepWithSpreadsheet:
             mock_ui.row.return_value.__enter__.return_value = MagicMock()
             mock_ui.input.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             mock_bridge = MagicMock()
             mock_bridge_class.return_value = mock_bridge
-            
+
             mock_editor = MagicMock()
             mock_editor_class.return_value = mock_editor
-            
+
             # Call the step
             create_samples_step(wizard, refresh_ui)
-            
+
             # Bridge should be created with entity_type='samples'
             mock_bridge_class.assert_called()
             call_kwargs = mock_bridge_class.call_args[1] if mock_bridge_class.call_args[1] else {}
@@ -137,17 +137,17 @@ class TestCreateMixturesStepWithSpreadsheet:
         """
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class:
-            
+
             from gui_nicegui import create_mixtures_step
-            
+
             wizard = WizardState()
             wizard.add_sample(id="sample1")
             wizard.add_sample(id="sample2")
             wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
             wizard.add_mixture(id="mix2", channels={"TMT127N": "sample2"})
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -157,13 +157,13 @@ class TestCreateMixturesStepWithSpreadsheet:
             mock_ui.input.return_value = MagicMock()
             mock_ui.select.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             mock_editor = MagicMock()
             mock_editor_class.return_value = mock_editor
-            
+
             # Call the step
             create_mixtures_step(wizard, refresh_ui)
-            
+
             # Verify JSpreadsheetEditor was instantiated
             mock_editor_class.assert_called()
 
@@ -171,15 +171,15 @@ class TestCreateMixturesStepWithSpreadsheet:
         """Test that create_mixtures_step does not render spreadsheet when no mixtures exist."""
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class:
-            
+
             from gui_nicegui import create_mixtures_step
-            
+
             wizard = WizardState()
             wizard.add_sample(id="sample1")
             # No mixtures added
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -189,10 +189,10 @@ class TestCreateMixturesStepWithSpreadsheet:
             mock_ui.input.return_value = MagicMock()
             mock_ui.select.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             # Call the step
             create_mixtures_step(wizard, refresh_ui)
-            
+
             # JSpreadsheetEditor should NOT be called when no mixtures
             mock_editor_class.assert_not_called()
 
@@ -201,15 +201,15 @@ class TestCreateMixturesStepWithSpreadsheet:
         with patch('gui_nicegui.ui') as mock_ui, \
              patch('gui_nicegui.JSpreadsheetEditor') as mock_editor_class, \
              patch('gui_nicegui.JSpreadsheetBridge') as mock_bridge_class:
-            
+
             from gui_nicegui import create_mixtures_step
-            
+
             wizard = WizardState()
             wizard.add_sample(id="sample1")
             wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
-            
+
             refresh_ui = MagicMock()
-            
+
             # Mock the UI components
             mock_card = MagicMock()
             mock_ui.card.return_value.__enter__.return_value = mock_card
@@ -219,16 +219,16 @@ class TestCreateMixturesStepWithSpreadsheet:
             mock_ui.input.return_value = MagicMock()
             mock_ui.select.return_value = MagicMock()
             mock_ui.button.return_value = MagicMock()
-            
+
             mock_bridge = MagicMock()
             mock_bridge_class.return_value = mock_bridge
-            
+
             mock_editor = MagicMock()
             mock_editor_class.return_value = mock_editor
-            
+
             # Call the step
             create_mixtures_step(wizard, refresh_ui)
-            
+
             # Bridge should be created with entity_type='mixtures'
             mock_bridge_class.assert_called()
             call_kwargs = mock_bridge_class.call_args[1] if mock_bridge_class.call_args[1] else {}
@@ -244,12 +244,12 @@ class TestSpreadsheetStepsDeleteBehavior:
         wizard = WizardState()
         wizard.add_sample(id="sample1")
         wizard.add_sample(id="sample2")
-        
+
         # Simulate row deletion through bridge
         from jspreadsheet_bridge import JSpreadsheetBridge
         bridge = JSpreadsheetBridge(wizard, entity_type="samples")
         bridge.handle_row_delete(row_index=0)
-        
+
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample2"
 
@@ -259,11 +259,11 @@ class TestSpreadsheetStepsDeleteBehavior:
         wizard.add_sample(id="sample1")
         wizard.add_mixture(id="mix1", channels={"TMT126": "sample1"})
         wizard.add_mixture(id="mix2", channels={"TMT127N": "sample1"})
-        
+
         # Simulate row deletion through bridge
         from jspreadsheet_bridge import JSpreadsheetBridge
         bridge = JSpreadsheetBridge(wizard, entity_type="mixtures")
         bridge.handle_row_delete(row_index=0)
-        
+
         assert len(wizard.mixtures) == 1
         assert wizard.mixtures[0]["id"] == "mix2"

@@ -104,7 +104,7 @@ class TestReadOnlyPropagationToJspreadsheet:
 class TestJspreadsheetEditorReadOnlyMerge:
     """
     Tests for verifying that jspreadsheet editor merges read_only into column definitions.
-    
+
     Note: These tests verify the JavaScript-facing column definition building.
     The actual JS-side readOnly behavior is tested via integration tests.
     """
@@ -113,7 +113,7 @@ class TestJspreadsheetEditorReadOnlyMerge:
         """
         Verify that when column config includes read_only=True,
         the resulting jspreadsheet column definition should have readOnly: true.
-        
+
         This test uses the same logic as jspreadsheet_editor.py's column merging.
         """
         # Simulate what jspreadsheet_editor does

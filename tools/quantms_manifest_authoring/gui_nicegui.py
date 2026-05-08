@@ -90,6 +90,22 @@ class WizardEditor:
 
         return True
 
+    def can_go_forward_for_visible_page(self) -> bool:
+        """Check whether the currently visible page can advance to the next visible page."""
+        current_page_index = self.wizard.get_main_flow_page_index()
+        if current_page_index >= len(self.wizard.get_main_flow_page_labels()) - 1:
+            return False
+
+        if current_page_index == 0:
+            return self.can_go_forward()
+
+        if current_page_index == 1:
+            if self.wizard.current_step_index < WizardStep.ASSIGNMENTS.get_index():
+                return self.wizard._experiment_settings_saved
+            return True
+
+        return True
+
 
 class ManifestEditingWizard(WizardEditor):
     """Alias for WizardEditor for backward compatibility."""
@@ -798,16 +814,29 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
     return active_editor
 
 
-def create_group_detail_step(wizard: WizardState, refresh_ui: Callable) -> None:
+def create_group_detail_step(
+    wizard: WizardState,
+    refresh_ui: Callable,
+) -> JSpreadsheetEditor | SpreadsheetEditorFlushGroup | None:
     """Create the active group detail page for multiplexed and LFQ groups."""
     active_group = wizard.get_active_group()
+    if active_group is None and wizard.groups:
+        wizard.set_active_group_id(wizard.groups[0]["id"])
+        active_group = wizard.get_active_group()
+
+    spreadsheet_editors: List[JSpreadsheetEditor] = []
+
+    def return_to_groups() -> None:
+        wizard.clear_active_group()
+        current_page_index = wizard.get_main_flow_page_index()
+        while wizard.get_main_flow_page_index() == current_page_index and wizard.current_step_index > 0:
+            wizard.previous_step()
+        refresh_ui()
 
     with ui.card().classes("w-full mt-6"):
-        if not active_group:
+        if not wizard.groups:
             ui.label("No group is open.").classes("text-sm text-gray-600")
-            ui.button("Back to Groups", on_click=lambda: (wizard.clear_active_group(), refresh_ui())).props(
-                "flat no-caps"
-            )
+            ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
             return
 
         group_id: str = str(active_group.get("id") or "")
@@ -822,88 +851,100 @@ def create_group_detail_step(wizard: WizardState, refresh_ui: Callable) -> None:
         group_kind: str = wizard.normalize_group_kind(active_group.get("kind")) or str(
             active_group.get("kind") or ""
         )
+        group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
 
         with ui.row().classes("w-full items-center justify-between gap-3"):
             with ui.column().classes("gap-0"):
                 ui.label(f"Group Details: {group_name}").classes("text-lg font-semibold")
                 ui.label(f"Kind: {group_kind}").classes("text-sm text-gray-600")
-            ui.button(
-                "Back to Groups",
-                on_click=lambda: (wizard.clear_active_group(), refresh_ui()),
-                icon="arrow_back",
-            ).props("flat no-caps")
+            with ui.row().classes("items-end gap-3"):
+                group_select = ui.select(
+                    options=group_options,
+                    value=group_id,
+                    label="Group",
+                ).classes("w-64")
 
-        members = list(active_group.get("members", []) or [])
-        if members:
-            ui.label(f"Group members ({len(members)} run(s))").classes("text-sm font-semibold mt-4")
-            for member_id in members:
-                run = next((candidate for candidate in wizard.runs if candidate.get("id") == member_id), None)
-                if run:
-                    member_text = run.get("file") or member_id
-                    if run.get("fraction") is not None:
-                        member_text = f"{member_text} | fraction {run.get('fraction')}"
-                else:
-                    member_text = member_id
-                ui.label(f"• {member_text}").classes("text-sm text-gray-700")
-        else:
-            ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500 mt-4")
-
-        sample_options = {sample["id"]: sample["id"] for sample in wizard.samples}
-        if not sample_options:
-            ui.label("Add reusable samples to author this group.").classes("text-sm text-amber-600 mt-4")
-
-        if group_kind == "LFQ":
-            ui.label("Sample target").classes("text-md font-semibold mt-6")
-            sample_target_select = ui.select(
-                options=sample_options,
-                value=active_group.get("sample_target"),
-                label="Sample target",
-                clearable=True,
-            ).classes("w-full max-w-lg")
-
-            def update_sample_target(event: Any) -> None:
-                selected_value = getattr(event, "value", event)
-                wizard.set_group_sample_target(group_id, selected_value or None)
-                refresh_ui()
-
-            sample_target_select.on_value_change(update_sample_target)
-            return
-
-        ui.label("Channel sample associations").classes("text-md font-semibold mt-6")
-        strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(group_kind)
-        if not strategy:
-            ui.label("No labeling strategy is available for this group kind.").classes("text-sm text-amber-600")
-            return
-
-        try:
-            channels = ChannelBuilder(strategy).get_available_channels()
-        except Exception as e:
-            ui.label(f"Unable to load channels for {strategy}: {e}").classes("text-sm text-red-600")
-            return
-
-        current_assignments = wizard.get_group_channel_assignments(group_id)
-        if not channels:
-            ui.label("No channels are available for this labeling strategy.").classes("text-sm text-amber-600")
-            return
-
-        for channel_name in channels:
-            with ui.row().classes("w-full items-end gap-3 mt-2"):
-                ui.label(channel_name).classes("w-40 text-sm font-medium")
-                channel_select = ui.select(
-                    options=sample_options,
-                    value=current_assignments.get(channel_name),
-                    label=f"Sample for {channel_name}",
-                    clearable=True,
-                ).classes("w-full max-w-lg")
-
-                def update_channel_assignment(event: Any, channel: str = channel_name) -> None:
+                def update_active_group(event: Any) -> None:
                     selected_value = getattr(event, "value", event)
-                    updated_assignments = wizard.get_group_channel_assignments(group_id)
-                    updated_assignments[channel] = selected_value or None
-                    wizard.set_group_channel_assignments(group_id, updated_assignments)
+                    if not selected_value:
+                        return
+                    wizard.set_active_group_id(str(selected_value))
                     refresh_ui()
 
-                channel_select.on_value_change(update_channel_assignment)
+                group_select.on_value_change(update_active_group)
+                ui.button(
+                    "Back to Groups",
+                    on_click=return_to_groups,
+                    icon="arrow_back",
+                ).props("flat no-caps")
+
+        members = list(active_group.get("members", []) or [])
+        with ui.expansion(text="Membership Summary", icon="info", value=True).classes("w-full mt-4"):
+            if members:
+                ui.label(f"Group members ({len(members)} run(s))").classes("text-sm font-semibold")
+                for member_id in members:
+                    run = next((candidate for candidate in wizard.runs if candidate.get("id") == member_id), None)
+                    if run:
+                        member_text = run.get("file") or member_id
+                        if run.get("fraction") is not None:
+                            member_text = f"{member_text} | fraction {run.get('fraction')}"
+                    else:
+                        member_text = member_id
+                    ui.label(f"• {member_text}").classes("text-sm text-gray-700")
+            else:
+                ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500")
+
+        JSpreadsheetEditor.prepare_client_runtime()
+
+        with ui.card().classes("w-full mt-6"):
+            ui.label("Samples").classes("text-md font-semibold")
+            ui.label("Reusable samples are shared across all group channel sheets.").classes("text-sm text-gray-600")
+            sample_bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+            sample_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=sample_bridge, worksheet_name="Samples")
+            sample_editor.render()
+            spreadsheet_editors.append(sample_editor)
+
+        channel_strategies = wizard.get_group_channel_sheet_strategies()
+        if channel_strategies:
+            ui.label("Channel Sheets").classes("text-md font-semibold mt-6")
+            ui.label(
+                "Each sheet below owns the sample assignments for one labeling strategy. "
+                "Group/file membership stays read-only in the summary above."
+            ).classes("text-sm text-gray-600")
+
+        for strategy in channel_strategies:
+            sheet_name = "LFQ" if strategy == wizard.get_default_labeling_strategy("LFQ") else strategy
+            with ui.card().classes("w-full mt-4"):
+                ui.label(f"{sheet_name} Channel Sheet").classes("text-md font-semibold")
+                matching_groups = wizard.get_group_ids_for_labeling_strategy(strategy)
+                if matching_groups:
+                    ui.label(
+                        f"{len(matching_groups)} group(s) use this strategy"
+                    ).classes("text-sm text-gray-600")
+                bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy=strategy)
+                editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=sheet_name)
+                editor.render()
+                spreadsheet_editors.append(editor)
+                ui.label(
+                    "• Sample selections are dropdowns sourced from the shared Samples sheet\n"
+                    "• Group/file membership is read-only and not editable in this sheet\n"
+                    "• Channel names come from the bundled channel catalog"
+                ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+
+        if not channel_strategies:
+            ui.label("Add a group to open its channel sheet.").classes("text-sm text-gray-500 italic mt-4")
+
+        if wizard.samples:
+            ui.label("Sample sheet edits immediately feed the dropdown sources above.").classes(
+                "text-xs text-gray-500 mt-4"
+            )
+
+        ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
+
+    if len(spreadsheet_editors) > 1:
+        return SpreadsheetEditorFlushGroup(spreadsheet_editors)
+    if spreadsheet_editors:
+        return spreadsheet_editors[0]
 
 
 def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]:
@@ -1125,32 +1166,6 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                 ).classes("px-4 py-0.5")
 
                 if wizard.groups:
-                    open_group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
-
-                    with ui.row().classes("w-full items-end gap-3 mt-4"):
-                        open_group_select = ui.select(
-                            options=open_group_options,
-                            value=wizard.groups[0]["id"] if wizard.groups else None,
-                            label="Open Group Details",
-                        ).classes("flex-grow")
-
-                        def open_group_details() -> None:
-                            selected_group_id = open_group_select.value
-                            if not selected_group_id:
-                                ui.notify("Choose a group to open", type="warning")
-                                return
-                            try:
-                                wizard.set_active_group_id(selected_group_id)
-                                refresh_ui()
-                            except Exception as e:
-                                ui.notify(f"Error opening group: {e}", type="negative")
-
-                        ui.button(
-                            "Open Group Details",
-                            on_click=open_group_details,
-                            icon="arrow_forward",
-                        ).classes("px-4 py-0.5")
-
                     ui.label(f"Groups Table ({len(wizard.groups)} group(s))").classes("text-md font-semibold")
 
                     bridge = JSpreadsheetBridge(wizard, entity_type="groups")
@@ -1160,14 +1175,16 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
 
                     ui.label(
                         "• Group ID is read-only in this phase\n"
-                        "• Group name, kind, labeling strategy, members, and description can be edited\n"
+                        "• Group name, kind, labeling strategy, and description can be edited\n"
                         "• Channel count is derived from the labeling strategy\n"
-                        "• Open a group to author its channel or LFQ detail page"
+                        "• Group details are authored on the next page"
                     ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
                 else:
                     ui.label("No groups added yet. Group membership will appear here when groups exist.").classes(
                         "text-sm text-gray-500 italic"
                     )
+
+        render_experiment_controls(wizard, refresh_ui, "Experiment Parameters", include_quantification_method=False)
 
     modifications_editor = create_modifications_surface(wizard, refresh_ui)
     if modifications_editor:
@@ -1433,60 +1450,80 @@ def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> Option
     return active_editor
 
 
-def create_experiment_step(wizard: WizardState, refresh_ui: Callable) -> None:
-    """Create the EXPERIMENT step UI."""
+def render_experiment_controls(
+    wizard: WizardState,
+    refresh_ui: Callable,
+    heading: str,
+    include_quantification_method: bool = True,
+) -> None:
+    """Render the experiment controls shared by the Runs page and the legacy experiment page."""
+    existing_experiment = wizard.experiment or {}
+
     with ui.card().classes("w-full"):
-        ui.label("Step 4: Define Experiment Parameters").classes("text-lg font-semibold")
-        ui.label("Set acquisition method, enzyme, dissociation method, and quantification approach.").classes(
-            "text-sm text-gray-600"
-        )
+        ui.label(heading).classes("text-lg font-semibold")
+        description = "Set acquisition method, enzyme, and dissociation method."
+        if include_quantification_method:
+            description = "Set acquisition method, enzyme, dissociation method, and quantification approach."
+        ui.label(description).classes("text-sm text-gray-600")
 
         with ui.column().classes("w-full gap-4"):
             acq_method = ui.select(
                 options={"DDA": "DDA", "DIA": "DIA"},
-                value="DDA",
+                value=existing_experiment.get("acquisition_method", "DDA"),
                 label="Acquisition Method",
             )
             enzyme = ui.input(
                 label="Enzyme (required)",
-                value="Trypsin",
+                value=existing_experiment.get("enzyme", "Trypsin"),
                 placeholder="e.g., Trypsin",
             )
             dissociation = ui.input(
                 label="Dissociation Method (required)",
-                value="HCD",
+                value=existing_experiment.get("dissociation_method", "HCD"),
                 placeholder="e.g., HCD, CID, ETD",
             )
-            quant_method = ui.select(
-                options={
-                    "": "None",
-                    "LFQ": "LFQ",
-                    "TMT": "TMT",
-                    "iTRAQ": "iTRAQ",
-                    "SILAC": "SILAC",
-                },
-                label="Quantification Method",
-            )
+            quant_method = None
+            if include_quantification_method:
+                quant_method = ui.select(
+                    options={
+                        "": "None",
+                        "LFQ": "LFQ",
+                        "TMT": "TMT",
+                        "iTRAQ": "iTRAQ",
+                        "SILAC": "SILAC",
+                    },
+                    value=existing_experiment.get("quantification_method"),
+                    label="Quantification Method",
+                )
 
-            def save_experiment():
+            def autosave_experiment(_: Any = None, refresh_after_save: bool = True) -> None:
                 if not enzyme.value or not dissociation.value:
-                    ui.notify("Enzyme and Dissociation Method are required")
                     return
                 try:
                     wizard.set_experiment(
                         acquisition_method=acq_method.value or "DDA",
                         enzyme=enzyme.value,
                         dissociation_method=dissociation.value,
-                        quantification_method=quant_method.value or None,
+                        quantification_method=quant_method.value or None if quant_method is not None else None,
                     )
-                    ui.notify("Experiment settings saved")
-                    refresh_ui()
+                    if refresh_after_save:
+                        refresh_ui()
                 except Exception as e:
                     ui.notify(f"Error: {e}", type="negative")
 
-            ui.button("Save Experiment Settings", on_click=save_experiment, icon="save").classes(
-                "w-full"
-            )
+            acq_method.on_value_change(autosave_experiment)
+            enzyme.on_value_change(autosave_experiment)
+            dissociation.on_value_change(autosave_experiment)
+            if quant_method is not None:
+                quant_method.on_value_change(autosave_experiment)
+
+            if not wizard._experiment_settings_saved:
+                autosave_experiment(refresh_after_save=False)
+
+
+def create_experiment_step(wizard: WizardState, refresh_ui: Callable) -> None:
+    """Create the EXPERIMENT step UI."""
+    render_experiment_controls(wizard, refresh_ui, "Step 4: Define Experiment Parameters")
 
 
 def create_review_step(wizard: WizardState, refresh_ui: Callable) -> None:
@@ -1566,178 +1603,132 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
         # Step content containers are mounted once and reused to avoid
         # remounting heavy spreadsheet widgets on every navigation.
         step_content = ui.column().classes("w-full")
-        group_detail_content = ui.column().classes("w-full")
-        steps = WizardStep.ordered_steps()
-        step_names = [
-            "Runs",
-            "Samples",
-            "Mixtures",
-            "Experiment",
-            "Assignments",
-            "Review",
-        ]
-        step_renderers = {
-            WizardStep.RUNS: create_runs_step,
-            WizardStep.SAMPLES: create_samples_step,
-            WizardStep.MIXTURES: create_mixtures_step,
-            WizardStep.EXPERIMENT: create_experiment_step,
-            WizardStep.ASSIGNMENTS: create_assignments_step,
-            WizardStep.REVIEW: create_review_step,
-        }
-        step_containers: Dict[WizardStep, ui.column] = {}
-        step_dirty = {step: True for step in steps}
-        step_rendered = {step: False for step in steps}
-        step_editors: Dict[WizardStep, Optional[JSpreadsheetEditor]] = {step: None for step in steps}
+        main_page_labels = editor.wizard.get_main_flow_page_labels()
+        main_page_renderers = [create_runs_step, create_group_detail_step, create_review_step]
+        main_page_containers: List[Any] = []
+        main_page_rendered = [False] * len(main_page_labels)
+        main_page_editors: List[Optional[Any]] = [None] * len(main_page_labels)
+        main_page_render_keys: List[Optional[Any]] = [None] * len(main_page_labels)
+
+        def get_main_page_render_key(page_index: int) -> Optional[Any]:
+            """Return the lightweight state signature that backs a cached visible page."""
+            if page_index == 1:
+                return editor.wizard.get_active_group_id()
+            return None
 
         with step_content:
-            for step in steps:
+            for _ in main_page_labels:
                 container = ui.column().classes("w-full")
                 container.set_visibility(False)
-                step_containers[step] = container
-
-        group_detail_content.set_visibility(False)
-
-        def render_group_detail_page() -> None:
-            """Render the transient active-group page outside the main step stack."""
-            group_detail_content.clear()
-            with group_detail_content:
-                create_group_detail_step(editor.wizard, refresh_ui)
-
-            group_detail_content.set_visibility(True)
+                main_page_containers.append(container)
 
         def render_progress() -> None:
             """Refresh the read-only wizard progress indicator."""
-            # Update progress indicator
             progress_container.clear()
+            current_page_index = editor.wizard.get_main_flow_page_index()
 
             with progress_container:
-                for idx, step in enumerate(steps):
-                    is_current = idx == editor.wizard.current_step_index
-                    is_past = idx < editor.wizard.current_step_index
+                for idx, page_label in enumerate(main_page_labels):
+                    is_current = idx == current_page_index
+                    is_past = idx < current_page_index
                     css_class = (
                         "bg-primary text-white" if is_current
                         else "bg-green-500 text-white" if is_past
                         else "bg-gray-300 text-gray-700"
                     )
                     with ui.button(
-                        f"{idx + 1}. {step_names[idx]}",
+                        f"{idx + 1}. {page_label}",
                         icon="check" if is_past else None,
                     ).classes(f"px-3 py-2 rounded font-semibold {css_class}"):
-                        pass  # Buttons are read-only progress indicators
-                    if idx < len(steps) - 1:
+                        pass
+                    if idx < len(main_page_labels) - 1:
                         ui.label("→").classes("text-gray-400")
 
-        def render_step_content(step: WizardStep, force: bool = False) -> None:
-            """Render a step into its cached container when needed."""
-            if step_rendered[step] and not (force or step_dirty[step]):
+        def render_page_content(page_index: int, force: bool = False) -> None:
+            """Render a visible wizard page into its cached container when needed."""
+            current_render_key = get_main_page_render_key(page_index)
+            if main_page_rendered[page_index] and not force and main_page_render_keys[page_index] == current_render_key:
                 return
 
-            container = step_containers[step]
+            container = main_page_containers[page_index]
             container.clear()
             with container:
-                step_editors[step] = step_renderers[step](editor.wizard, refresh_ui)
+                main_page_editors[page_index] = main_page_renderers[page_index](editor.wizard, refresh_ui)
 
-            step_rendered[step] = True
-            step_dirty[step] = False
+            main_page_rendered[page_index] = True
+            main_page_render_keys[page_index] = current_render_key
 
-        def show_current_step(rerender_current_step: bool) -> None:
-            """Show the active step and reuse any previously mounted content."""
-            active_group_id = editor.wizard.get_active_group_id()
-            if active_group_id:
-                for step, container in step_containers.items():
-                    container.set_visibility(False)
-                group_detail_content.set_visibility(True)
-                render_group_detail_page()
-                editor.wizard.set_active_editor(None)
-                return
+        def show_current_page(rerender_current_page: bool) -> None:
+            """Show the active visible page and reuse any previously mounted content."""
+            current_page_index = editor.wizard.get_main_flow_page_index()
 
-            current_step = editor.wizard.get_current_step()
-            render_step_content(current_step, force=rerender_current_step)
+            render_page_content(current_page_index, force=rerender_current_page)
 
-            group_detail_content.set_visibility(False)
-            for step, container in step_containers.items():
-                container.set_visibility(step == current_step)
+            for idx, container in enumerate(main_page_containers):
+                container.set_visibility(idx == current_page_index)
 
-            editor.wizard.set_active_editor(step_editors.get(current_step))
+            editor.wizard.set_active_editor(main_page_editors[current_page_index])
 
-        def render_step(rerender_current_step: bool = True) -> None:
-            """Refresh progress and show the current step content."""
+        def render_page(rerender_current_page: bool = True) -> None:
+            """Refresh progress and show the current visible page content."""
             render_progress()
-            show_current_step(rerender_current_step)
+            show_current_page(rerender_current_page)
 
-        def update_nav_buttons():
-            """Update button states based on current step and progression prerequisites."""
-            if editor.wizard.get_active_group_id():
-                back_btn.enabled = False
-                next_btn.enabled = False
-                return
+        def update_nav_buttons() -> None:
+            """Update button states based on the visible page flow."""
+            current_page_index = editor.wizard.get_main_flow_page_index()
+            back_btn.enabled = current_page_index > 0
+            next_btn.enabled = current_page_index < len(main_page_labels) - 1 and editor.can_go_forward_for_visible_page()
 
-            current_idx = editor.wizard.current_step_index
-            # Back button disabled on first step
-            back_btn.enabled = current_idx > 0
-            # Next button enabled only if can_go_forward (respects all prerequisites)
-            next_btn.enabled = editor.can_go_forward()
-
-        def refresh_ui(rerender_current_step: bool = True, invalidate_cached_steps: bool = True):
-            """Refresh the UI while reusing cached step content whenever possible."""
-            if invalidate_cached_steps:
-                for step in steps:
-                    step_dirty[step] = True
-
-            render_step(rerender_current_step=rerender_current_step)
+        def refresh_ui(rerender_current_page: bool = True) -> None:
+            """Refresh the UI while reusing cached page content whenever possible."""
+            render_page(rerender_current_page=rerender_current_page)
             update_nav_buttons()
 
+        async def go_back():
+            try:
+                active_editor = editor.wizard.get_active_editor()
+                if active_editor is not None and hasattr(active_editor, "flush_pending_edits"):
+                    flush_result = active_editor.flush_pending_edits()
+                    import inspect
+                    if inspect.iscoroutine(flush_result):
+                        await flush_result
+
+                current_page_index = editor.wizard.get_main_flow_page_index()
+                while editor.wizard.get_main_flow_page_index() == current_page_index and editor.wizard.current_step_index > 0:
+                    editor.wizard.previous_step()
+
+                refresh_ui(rerender_current_page=False)
+            except ValueError as e:
+                ui.notify(str(e), type="warning")
+
+        async def go_next():
+            try:
+                active_editor = editor.wizard.get_active_editor()
+                if active_editor is not None and hasattr(active_editor, "flush_pending_edits"):
+                    flush_result = active_editor.flush_pending_edits()
+                    import inspect
+                    if inspect.iscoroutine(flush_result):
+                        await flush_result
+
+                if not editor.can_go_forward_for_visible_page():
+                    return
+
+                current_page_index = editor.wizard.get_main_flow_page_index()
+                while editor.wizard.get_main_flow_page_index() == current_page_index:
+                    editor.wizard.next_step()
+
+                refresh_ui(rerender_current_page=False)
+            except ValueError as e:
+                ui.notify(str(e), type="warning")
+
         # Initial render
-        render_step()
+        render_page()
 
         # Navigation buttons
         with ui.row().classes("w-full gap-4 mt-6"):
             back_btn = ui.button("Back", icon="arrow_back").classes("px-6")
             next_btn = ui.button("Next", icon="arrow_forward").classes("px-6")
-
-            async def go_back():
-                try:
-                    # Flush pending edits from active editor before navigating
-                    active_editor = editor.wizard.get_active_editor()
-                    invalidate_cached_steps = False
-                    if active_editor is not None:
-                        if hasattr(active_editor, 'flush_pending_edits'):
-                            invalidate_cached_steps = True
-                            flush_result = active_editor.flush_pending_edits()
-                            # If flush_pending_edits is async, await it
-                            import inspect
-                            if inspect.iscoroutine(flush_result):
-                                await flush_result
-
-                    editor.wizard.previous_step()
-                    refresh_ui(
-                        rerender_current_step=False,
-                        invalidate_cached_steps=invalidate_cached_steps,
-                    )
-                except ValueError as e:
-                    ui.notify(str(e), type="warning")
-
-            async def go_next():
-                try:
-                    # Flush pending edits from active editor before navigating
-                    active_editor = editor.wizard.get_active_editor()
-                    invalidate_cached_steps = False
-                    if active_editor is not None:
-                        if hasattr(active_editor, 'flush_pending_edits'):
-                            invalidate_cached_steps = True
-                            flush_result = active_editor.flush_pending_edits()
-                            # If flush_pending_edits is async, await it
-                            import inspect
-                            if inspect.iscoroutine(flush_result):
-                                await flush_result
-
-                    editor.wizard.next_step()
-                    refresh_ui(
-                        rerender_current_step=False,
-                        invalidate_cached_steps=invalidate_cached_steps,
-                    )
-                except ValueError as e:
-                    ui.notify(str(e), type="warning")
 
             back_btn.on_click(go_back)
             next_btn.on_click(go_next)

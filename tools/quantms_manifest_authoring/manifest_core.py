@@ -182,6 +182,19 @@ class ChannelBuilder:
         "SILAC_3plex": ["Light", "Medium", "Heavy"],
     }
 
+    CHANNEL_PROVENANCE = {
+        "TMT2": "PSI-MS / PRIDE bundled channel catalog",
+        "TMT6": "PSI-MS / PRIDE bundled channel catalog",
+        "TMT10": "PSI-MS / PRIDE bundled channel catalog",
+        "TMT11": "PSI-MS / PRIDE bundled channel catalog",
+        "TMT16": "PSI-MS / PRIDE bundled channel catalog",
+        "TMT18": "PSI-MS / PRIDE bundled channel catalog",
+        "iTRAQ4": "PSI-MS / PRIDE bundled channel catalog",
+        "iTRAQ8": "PSI-MS / PRIDE bundled channel catalog",
+        "SILAC_2plex": "PSI-MS / PRIDE bundled channel catalog",
+        "SILAC_3plex": "PSI-MS / PRIDE bundled channel catalog",
+    }
+
     def __init__(self, plex_type: str):
         """Initialize channel builder for a specific plex type."""
         if plex_type not in self.CHANNEL_CONFIGS:
@@ -199,6 +212,22 @@ class ChannelBuilder:
     def get_supported_plex_types() -> List[str]:
         """Get list of all supported plex types."""
         return sorted(ChannelBuilder.CHANNEL_CONFIGS.keys())
+
+    @classmethod
+    def get_channel_catalog(cls) -> Dict[str, List[Dict[str, Any]]]:
+        """Return a bundled channel catalog keyed by strategy name."""
+        catalog: Dict[str, List[Dict[str, Any]]] = {}
+        for strategy, channels in cls.CHANNEL_CONFIGS.items():
+            provenance = cls.CHANNEL_PROVENANCE.get(strategy, "PSI-MS / PRIDE bundled channel catalog")
+            catalog[strategy] = [
+                {
+                    "channel": channel,
+                    "strategy": strategy,
+                    "provenance": provenance,
+                }
+                for channel in channels
+            ]
+        return catalog
 
 
 def validate_manifest(manifest: "ManifestState") -> List[Dict[str, Any]]:

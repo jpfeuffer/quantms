@@ -28,6 +28,11 @@ from manifest_core import ManifestState, Run, Sample, Mixture, Experiment, Chann
 
 GROUP_KIND_OPTIONS = ["LFQ", "TMT", "iTRAQ", "SILAC"]
 LFQ_LABELING_STRATEGY = "label free sample"
+MAIN_FLOW_PAGE_LABELS = [
+    "Runs + Modifications + Experiment",
+    "Group Details",
+    "Review",
+]
 _UNSET = object()
 
 
@@ -79,6 +84,19 @@ class WizardState:
         """Get the current wizard step."""
         steps = WizardStep.ordered_steps()
         return steps[self.current_step_index]
+
+    def get_main_flow_page_index(self) -> int:
+        """Map the legacy step index to the three visible authoring pages."""
+        if self.current_step_index <= WizardStep.RUNS.get_index():
+            return 0
+        if self.current_step_index < WizardStep.REVIEW.get_index():
+            return 1
+        return 2
+
+    @classmethod
+    def get_main_flow_page_labels(cls) -> List[str]:
+        """Return the visible page labels for the revised main wizard flow."""
+        return MAIN_FLOW_PAGE_LABELS.copy()
 
     def set_current_step_index(self, index: int) -> None:
         """
@@ -352,6 +370,32 @@ class WizardState:
         """Get the stored channel-to-sample assignments for a group."""
         group_index = self._get_group_index(group_id)
         return dict(self.groups[group_index].get("channel_sample_assignments", {}))
+
+    def get_group_channel_sheet_strategies(self) -> List[str]:
+        """Return the distinct labeling strategies currently present in authoring groups."""
+        strategies: List[str] = []
+        for group in self.groups:
+            strategy = self._normalize_labeling_strategy(group.get("labeling_strategy"))
+            if not strategy:
+                strategy = self.get_default_labeling_strategy(group.get("kind"))
+            if strategy and strategy not in strategies:
+                strategies.append(strategy)
+        return strategies
+
+    def get_group_ids_for_labeling_strategy(self, labeling_strategy: Optional[str]) -> List[str]:
+        """Return the group ids that use a specific labeling strategy."""
+        normalized_strategy = self._normalize_labeling_strategy(labeling_strategy)
+        if not normalized_strategy:
+            return []
+
+        group_ids: List[str] = []
+        for group in self.groups:
+            group_strategy = self._normalize_labeling_strategy(group.get("labeling_strategy"))
+            if not group_strategy:
+                group_strategy = self.get_default_labeling_strategy(group.get("kind"))
+            if group_strategy == normalized_strategy:
+                group_ids.append(str(group.get("id") or ""))
+        return [group_id for group_id in group_ids if group_id]
 
     def get_default_labeling_strategy(self, kind: Optional[str]) -> Optional[str]:
         """Get the first supported labeling strategy for a kind, if any."""

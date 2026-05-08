@@ -21,6 +21,7 @@ from spreadsheet_adapter import (
     AssignmentFieldInfo,
     AssignmentSpreadsheetRow,
     ModificationSpreadsheetRow,
+    GroupChannelSpreadsheetRow,
 )
 from spreadsheet_column_config import ColumnConfigBuilder
 from ontology_provider import OntologyOptionProvider
@@ -46,7 +47,8 @@ class JSpreadsheetBridge:
         self,
         wizard: WizardState,
         column_config_builder=None,
-        entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications", "groups"] = "runs",
+        group_strategy: Optional[str] = None,
+        entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications", "groups", "group_channels"] = "runs",
     ):
         """Initialize bridge with wizard state.
 
@@ -54,10 +56,11 @@ class JSpreadsheetBridge:
             wizard: WizardState instance
             column_config_builder: Optional ColumnConfigBuilder for dropdown config.
                                   If None, creates a new one.
-            entity_type: Type of entity ('runs', 'samples', 'mixtures', 'assignments', 'modifications', or 'groups'). Default is 'runs'.
+            entity_type: Type of entity ('runs', 'samples', 'mixtures', 'assignments', 'modifications', 'groups', or 'group_channels'). Default is 'runs'.
         """
         self.wizard = wizard
         self.entity_type = entity_type
+        self.group_strategy = group_strategy
         self.adapter = SpreadsheetAdapter(wizard)
         self.column_config_builder = column_config_builder or ColumnConfigBuilder()
         self.option_provider = OntologyOptionProvider()
@@ -105,6 +108,15 @@ class JSpreadsheetBridge:
             headers = self.adapter.get_column_headers_groups()
             rows = self.adapter.wizard_groups_to_spreadsheet()
             data = [[getattr(row, field, None) for field in headers] for row in rows]
+        elif self.entity_type == "group_channels":
+            headers = self.adapter.get_group_channel_headers(self.group_strategy)
+            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+            data = []
+            for row in rows:
+                row_data = [row.id]
+                for channel in headers[1:]:
+                    row_data.append(row.channels.get(channel, None))
+                data.append(row_data)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -129,6 +141,12 @@ class JSpreadsheetBridge:
                 for row_index, _ in enumerate(rows)
                 for col_index, field_name in enumerate(headers)
                 if field_name in {"id", "channel_count"}
+            ]
+            spreadsheet_data["allow_delete_row"] = False
+        elif self.entity_type == "group_channels":
+            spreadsheet_data["read_only_cells"] = [
+                {"row": row_index, "col": 0}
+                for row_index, _ in enumerate(rows)
             ]
             spreadsheet_data["allow_delete_row"] = False
 
@@ -172,6 +190,14 @@ class JSpreadsheetBridge:
             return ModificationFieldInfo.get_field_info(field)
         elif self.entity_type == "groups":
             return GroupFieldInfo.get_field_info(field)
+        elif self.entity_type == "group_channels":
+            if field == "id":
+                return MixtureFieldInfo.get_field_info(field)
+            return {
+                "type": "str",
+                "required": False,
+                "description": f"Sample assigned to {field}",
+            }
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -200,6 +226,9 @@ class JSpreadsheetBridge:
                     for strategy in self._get_group_labeling_strategy_options()
                 ],
             }
+        elif self.entity_type == "group_channels":
+            sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
+            return {header: sample_options for header in headers if header != "id"}
         elif self.entity_type == "modifications":
             return {
                 "mode": [
@@ -244,6 +273,8 @@ class JSpreadsheetBridge:
             return len(self.wizard.modifications)
         if self.entity_type == "groups":
             return len(self.wizard.groups)
+        if self.entity_type == "group_channels":
+            return len(self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy))
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
@@ -373,6 +404,27 @@ class JSpreadsheetBridge:
             self.adapter.sync_group_edits(rows)
             return
 
+        if self.entity_type == "group_channels":
+            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+            headers = self.adapter.get_group_channel_headers(self.group_strategy)
+            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+                if not isinstance(row_data, (list, tuple)):
+                    continue
+                row = rows[row_index]
+                for col_index, field_name in enumerate(headers[: len(row_data)]):
+                    if field_name == "id":
+                        normalized_value = None if row_data[col_index] == "" else row_data[col_index]
+                        if normalized_value != row.id:
+                            raise ValueError("Group ID is read-only in full-sheet sync")
+                        continue
+                    value = row_data[col_index]
+                    if value == "":
+                        value = None
+                    row.channels[field_name] = value
+                row.validate()
+            self.adapter.sync_group_channel_edits(rows, self.group_strategy)
+            return
+
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
 
@@ -400,6 +452,8 @@ class JSpreadsheetBridge:
             self._handle_cell_edit_modifications(row_index, col_index, new_value)
         elif self.entity_type == "groups":
             self._handle_cell_edit_groups(row_index, col_index, new_value)
+        elif self.entity_type == "group_channels":
+            self._handle_cell_edit_group_channels(row_index, col_index, new_value)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -629,6 +683,30 @@ class JSpreadsheetBridge:
         self.adapter.sync_group_edits(current_rows)
         self._dropdown_constraint_cache = self._build_dropdown_constraints()
 
+    def _handle_cell_edit_group_channels(self, row_index: int, col_index: int, new_value: Any) -> None:
+        """Handle cell edit for strategy-based group channel sheets."""
+        headers = self.adapter.get_group_channel_headers(self.group_strategy)
+        field_name = headers[col_index]
+
+        if field_name == "id":
+            raise ValueError("Group ID is read-only")
+
+        current_rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+
+        if row_index < 0 or row_index >= len(current_rows):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        edited_row = current_rows[row_index]
+
+        if new_value is None or (isinstance(new_value, str) and new_value.strip() == ""):
+            edited_row.channels[field_name] = None
+        else:
+            edited_row.channels[field_name] = new_value
+
+        edited_row.validate()
+        current_rows[row_index] = edited_row
+        self.adapter.sync_group_channel_edits(current_rows, self.group_strategy)
+
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
         Build a cache of dropdown constraints for validation.
@@ -712,6 +790,8 @@ class JSpreadsheetBridge:
                 raise IndexError(f"Row index {row_index} out of range")
             del self.wizard.modifications[row_index]
         elif self.entity_type == "groups":
+            pass
+        elif self.entity_type == "group_channels":
             pass
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
