@@ -655,6 +655,32 @@ class WizardState:
         run["group_id"] = group_id
         run.pop("group_assignment_cleared", None)
 
+    def _get_group_projection(self, group_id: str) -> Dict[str, Any]:
+        """Return the exported projection for a group-backed run."""
+        group_index = self._get_group_index(group_id)
+        group = self.groups[group_index]
+
+        projected_run: Dict[str, Any] = {}
+        sample_target = group.get("sample_target")
+        if sample_target:
+            projected_run["sample"] = sample_target
+
+        channel_assignments = {
+            str(channel): sample_id
+            for channel, sample_id in group.get("channel_sample_assignments", {}).items()
+            if sample_id
+        }
+        if channel_assignments:
+            projected_run["mixture"] = group["id"]
+
+        if projected_run.get("mixture"):
+            projected_run["mixture_definition"] = {
+                "id": group["id"],
+                "channels": channel_assignments,
+            }
+
+        return projected_run
+
     def add_run(
         self,
         file: str,
@@ -1208,12 +1234,34 @@ class WizardState:
         """
         manifest = ManifestState()
 
+        projected_mixtures: Dict[str, Dict[str, Any]] = {
+            mixture["id"]: {
+                "id": mixture["id"],
+                "channels": mixture["channels"].copy(),
+                **({"description": mixture["description"]} if mixture.get("description") else {}),
+            }
+            for mixture in self.mixtures
+        }
+
         # Add all runs
         for run in self.runs:
+            projected_sample = run.get("sample")
+            projected_mixture = run.get("mixture")
+
+            group_id = run.get("group_id")
+            if group_id:
+                group_projection = self._get_group_projection(group_id)
+                projected_sample = group_projection.get("sample")
+                projected_mixture = group_projection.get("mixture")
+
+                mixture_definition = group_projection.get("mixture_definition")
+                if mixture_definition:
+                    projected_mixtures[mixture_definition["id"]] = mixture_definition
+
             manifest.add_run(
                 file=run["file"],
-                sample=run.get("sample"),
-                mixture=run.get("mixture"),
+                sample=projected_sample,
+                mixture=projected_mixture,
                 fraction=run.get("fraction"),
                 instrument=run.get("instrument"),
                 modification_profile=run.get("modification_profile"),
@@ -1233,7 +1281,7 @@ class WizardState:
             )
 
         # Add all mixtures
-        for mixture in self.mixtures:
+        for mixture in projected_mixtures.values():
             manifest.add_mixture(
                 id=mixture["id"],
                 channels=mixture["channels"],

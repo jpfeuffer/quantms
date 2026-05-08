@@ -519,6 +519,98 @@ class TestWizardState:
         assert not hasattr(manifest.runs[0], "group_id")
         assert "group_id" not in manifest.to_dict()["runs"][0]
 
+    def test_wizard_to_manifest_state_projects_group_backed_lfq_runs_from_group_sample_target(self):
+        """Grouped LFQ runs should export the group sample target and not a mixture."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.add_run(file="test.raw", sample="legacy_sample", mixture="legacy_mixture", fraction=1)
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.set_group_sample_target("group_1", "s1")
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="LFQ",
+        )
+
+        manifest = wizard.to_manifest_state()
+        run_dict = manifest.to_dict()["runs"][0]
+
+        assert run_dict["sample"] == "s1"
+        assert "mixture" not in run_dict
+        assert "group_id" not in run_dict
+        assert manifest.to_dict()["mixtures"] == []
+
+    def test_wizard_to_manifest_state_projects_group_backed_multiplex_runs_from_group_assignments(self):
+        """Grouped multiplex runs should export group mixtures from channel assignments."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.add_sample(id="s2", organism="homo sapiens")
+        wizard.add_run(file="test.raw", sample="legacy_sample", mixture="legacy_mixture", fraction=2)
+        wizard.add_group(id="group_1", name="TMT group", kind="TMT", labeling_strategy="TMT6")
+        wizard.set_group_channel_assignments(
+            "group_1",
+            {
+                "TMT126": "s1",
+                "TMT127N": "s2",
+                "TMT127C": None,
+            },
+        )
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="TMT",
+        )
+
+        manifest = wizard.to_manifest_state()
+        manifest_dict = manifest.to_dict()
+        run_dict = manifest_dict["runs"][0]
+        mixture_dict = manifest_dict["mixtures"][0]
+
+        assert run_dict["mixture"] == "group_1"
+        assert "sample" not in run_dict
+        assert mixture_dict["id"] == "group_1"
+        assert mixture_dict["channels"] == {"TMT126": "s1", "TMT127N": "s2"}
+        assert "TMT127C" not in mixture_dict["channels"]
+
+    def test_wizard_to_manifest_state_exports_distinct_mixtures_for_multiple_groups_on_same_strategy(self):
+        """Two groups on the same strategy sheet should export distinct mixtures."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_sample(id="s1", organism="homo sapiens")
+        wizard.add_sample(id="s2", organism="homo sapiens")
+        wizard.add_sample(id="s3", organism="homo sapiens")
+        wizard.add_sample(id="s4", organism="homo sapiens")
+        wizard.add_run(file="group_1.raw", fraction=1)
+        wizard.add_run(file="group_2.raw", fraction=1)
+        wizard.add_group(id="group_1", name="TMT group 1", kind="TMT", labeling_strategy="TMT6")
+        wizard.add_group(id="group_2", name="TMT group 2", kind="TMT", labeling_strategy="TMT6")
+        wizard.set_group_channel_assignments("group_1", {"TMT126": "s1", "TMT127N": "s2"})
+        wizard.set_group_channel_assignments("group_2", {"TMT126": "s3", "TMT127N": "s4"})
+        wizard.assign_run(run_index=0, group_id="group_1")
+        wizard.assign_run(run_index=1, group_id="group_2")
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="TMT",
+        )
+
+        manifest_dict = wizard.to_manifest_state().to_dict()
+
+        assert [mixture["id"] for mixture in manifest_dict["mixtures"]] == ["group_1", "group_2"]
+        assert [run["mixture"] for run in manifest_dict["runs"]] == ["group_1", "group_2"]
+        assert manifest_dict["mixtures"][0]["channels"] == {"TMT126": "s1", "TMT127N": "s2"}
+        assert manifest_dict["mixtures"][1]["channels"] == {"TMT126": "s3", "TMT127N": "s4"}
+
     def test_wizard_validation_deferred_to_review(self):
         """Test that validation only happens in review step."""
         from gui_wizard_state import WizardState, WizardStep
