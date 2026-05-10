@@ -230,6 +230,25 @@ class TestJSpreadsheetBridge:
         assert refreshed_data["column_config"]["group_id"]["type"] == "dropdown"
         assert refreshed_data["column_config"]["group_id"]["source"] == [{"id": "group_1", "name": "group_1"}]
 
+    def test_bridge_groups_labeling_strategy_dropdown_respects_experiment_quantification_method(self):
+        """Groups-sheet labeling strategy options should stay restricted by the experiment quantification method."""
+        wizard = WizardState()
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="LFQ",
+        )
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
+        assert data["column_config"]["labeling_strategy"]["source"] == [
+            {"id": "label free sample", "name": "label free sample"}
+        ]
+
     def test_bridge_clear_optional_field_with_empty_string(self):
         """
         AC8: Bridge allows clearing optional fields by setting empty string.
@@ -326,6 +345,20 @@ class TestJSpreadsheetBridge:
         assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
         assert data["column_config"]["channel_count"]["read_only"] is True
+
+    def test_groups_bridge_labeling_strategy_dropdown_uses_all_allowed_strategies_for_unrestricted_experiments(self):
+        """LFQ-only sheets should still expose the full allowed labeling-strategy source when the experiment does not narrow kinds."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["labeling_strategy"]["source"] == [
+            {"id": strategy, "name": strategy}
+            for strategy in wizard.get_allowed_labeling_strategies()
+        ]
 
     def test_groups_bridge_backfills_missing_labeling_strategy_from_kind(self):
         """Legacy groups without strategy metadata should be normalized when the sheet renders."""

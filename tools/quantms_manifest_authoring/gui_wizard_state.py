@@ -247,6 +247,7 @@ class WizardState:
         group_id: str,
         *,
         kind: str = "manual",
+        labeling_strategy: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
@@ -261,6 +262,7 @@ class WizardState:
             id=group_id,
             name=name or group_id,
             kind=kind,
+            labeling_strategy=labeling_strategy,
             description=description,
         )
 
@@ -415,6 +417,25 @@ class WizardState:
         except ValueError:
             return None
 
+    @staticmethod
+    def _derive_group_kind_from_labeling_strategy(labeling_strategy: Any) -> Optional[str]:
+        """Derive the canonical group kind from a labeling strategy."""
+        if labeling_strategy is None:
+            return None
+
+        normalized_strategy = str(labeling_strategy).strip()
+        if not normalized_strategy:
+            return None
+
+        if normalized_strategy.casefold() == LFQ_LABELING_STRATEGY.casefold():
+            return "LFQ"
+
+        for group_kind in ("TMT", "iTRAQ", "SILAC"):
+            if normalized_strategy.casefold().startswith(group_kind.casefold()):
+                return group_kind
+
+        return None
+
     def _normalize_labeling_strategy(self, labeling_strategy: Any) -> Optional[str]:
         """Normalize a labeling strategy using the runtime ChannelBuilder catalog."""
         if labeling_strategy is None:
@@ -435,52 +456,77 @@ class WizardState:
 
     def _resolve_group_labeling_metadata(
         self,
-        kind: Any,
+        kind: Any = _UNSET,
         *,
         labeling_strategy: Any = _UNSET,
         existing_group: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Resolve the supported labeling strategy and derived channel count for a group kind."""
-        normalized_kind = self._normalize_group_kind(kind)
-        if normalized_kind is None:
-            return {}
-
-        allowed_kinds = self.get_allowed_group_kinds()
-        if normalized_kind not in allowed_kinds:
-            return {}
-
-        if labeling_strategy is _UNSET:
-            candidate_strategy = existing_group.get("labeling_strategy") if existing_group else None
-        else:
+        """Resolve the supported labeling strategy and derived channel count for a group."""
+        if labeling_strategy is not _UNSET:
             candidate_strategy = labeling_strategy
+        elif kind is not _UNSET and kind is not None:
+            normalized_kind = self._normalize_group_kind(kind)
+            if normalized_kind is None:
+                raise ValueError(f"Group kind '{kind}' is not allowed")
+            candidate_strategy = self.get_default_labeling_strategy(normalized_kind)
+        else:
+            candidate_strategy = existing_group.get("labeling_strategy") if existing_group else None
+            if not candidate_strategy and existing_group:
+                candidate_strategy = self.get_default_labeling_strategy(existing_group.get("kind"))
 
         normalized_strategy = self._normalize_labeling_strategy(candidate_strategy)
-        allowed_strategies = self.get_allowed_labeling_strategies(normalized_kind)
-        if normalized_strategy not in allowed_strategies:
-            normalized_strategy = self.get_default_labeling_strategy(normalized_kind)
-
         if not normalized_strategy:
-            return {}
+            allowed_strategies = self.get_allowed_labeling_strategies()
+            allowed_text = ", ".join(allowed_strategies) if allowed_strategies else "none"
+            raise ValueError(
+                f"Labeling strategy '{candidate_strategy}' is not allowed. Allowed options: {allowed_text}"
+            )
+
+        derived_kind = self._derive_group_kind_from_labeling_strategy(normalized_strategy)
+        if derived_kind is None:
+            raise ValueError(f"Labeling strategy '{normalized_strategy}' is not supported")
+
+        allowed_kinds = self.get_allowed_group_kinds()
+        if derived_kind not in allowed_kinds:
+            allowed_strategies = self.get_allowed_labeling_strategies()
+            allowed_text = ", ".join(allowed_strategies) if allowed_strategies else "none"
+            raise ValueError(
+                f"Labeling strategy '{normalized_strategy}' is not allowed. Allowed options: {allowed_text}"
+            )
+
+        if kind is not _UNSET and kind is not None:
+            normalized_kind = self._normalize_group_kind(kind)
+            if normalized_kind is None:
+                raise ValueError(f"Group kind '{kind}' is not allowed")
+            if normalized_kind != derived_kind:
+                raise ValueError(
+                    f"Group kind '{kind}' does not match labeling strategy '{normalized_strategy}'"
+                )
 
         channel_count = self.get_labeling_strategy_channel_count(normalized_strategy)
-        metadata: Dict[str, Any] = {"labeling_strategy": normalized_strategy}
+        metadata: Dict[str, Any] = {
+            "kind": derived_kind,
+            "labeling_strategy": normalized_strategy,
+        }
         if channel_count is not None:
             metadata["channel_count"] = channel_count
         return metadata
 
-    def ensure_group_labeling_metadata(self, group: Dict[str, Any], labeling_strategy: Any = _UNSET) -> None:
+    def ensure_group_labeling_metadata(
+        self,
+        group: Dict[str, Any],
+        *,
+        kind: Any = _UNSET,
+        labeling_strategy: Any = _UNSET,
+    ) -> None:
         """Backfill or normalize a group's labeling strategy metadata in-place."""
         metadata = self._resolve_group_labeling_metadata(
-            group.get("kind"),
+            kind,
             labeling_strategy=labeling_strategy,
             existing_group=group,
         )
 
-        if metadata:
-            group.update(metadata)
-        else:
-            group.pop("labeling_strategy", None)
-            group.pop("channel_count", None)
+        group.update(metadata)
 
     def _normalize_group_kind(self, kind: Any) -> Optional[str]:
         """Normalize a canonical group kind value to its expected casing."""
@@ -533,16 +579,11 @@ class WizardState:
             if not normalized_kind:
                 raise ValueError("Group kind is required")
 
-            allowed_kinds = self.get_allowed_group_kinds()
-            canonical_kind = next(
-                (allowed for allowed in allowed_kinds if allowed.casefold() == normalized_kind.casefold()),
-                None,
-            )
-            if canonical_kind is None:
-                raise ValueError(f"Group kind '{kind}' is not allowed. Allowed options: {', '.join(allowed_kinds)}")
-            group["kind"] = canonical_kind
-
-        self.ensure_group_labeling_metadata(group, labeling_strategy=labeling_strategy)
+        self.ensure_group_labeling_metadata(
+            group,
+            kind=kind if kind is not _UNSET else _UNSET,
+            labeling_strategy=labeling_strategy,
+        )
 
         if description is not _UNSET:
             normalized_description = str(description).strip() if description is not None else ""
@@ -604,6 +645,7 @@ class WizardState:
             self._ensure_group_exists(
                 group_id,
                 kind=self.get_allowed_group_kinds()[0],
+                labeling_strategy=self.get_default_labeling_strategy(self.get_allowed_group_kinds()[0]),
                 name=group_id,
                 description="Auto-created from matching filename fraction markers",
             )
@@ -729,7 +771,12 @@ class WizardState:
         self.runs.append(run)
 
         if group_id is not None:
-            self._ensure_group_exists(group_id, kind=self.get_allowed_group_kinds()[0])
+            default_kind = self.get_allowed_group_kinds()[0]
+            self._ensure_group_exists(
+                group_id,
+                kind=default_kind,
+                labeling_strategy=self.get_default_labeling_strategy(default_kind),
+            )
             self._assign_run_group(len(self.runs) - 1, group_id)
 
     def add_group(
@@ -749,20 +796,20 @@ class WizardState:
         if any(group["id"] == id for group in self.groups):
             raise ValueError(f"Group '{id}' already exists")
 
-        group_kind = (kind or group_type or "").strip()
-        if not group_kind:
-            raise ValueError("Group kind or type is required")
-
         group = {
             "id": id,
             "name": name,
-            "kind": group_kind,
             "members": [],
         }
         if description:
             group["description"] = description
 
-        self.ensure_group_labeling_metadata(group, labeling_strategy=labeling_strategy)
+        effective_kind = kind if kind is not None else group_type
+        self.ensure_group_labeling_metadata(
+            group,
+            kind=effective_kind if effective_kind is not None else _UNSET,
+            labeling_strategy=labeling_strategy if labeling_strategy is not _UNSET else _UNSET,
+        )
 
         self.groups.append(group)
 
@@ -1017,7 +1064,12 @@ class WizardState:
                 raise ValueError(f"Mixture '{mixture}' not found in mixtures")
 
         if group_id is not None and create_missing_group:
-            self._ensure_group_exists(group_id, kind=self.get_allowed_group_kinds()[0])
+            default_kind = self.get_allowed_group_kinds()[0]
+            self._ensure_group_exists(
+                group_id,
+                kind=default_kind,
+                labeling_strategy=self.get_default_labeling_strategy(default_kind),
+            )
 
         # Update run with assignment
         run = self.runs[run_index]

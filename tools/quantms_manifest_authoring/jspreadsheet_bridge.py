@@ -245,17 +245,9 @@ class JSpreadsheetBridge:
 
     def _get_group_labeling_strategy_options(self) -> list[str]:
         """Get the current groups-table strategy options using the existing wizard catalog."""
-        if not self.wizard.groups:
-            return self.wizard.get_allowed_labeling_strategies()
-
-        supported_kinds: list[str] = []
-        for group in self.wizard.groups:
-            kind = self.wizard._normalize_group_kind(group.get("kind"))
-            if kind and kind not in supported_kinds:
-                supported_kinds.append(kind)
-
-        if len(supported_kinds) == 1:
-            return self.wizard.get_allowed_labeling_strategies(supported_kinds[0])
+        allowed_kinds = self.wizard.get_allowed_group_kinds()
+        if len(allowed_kinds) == 1:
+            return self.wizard.get_allowed_labeling_strategies(allowed_kinds[0])
 
         return self.wizard.get_allowed_labeling_strategies()
 

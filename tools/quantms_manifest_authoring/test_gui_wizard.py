@@ -237,15 +237,39 @@ class TestWizardState:
         wizard = WizardState()
         wizard.add_run(file="run_1.raw")
 
-        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="group_1", name="LFQ group", labeling_strategy="label free sample")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         assert len(wizard.groups) == 1
         assert wizard.groups[0]["id"] == "group_1"
         assert wizard.groups[0]["name"] == "LFQ group"
         assert wizard.groups[0]["kind"] == "LFQ"
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.runs[0]["group_id"] == "group_1"
+
+    @pytest.mark.parametrize(
+        ("labeling_strategy", "expected_kind", "expected_channel_count"),
+        [
+            ("label free sample", "LFQ", 1),
+            ("TMT6", "TMT", 6),
+            ("iTRAQ8", "iTRAQ", 8),
+            ("SILAC_2plex", "SILAC", 2),
+        ],
+    )
+    def test_wizard_group_creation_from_labeling_strategy_derives_kind_and_channel_count(
+        self, labeling_strategy, expected_kind, expected_channel_count
+    ):
+        """Test that strategy-only group creation derives the internal kind and channel count."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_group(id="group_1", name="Quant group", labeling_strategy=labeling_strategy)
+
+        assert wizard.groups[0]["labeling_strategy"] == labeling_strategy
+        assert wizard.groups[0]["kind"] == expected_kind
+        assert wizard.groups[0]["channel_count"] == expected_channel_count
 
     def test_wizard_group_kind_options_follow_quantification_method(self):
         """Test that allowed group kinds mirror the experiment quantification method when present."""
@@ -271,31 +295,33 @@ class TestWizardState:
         wizard = WizardState()
         wizard.add_run(file="run_1.raw")
         wizard.add_run(file="run_2.raw")
-        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="group_1", name="LFQ group", labeling_strategy="label free sample")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         wizard.update_group(
             "group_1",
             name="Updated group",
-            kind="TMT",
+            labeling_strategy="TMT6",
             members=[wizard.runs[1]["id"]],
             description="Updated description",
         )
 
         assert wizard.groups[0]["name"] == "Updated group"
         assert wizard.groups[0]["kind"] == "TMT"
+        assert wizard.groups[0]["labeling_strategy"] == "TMT6"
+        assert wizard.groups[0]["channel_count"] == 6
         assert wizard.groups[0]["members"] == [wizard.runs[1]["id"]]
         assert wizard.groups[0]["description"] == "Updated description"
         assert "group_id" not in wizard.runs[0]
         assert wizard.runs[1]["group_id"] == "group_1"
 
-    def test_wizard_update_group_rejects_invalid_members_and_disallowed_kind(self):
-        """Test that group edits validate member IDs and experiment-driven kind constraints."""
+    def test_wizard_update_group_rejects_invalid_members_and_disallowed_strategy(self):
+        """Test that group edits validate member IDs and experiment-driven strategy constraints."""
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
         wizard.add_run(file="run_1.raw")
-        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="group_1", name="LFQ group", labeling_strategy="label free sample")
 
         with pytest.raises(ValueError, match="Run 'run_999' not found"):
             wizard.update_group("group_1", members=["run_999"])
@@ -307,8 +333,26 @@ class TestWizardState:
             quantification_method="SILAC",
         )
 
-        with pytest.raises(ValueError, match="Allowed options: SILAC"):
-            wizard.update_group("group_1", kind="LFQ")
+        with pytest.raises(ValueError, match="Allowed options"):
+            wizard.update_group("group_1", labeling_strategy="TMT6")
+
+    def test_wizard_group_creation_enforces_allowed_labeling_strategies(self):
+        """Test that the experiment gates allowed labeling strategies."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="TMT",
+        )
+
+        wizard.add_group(id="group_1", name="TMT group", labeling_strategy="TMT6")
+        assert wizard.groups[0]["kind"] == "TMT"
+
+        with pytest.raises(ValueError, match="Allowed options"):
+            wizard.add_group(id="group_2", name="LFQ group", labeling_strategy="label free sample")
 
     def test_wizard_group_labeling_strategy_defaults_from_kind(self):
         """Test that supported group kinds backfill a labeling strategy and derived channel count."""
@@ -317,6 +361,17 @@ class TestWizardState:
         wizard = WizardState()
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
 
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
+
+    def test_wizard_auto_created_groups_seed_default_labeling_strategy(self):
+        """Test that auto-created groups carry a default labeling strategy."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_run(file="run_1.raw", group_id="group_1")
+
+        assert wizard.groups[0]["kind"] == "LFQ"
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
         assert wizard.groups[0]["channel_count"] == 1
 
@@ -342,9 +397,9 @@ class TestWizardState:
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
-        wizard.add_group(id="group_1", name="Multiplex group", kind="TMT", labeling_strategy="TMT6")
+        wizard.add_group(id="group_1", name="Multiplex group", labeling_strategy="TMT6")
 
-        wizard.update_group("group_1", kind="LFQ")
+        wizard.update_group("group_1", labeling_strategy="label free sample")
 
         assert wizard.groups[0]["kind"] == "LFQ"
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
@@ -428,10 +483,10 @@ class TestWizardState:
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", labeling_strategy="label free sample")
 
         with pytest.raises(ValueError, match="already exists"):
-            wizard.add_group(id="group_1", name="Duplicate group", kind="replicate")
+            wizard.add_group(id="group_1", name="Duplicate group", labeling_strategy="label free sample")
 
     def test_wizard_reassign_run_moves_membership_between_groups(self):
         """Test that reassigning a run updates both group memberships."""
@@ -439,8 +494,8 @@ class TestWizardState:
 
         wizard = WizardState()
         wizard.add_run(file="run_1.raw")
-        wizard.add_group(id="group_1", name="Group 1", kind="replicate")
-        wizard.add_group(id="group_2", name="Group 2", kind="replicate")
+        wizard.add_group(id="group_1", name="Group 1", labeling_strategy="label free sample")
+        wizard.add_group(id="group_2", name="Group 2", labeling_strategy="label free sample")
 
         wizard.assign_run(run_index=0, group_id="group_1")
         wizard.assign_run(run_index=0, group_id="group_2")
@@ -454,7 +509,7 @@ class TestWizardState:
         from gui_wizard_state import WizardState
 
         wizard = WizardState()
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", labeling_strategy="label free sample")
 
         groups = wizard.get_available_groups()
 
@@ -491,7 +546,7 @@ class TestWizardState:
         wizard = WizardState()
         wizard.add_run(file="test.raw", mixture=None, fraction=1, modification_profile="default")
         wizard.add_sample(id="s1", organism="homo sapiens")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", labeling_strategy="label free sample")
         wizard.assign_run(run_index=0, group_id="group_1")
         wizard.add_modification(
             mode="fixed",
@@ -1135,7 +1190,7 @@ class TestWizardStateRowMutations:
         wizard = WizardState()
         wizard.add_run(file="file1.raw")
         wizard.add_run(file="file2.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", labeling_strategy="label free sample")
         wizard.assign_run(run_index=1, group_id="group_1")
 
         run_id = wizard.runs[1]["id"]
