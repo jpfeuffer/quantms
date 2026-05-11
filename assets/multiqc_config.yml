@@ -63,8 +63,8 @@ sp:
     fn: "general_stats.tsv"
   pmultiqc/exp_design:
     fn: "*_design.tsv"
-  pmultiqc/sdrf:
-    fn: "*.sdrf.tsv"
+  pmultiqc/experimental_design:
+    fn: "*_design.tsv"
   pmultiqc/mztab:
     fn: "*.mzTab"
     num_lines: 0

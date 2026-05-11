@@ -1,0 +1,73 @@
+# Valid quantms YAML input example: Data-Independent Acquisition (DIA) experiment
+# Demonstrates the YAML structure for DIA label-free quantification
+
+experiment:
+  # Core MS method settings - DIA acquisition
+  acquisition_method: DIA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration for DIA
+  quantification_method: LFQ
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit
+samples:
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: control
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: treated
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+# No mixtures for DIA LFQ (empty array) - each sample measured independently
+mixtures: []
+
+# Runs: raw spectrometry files with explicit sample references
+# Each DIA run explicitly links to one sample
+runs:
+  - file: s3://bucket/experiment/control_rep1_fraction_1.raw
+    sample: control_rep1
+    fraction: 1
+    instrument: Orbitrap_Fusion
+
+  - file: s3://bucket/experiment/control_rep1_fraction_2.raw
+    sample: control_rep1
+    fraction: 2
+    instrument: Orbitrap_Fusion
+
+  - file: s3://bucket/experiment/treated_rep1_fraction_1.raw
+    sample: treated_rep1
+    fraction: 1
+    instrument: Orbitrap_Fusion
+
+  - file: s3://bucket/experiment/treated_rep1_fraction_2.raw
+    sample: treated_rep1
+    fraction: 2
+    instrument: Orbitrap_Fusion
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable

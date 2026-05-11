@@ -1,0 +1,28 @@
+# Invalid: Multiplexed run points to a mixture with all empty channels
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+  quantification_method: TMT
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+samples:
+  - id: sample_1
+    organism: homo sapiens
+    condition: control
+    biological_replicate: 1
+
+mixtures:
+  - id: mix_empty
+    channels:
+      TMT126: null
+      TMT127N: null
+      TMT128N: null
+
+runs:
+  - file: test1.raw
+    mixture: mix_empty
+    fraction: 1
+
+modifications: []

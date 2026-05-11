@@ -11,6 +11,7 @@ null/
 .vscode/
 /lint_log.txt
 /lint_results.md
+*.obo
 
 
 #Ignore cursor AI rules
@@ -19,6 +20,8 @@ null/
 
 # Claude Code
 .claude/
+.tmp/
+plans/
 
 
 #Ignore vscode AI rules

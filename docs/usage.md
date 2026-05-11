@@ -8,13 +8,169 @@
 
 ## Running the pipeline
 
-The typical command for running the pipeline is as follows:
+The quantms YAML manifest format is the **official, specification-driven contract** for quantms experiments (defined in `assets/schemas/quantms_yaml_manifest.json`). The pipeline accepts YAML manifests (`.yml` or `.yaml`) as input, which define all aspects of your experimental design.
 
-```bash
-nextflow run bigbio/quantms --input '/url/path/to/your/experiment_design.sdrf.tsv' --database '/url/path/to/your/proteindatabase.fasta' --outdir './results' -profile docker
+### YAML Input Structure
+
+The YAML input format defines your experiment structure with the following top-level sections:
+
+**`experiment`**: Global experiment settings
+
+- `acquisition_method`: Type of acquisition (e.g., `DDA`, `DIA`)
+- `enzyme`: Enzymatic digestion (e.g., `Trypsin`)
+- `dissociation_method`: MS/MS fragmentation method (e.g., `HCD`)
+- `precursor_mass_tolerance`, `fragment_mass_tolerance`: Mass calibration settings
+
+**`samples`**: Biological samples (one entry per unique biological unit)
+
+- Each sample has a unique `id` and explicit metadata fields like `organism`, `condition`, and `biological_replicate`
+- Additional sample metadata fields should go under `characteristics` and `factor_values`
+- Only truly user-specific fields should go under `additional_metadata`
+- The validator rejects overlaps between `additional_metadata` and standard sample metadata keys
+
+**`mixtures`**: Multiplex groups (isobaric labeling or SILAC) with channel mappings
+
+- Each mixture has a unique `id` and a `channels` dictionary
+- Channel keys (e.g., `TMT126`) map to sample IDs
+- For isobaric labeling (TMT, iTRAQ): maps labels to samples
+- For SILAC: maps isotope labels to samples
+
+**`runs`**: Raw data files and their assignments
+
+- Each run references a `file` (path or URI)
+- `fraction`: optional fraction number (1-based)
+- `mixture`: ID of the mixture this run belongs to
+
+**`modifications`**: Merged modification definitions and optional profile grouping
+
+- Each entry defines **one** modification: either ontology-backed (UniMod/MOD) or custom
+- Optional `profile` groups modifications into named profiles
+- If only one profile is present (or no `profile` is set), it is used by default for all runs
+- If multiple profiles are present, runs must select one via `modification_profile`
+- Use `kind: ontology` or `kind: custom` to explicitly declare modification type
+- For ontology-backed: provide either `ontology_id` (`UNIMOD:<n>` / `MOD:<n>`) or `name`, or both; `accession` remains a deprecated alias
+- For ontology-backed modifications, `residues`, `term_specificity`, `mass_shift`, and `formula` are optional dataset-level refinements and are checked against curated ontology values when known
+- For custom: provide a friendly `name`, `mass_shift`, and either `residues` or `term_specificity`
+- All modifications require `mode: fixed` or `mode: variable`
+- Optional `term_specificity` specifies terminal position constraints (`none`, `n-term`, `c-term`, `protein-n-term`, `protein-c-term`)
+- Terminal modifications must use `term_specificity`; do not use `N-term` / `C-term` as residues
+- Optional tool-specific fields like `binary_group`, `min_occurrences`, `max_occurrences`, `distance_from_terminus`, `localize_mass_shift`, `label_mass_shift`, and `custom_mod_code` live directly on the modification object
+
+#### YAML Example: TMT 16-plex DDA
+
+```yaml
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+samples:
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 1
+
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 1
+
+mixtures:
+  - id: mix_A
+    channels:
+      TMT126: treated_rep1
+      TMT127N: control_rep1
+
+runs:
+  - file: s3://bucket/experiment/mix_A_fraction_1.raw
+    fraction: 1
+    mixture: mix_A
+    modification_profile: phospho_enriched
+
+modifications:
+  - profile: default
+    kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+
+  - profile: default
+    kind: ontology
+    name: "TMT16plex"
+    residues: K
+    mode: fixed
+
+  - profile: default
+    kind: ontology
+    name: "TMT16plex"
+    term_specificity: n-term
+    mode: fixed
+
+  # Ontology-backed modification with flat optional tool-specific fields
+  - id: phospho_sty
+    profile: phospho_enriched
+    kind: ontology
+    name: "Phosphorylation"
+    ontology_id: "UNIMOD:21"
+    residues: [S, T, Y]
+    mode: variable # Required enum: fixed|variable
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
+
+  # Custom modification without ontology reference
+  - id: custom_label
+    kind: custom
+    name: "My Custom Label"
+    residues: K
+    mode: fixed
+    mass_shift: 138.068
 ```
 
-The input file must be in [Sample-to-data-relationship format (SDRF)](https://pubs.acs.org/doi/abs/10.1021/acs.jproteome.0c00376) and can have `.sdrf`, `.tsv`, or `.csv` file extensions.
+The complete schema is defined in: **`assets/schemas/quantms_yaml_manifest.json`**
+
+Refer to the schema for:
+
+- Full field definitions and constraints
+- Validation rules for each section
+- Optional vs. required fields
+- Supported enumeration values (e.g., `acquisition_method` must be `DDA` or `DIA`)
+
+#### YAML Validation
+
+To validate a YAML file against the schema **before** runtime implementation:
+
+```bash
+uv run --with jsonschema --with pyyaml python -c "
+import json
+import yaml
+import jsonschema
+
+with open('assets/schemas/quantms_yaml_manifest.json') as f:
+    schema = json.load(f)
+
+with open('experiment.yml') as f:
+    data = yaml.safe_load(f)
+
+jsonschema.validate(data, schema)
+print('✓ Valid quantms YAML manifest')
+"
+```
+
+Or use the included test suite:
+
+```bash
+uv run --with jsonschema --with pyyaml python tests/yaml_contract/test_yaml_input_contract.py
+```
+
+#### YAML Specification
+
+The YAML manifest contract is stable and fully specification-driven. Full documentation and schema validation examples are available in the pipeline and at [quantms.readthedocs.io](https://quantms.readthedocs.io/).
 
 ### Supported file formats
 
@@ -31,9 +187,6 @@ Compressed variants are supported for `.raw`, `.mzML`, and `.d` formats:
 - `.tar` (tar archive)
 - `.tar.gz` or `.tgz` (tar gzip compressed)
 - `.zip` (zip compressed)
-
-In the respective "comment[file uri]" or "Spectra_Filepath" columns, the mass spectra files to be processed have to be listed. URIs are possible,
-and the root folder as well as the file endings can be changed in the options in case of previously downloaded, moved or converted experiments.
 
 This will launch the pipeline with the `docker` configuration profile. See below for more information about profiles.
 

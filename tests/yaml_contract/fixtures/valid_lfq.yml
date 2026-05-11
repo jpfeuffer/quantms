@@ -1,0 +1,92 @@
+# Valid quantms YAML input example: Label-Free Quantification (LFQ) experiment
+# Demonstrates the YAML structure for label-free quantification without multiplexing
+
+experiment:
+  # Core MS method settings
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration
+  quantification_method: LFQ
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit
+samples:
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+  - id: control_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 2
+    characteristics:
+      cell_line: HeLa
+      passage: 11
+
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+  - id: treated_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 2
+    characteristics:
+      cell_line: HeLa
+      passage: 11
+
+# No mixtures for LFQ (empty array)
+# Each sample is measured independently without multiplexing
+mixtures: []
+
+# Runs: raw spectrometry files with explicit sample references
+# Each LFQ run explicitly links to exactly one sample
+runs:
+  - file: s3://bucket/experiment/control_rep1.raw
+    sample: control_rep1
+    fraction: 1
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/control_rep2.raw
+    sample: control_rep2
+    fraction: 1
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/treated_rep1.raw
+    sample: treated_rep1
+    fraction: 1
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/treated_rep2.raw
+    sample: treated_rep2
+    fraction: 1
+    instrument: Q_TOF
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable

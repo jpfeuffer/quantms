@@ -1,0 +1,70 @@
+# Valid quantms YAML input example: SILAC (Stable Isotope Labeling by Amino acids in Cell culture)
+# Demonstrates 3-plex SILAC experiment structure
+
+experiment:
+  # Core MS method settings
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration
+  quantification_method: SILAC
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit (not per label state)
+samples:
+  - id: control_sample
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: control
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 15
+
+  - id: treated_sample
+    organism: homo sapiens
+    organism_part: cell culture
+    condition: treated
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 15
+
+# Mixtures: SILAC uses channels for isotope labels
+# Three-plex SILAC example with R0K0 (light), R6K4 (medium), R10K8 (heavy)
+mixtures:
+  - id: silac_3plex_mix1
+    description: "3-plex SILAC: control (light) and treated (medium+heavy)"
+    channels:
+      light_R0K0: control_sample # Light isotope label
+      medium_R6K4: treated_sample # Medium isotope label
+      heavy_R10K8: control_sample # Heavy isotope label (for normalization)
+
+# Runs: raw spectrometry files with explicit mixture references
+# SILAC runs explicitly link to mixtures
+runs:
+  - file: s3://bucket/experiment/silac_3plex_fraction_1.raw
+    mixture: silac_3plex_mix1
+    fraction: 1
+    instrument: Orbitrap_Fusion
+
+  - file: s3://bucket/experiment/silac_3plex_fraction_2.raw
+    mixture: silac_3plex_mix1
+    fraction: 2
+    instrument: Orbitrap_Fusion
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable

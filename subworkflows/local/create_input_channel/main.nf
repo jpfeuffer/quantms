@@ -1,22 +1,22 @@
 //
 // Create channel for input file
 //
-include { SDRF_PARSING } from '../../../modules/local/sdrf_parsing/main'
+include { YAML_NORMALIZER } from '../../../modules/local/yaml_normalizer/main'
 
 
 
 workflow CREATE_INPUT_CHANNEL {
     take:
-    ch_sdrf
+    ch_input
 
     main:
     ch_versions = channel.empty()
 
-    // Always parse as SDRF (OpenMS experimental design format deprecated)
-    SDRF_PARSING(ch_sdrf)
-    ch_versions = ch_versions.mix(SDRF_PARSING.out.versions)
-    ch_config = SDRF_PARSING.out.ch_sdrf_config_file
-    ch_expdesign = SDRF_PARSING.out.ch_expdesign
+    // Process YAML manifests
+    YAML_NORMALIZER(ch_input)
+    ch_versions = ch_versions.mix(YAML_NORMALIZER.out.versions)
+    ch_config = YAML_NORMALIZER.out.ch_yaml_config_file
+    ch_expdesign = YAML_NORMALIZER.out.ch_expdesign
 
     def Set enzymes = []
     def Set files = []
@@ -24,7 +24,6 @@ workflow CREATE_INPUT_CHANNEL {
     def wrapper = [
         labelling_type: "",
         acquisition_method: "",
-        experiment_id: ch_sdrf,
     ]
 
     ch_config
@@ -32,7 +31,7 @@ workflow CREATE_INPUT_CHANNEL {
         .map { row -> create_meta_channel(row, enzymes, files, wrapper) }
         .branch { item ->
             ch_meta_config_dia: item[0].acquisition_method.contains("dia")
-            ch_meta_config_iso: item[0].labelling_type.contains("tmt") || item[0].labelling_type.contains("itraq")
+            ch_meta_config_iso: item[0].labelling_type.contains("tmt") || item[0].labelling_type.contains("itraq") || item[0].labelling_type.contains("silac")
             ch_meta_config_lfq: item[0].labelling_type.contains("label free")
         }
         .set { result }
@@ -53,7 +52,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
     def meta = [:]
     def filestr
 
-    // Always use SDRF format
+    // Extract file path from YAML config
     if (!params.root_folder) {
         filestr = row.URI.toString()
     }
@@ -62,7 +61,9 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
     }
 
     meta.mzml_id = file(filestr).name.take(file(filestr).name.lastIndexOf('.'))
-    meta.experiment_id = file(wrapper.experiment_id.toString()).baseName
+
+    // Read experiment_id from the config TSV row
+    meta.experiment_id = row.ExperimentID
 
     // apply transformations given by specified root_folder and type
     if (params.root_folder) {
@@ -77,7 +78,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
         exit(1, "ERROR: Please check input file -> File Uri does not exist!\n${filestr}")
     }
 
-    // Read metadata from SDRF config file
+    // Read metadata from YAML config file
     if (row["Proteomics Data Acquisition Method"].toString().toLowerCase().contains("data-dependent acquisition")) {
         meta.acquisition_method = "dda"
     }
@@ -85,7 +86,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
         meta.acquisition_method = "dia"
     }
     else {
-        log.error("Currently DIA and DDA are supported for the pipeline. Check and Fix your SDRF.")
+        log.error("Currently DIA and DDA are supported for the pipeline. Check and Fix your input.")
         exit(1)
     }
 
@@ -108,7 +109,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
 
     wrapper.acquisition_method = meta.acquisition_method
 
-    // Validate required SDRF columns - these parameters are exclusively read from SDRF (no command-line override)
+    // Validate required columns - these parameters are from YAML config
     def requiredColumns = [
         'Label': row.Label,
         'Enzyme': row.Enzyme,
@@ -123,24 +124,24 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
     }
 
     if (missingColumns.size() > 0) {
-        log.error("ERROR: Missing or empty required SDRF columns for file '${filestr}': ${missingColumns.join(', ')}")
-        log.error("These parameters must be specified in the SDRF file. Please check your SDRF annotation.")
+        log.error("ERROR: Missing or empty required columns for file '${filestr}': ${missingColumns.join(', ')}")
+        log.error("These parameters must be specified in the input file. Please check your input annotation.")
         exit(1)
     }
 
-    // Set values from SDRF (required columns)
+    // Set values from config file (required columns)
     meta.labelling_type = row.Label
     meta.fixedmodifications = row.FixedModifications
     meta.enzyme = row.Enzyme
 
-    // Set tolerance values: use SDRF if available, otherwise fall back to params
+    // Set tolerance values: use config if available, otherwise fall back to params
     def validUnits = ['ppm', 'da', 'Da', 'PPM']
 
     // Precursor mass tolerance
     if (row.PrecursorMassTolerance != null && !row.PrecursorMassTolerance.toString().trim().isEmpty()) {
         try {
             meta.precursormasstolerance = Double.parseDouble(row.PrecursorMassTolerance)
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException) {
             log.error("ERROR: Invalid PrecursorMassTolerance value '${row.PrecursorMassTolerance}' for file '${filestr}'. Must be a valid number.")
             exit(1)
         }
@@ -150,7 +151,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
 
     // Precursor mass tolerance unit
     if (row.PrecursorMassToleranceUnit != null && !row.PrecursorMassToleranceUnit.toString().trim().isEmpty()) {
-        if (!validUnits.any { row.PrecursorMassToleranceUnit.toString().equalsIgnoreCase(it) }) {
+        if (!validUnits.any { unit -> row.PrecursorMassToleranceUnit.toString().equalsIgnoreCase(unit) }) {
             log.error("ERROR: Invalid PrecursorMassToleranceUnit '${row.PrecursorMassToleranceUnit}' for file '${filestr}'. Must be 'ppm' or 'Da'.")
             exit(1)
         }
@@ -163,7 +164,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
     if (row.FragmentMassTolerance != null && !row.FragmentMassTolerance.toString().trim().isEmpty()) {
         try {
             meta.fragmentmasstolerance = Double.parseDouble(row.FragmentMassTolerance)
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException) {
             log.error("ERROR: Invalid FragmentMassTolerance value '${row.FragmentMassTolerance}' for file '${filestr}'. Must be a valid number.")
             exit(1)
         }
@@ -173,7 +174,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
 
     // Fragment mass tolerance unit
     if (row.FragmentMassToleranceUnit != null && !row.FragmentMassToleranceUnit.toString().trim().isEmpty()) {
-        if (!validUnits.any { row.FragmentMassToleranceUnit.toString().equalsIgnoreCase(it) }) {
+        if (!validUnits.any { unit -> row.FragmentMassToleranceUnit.toString().equalsIgnoreCase(unit) }) {
             log.error("ERROR: Invalid FragmentMassToleranceUnit '${row.FragmentMassToleranceUnit}' for file '${filestr}'. Must be 'ppm' or 'Da'.")
             exit(1)
         }
@@ -182,7 +183,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
         meta.fragmentmasstoleranceunit = params.fragment_mass_tolerance_unit
     }
 
-    // Variable modifications: use SDRF if available, otherwise fall back to params
+    // Variable modifications: use config if available, otherwise fall back to params
     if (row.VariableModifications != null && !row.VariableModifications.toString().trim().isEmpty()) {
         meta.variablemodifications = row.VariableModifications
     } else {
@@ -191,7 +192,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
 
     enzymes += row.Enzyme
     if (enzymes.size() > 1) {
-        log.error("Currently only one enzyme is supported for the whole experiment. Specified was '${enzymes}'. Check or split your SDRF.")
+        log.error("Currently only one enzyme is supported for the whole experiment. Specified was '${enzymes}'. Check or split your input.")
         log.error(filestr)
         exit(1)
     }
@@ -199,7 +200,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
     // Nothing to determine for dia. Only LFQ allowed there.
     if (!meta.acquisition_method.equals("dia")) {
         if (wrapper.labelling_type.equals("")) {
-            if (meta.labelling_type.contains("tmt") || meta.labelling_type.contains("itraq") || meta.labelling_type.contains("label free")) {
+            if (meta.labelling_type.contains("tmt") || meta.labelling_type.contains("itraq") || meta.labelling_type.contains("silac") || meta.labelling_type.contains("label free")) {
                 wrapper.labelling_type = meta.labelling_type
             }
             else {
@@ -217,7 +218,7 @@ def create_meta_channel(LinkedHashMap row, enzymes, files, wrapper) {
 
     if (wrapper.labelling_type.contains("label free") || meta.acquisition_method == "dia") {
         if (filestr in files) {
-            log.error("Currently only one search engine setting/DIA-NN setting per file is supported for the whole experiment. ${filestr} has multiple entries in your SDRF. Maybe you have a (isobaric) labelled experiment? Otherwise, consider splitting your design into multiple experiments.")
+            log.error("Currently only one search engine setting/DIA-NN setting per file is supported for the whole experiment. ${filestr} has multiple entries in your input. Maybe you have a (isobaric) labelled experiment? Otherwise, consider splitting your design into multiple experiments.")
             exit(1)
         }
         files += filestr

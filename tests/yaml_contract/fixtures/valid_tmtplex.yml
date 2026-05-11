@@ -1,0 +1,135 @@
+# Valid quantms YAML input example: TMT 16-plex DDA experiment
+# Demonstrates the canonical structure for the current YAML specification
+
+experiment:
+  # Core MS method settings
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+
+  # Explicit quantification method declaration
+  quantification_method: TMT
+
+  # Mass calibration tolerance settings
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+# Biological samples: one entry per unique biological unit
+samples:
+  - id: treated_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+  - id: control_rep1
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 1
+    characteristics:
+      cell_line: HeLa
+      passage: 10
+
+  - id: treated_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: treated
+    biological_replicate: 2
+    characteristics:
+      cell_line: HeLa
+      passage: 11
+
+  - id: control_rep2
+    organism: homo sapiens
+    organism_part: cell line
+    condition: control
+    biological_replicate: 2
+    characteristics:
+      cell_line: HeLa
+      passage: 11
+
+# Mixture definitions: groups of samples multiplexed together via isobaric labels
+# The channels dictionary maps label names to sample IDs
+mixtures:
+  - id: mix_batch1
+    description: "First TMT16 batch with treated and control replicates"
+    channels:
+      TMT126: treated_rep1
+      TMT127N: treated_rep2
+      TMT127C: control_rep1
+      TMT128N: control_rep2
+      TMT128C: treated_rep1 # Example of reuse in same mixture
+      # Other channels left empty (nulls omitted for clarity)
+
+  - id: mix_batch2
+    description: "Second TMT16 batch with technical replicates"
+    channels:
+      TMT126: treated_rep1
+      TMT127N: control_rep1
+
+# Runs: raw spectrometry files with explicit mixture references
+# Each multiplexed run explicitly links to a mixture
+runs:
+  - file: s3://bucket/experiment/mix_batch1_fraction_1.raw
+    mixture: mix_batch1
+    fraction: 1
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/mix_batch1_fraction_2.raw
+    mixture: mix_batch1
+    fraction: 2
+    instrument: Q_TOF
+
+  - file: s3://bucket/experiment/mix_batch2_fraction_1.raw
+    mixture: mix_batch2
+    fraction: 1
+    instrument: Q_TOF
+
+modifications:
+  - kind: ontology
+    ontology_id: "UNIMOD:4"
+    name: "Carbamidomethyl"
+    residues: C
+    mode: fixed
+  - kind: ontology
+    name: "TMT16plex"
+    residues: K
+    mode: fixed
+  - kind: ontology
+    name: "TMT16plex"
+    term_specificity: n-term
+    mode: fixed
+  - kind: ontology
+    ontology_id: "UNIMOD:35"
+    name: "Oxidation"
+    residues: M
+    mode: variable
+
+  # Profile-specific phosphorylation settings
+  - id: phospho_ser
+    kind: ontology
+    name: "Phosphorylation"
+    ontology_id: "UNIMOD:21"
+    residues: S
+    mode: variable
+    binary_group: 1
+    min_occurrences: 0
+    max_occurrences: 3
+
+  # Ontology-backed modification with name only
+  - id: phospho_thr
+    kind: ontology
+    name: "Phosphorylation"
+    residues: T
+    mode: variable
+
+  # Ontology-backed modification with ontology_id only
+  - id: phospho_tyr
+    kind: ontology
+    ontology_id: "UNIMOD:21"
+    residues: Y
+    mode: variable

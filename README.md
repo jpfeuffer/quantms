@@ -94,21 +94,16 @@ Compressed variants are supported for `.raw`, `.mzML`, and `.d` formats:
 - `.tar.gz` or `.tgz` (tar gzip compressed)
 - `.zip` (zip compressed)
 
-First, find or create a sample-to-data relationship file ([SDRF](https://github.com/bigbio/proteomics-sample-metadata)).
-Have a look at public datasets that were already annotated [here](https://github.com/bigbio/proteomics-sample-metadata/tree/master/annotated-projects).
-Those SDRFs should be ready for one-command re-analysis and you can just use the URL to the file on GitHub,
-e.g., `https://raw.githubusercontent.com/bigbio/proteomics-sample-metadata/master/annotated-projects/PXD000396/PXD000396.sdrf.tsv`.
-If you create your own, please adhere to the specifications and point the pipeline to your local folder or a remote location where you uploaded it to.
-The SDRF file can have `.sdrf`, `.tsv`, or `.csv` extensions.
+First, prepare your input metadata in **quantms YAML format** (`.yml` or `.yaml`). This is the **officially approved, specification-driven format** for defining your experiment structure. The complete specification is available at `assets/schemas/quantms_yaml_manifest.json`. The pipeline now consumes YAML manifests at runtime for all analyses.
 
 The second requirement is a protein sequence database. We suggest downloading a database for the organism(s)/proteins of interest from [Uniprot](https://www.uniprot.org/proteomes?query=*).
 
-Now, you can run the pipeline using:
+Now you can run the pipeline with your YAML manifest:
 
 ```bash
 nextflow run bigbio/quantms \
    -profile <docker/singularity/.../institute> \
-   --input project.sdrf.tsv \
+   --input experiment.yml \
    --database database.fasta \
    --outdir <OUTDIR>
 ```

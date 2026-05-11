@@ -1,0 +1,34 @@
+# Invalid: Run references a mixture that does not exist in mixtures list
+experiment:
+  acquisition_method: DDA
+  enzyme: Trypsin
+  dissociation_method: HCD
+  quantification_method: TMT
+  precursor_mass_tolerance: "10 ppm"
+  fragment_mass_tolerance: "0.02 Da"
+
+samples:
+  - id: sample_1
+    organism: homo sapiens
+    condition: control
+    biological_replicate: 1
+  - id: sample_2
+    organism: homo sapiens
+    condition: treated
+    biological_replicate: 1
+
+mixtures:
+  - id: mix_1
+    channels:
+      TMT126: sample_1
+      TMT127N: sample_2
+
+runs:
+  - file: test1.raw
+    mixture: mix_1
+    fraction: 1
+  - file: test2.raw
+    mixture: nonexistent_mixture
+    fraction: 1
+
+modifications: []
