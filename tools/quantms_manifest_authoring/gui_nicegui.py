@@ -839,6 +839,11 @@ def create_group_detail_step(
             ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
             return
 
+        if active_group is None:
+            ui.label("No group is open.").classes("text-sm text-gray-600")
+            ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
+            return
+
         group_id: str = str(active_group.get("id") or "")
         if not group_id:
             ui.label("No group is open.").classes("text-sm text-gray-600")
@@ -878,8 +883,43 @@ def create_group_detail_step(
                     icon="arrow_back",
                 ).props("flat no-caps")
 
+        JSpreadsheetEditor.prepare_client_runtime()
+
+        with ui.card().classes("w-full mt-6"):
+            ui.label("Samples").classes("text-md font-semibold")
+            ui.label("Reusable samples are shared across all group channel sheets.").classes("text-sm text-gray-600")
+            sample_bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+            sample_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=sample_bridge, worksheet_name="Samples")
+            sample_editor.render()
+            spreadsheet_editors.append(sample_editor)
+
+        if active_group and group_id:
+            group_strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(active_group.get("kind"))
+            group_sheet_name = "LFQ" if group_strategy == wizard.get_default_labeling_strategy("LFQ") else (group_strategy or group_name or group_id)
+            with ui.card().classes("w-full mt-6"):
+                ui.label(f"{group_sheet_name} Assignment Sheet").classes("text-md font-semibold")
+                ui.label(
+                    "Assign samples to the active group's channels using the shared Samples sheet as the source."
+                ).classes("text-sm text-gray-600")
+                bridge = JSpreadsheetBridge(
+                    wizard,
+                    entity_type="group_channels",
+                    group_strategy=group_strategy,
+                    group_id=group_id,
+                )
+                editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
+                editor.render()
+                spreadsheet_editors.append(editor)
+                ui.label(
+                    "• Sample selections are dropdowns sourced from the shared Samples sheet\n"
+                    "• Only the active group's row is editable here\n"
+                    "• Channel names come from the bundled channel catalog"
+                ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+        else:
+            ui.label("Add a group to open its assignment sheet.").classes("text-sm text-gray-500 italic mt-4")
+
         members = list(active_group.get("members", []) or [])
-        with ui.expansion(text="Membership Summary", icon="info", value=True).classes("w-full mt-4"):
+        with ui.expansion(text="Membership Summary", icon="info", value=False).classes("w-full mt-6"):
             if members:
                 ui.label(f"Group members ({len(members)} run(s))").classes("text-sm font-semibold")
                 for member_id in members:
@@ -893,46 +933,6 @@ def create_group_detail_step(
                     ui.label(f"• {member_text}").classes("text-sm text-gray-700")
             else:
                 ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500")
-
-        JSpreadsheetEditor.prepare_client_runtime()
-
-        with ui.card().classes("w-full mt-6"):
-            ui.label("Samples").classes("text-md font-semibold")
-            ui.label("Reusable samples are shared across all group channel sheets.").classes("text-sm text-gray-600")
-            sample_bridge = JSpreadsheetBridge(wizard, entity_type="samples")
-            sample_editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=sample_bridge, worksheet_name="Samples")
-            sample_editor.render()
-            spreadsheet_editors.append(sample_editor)
-
-        channel_strategies = wizard.get_group_channel_sheet_strategies()
-        if channel_strategies:
-            ui.label("Channel Sheets").classes("text-md font-semibold mt-6")
-            ui.label(
-                "Each sheet below owns the sample assignments for one labeling strategy. "
-                "Group/file membership stays read-only in the summary above."
-            ).classes("text-sm text-gray-600")
-
-        for strategy in channel_strategies:
-            sheet_name = "LFQ" if strategy == wizard.get_default_labeling_strategy("LFQ") else strategy
-            with ui.card().classes("w-full mt-4"):
-                ui.label(f"{sheet_name} Channel Sheet").classes("text-md font-semibold")
-                matching_groups = wizard.get_group_ids_for_labeling_strategy(strategy)
-                if matching_groups:
-                    ui.label(
-                        f"{len(matching_groups)} group(s) use this strategy"
-                    ).classes("text-sm text-gray-600")
-                bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy=strategy)
-                editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=sheet_name)
-                editor.render()
-                spreadsheet_editors.append(editor)
-                ui.label(
-                    "• Sample selections are dropdowns sourced from the shared Samples sheet\n"
-                    "• Group/file membership is read-only and not editable in this sheet\n"
-                    "• Channel names come from the bundled channel catalog"
-                ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
-
-        if not channel_strategies:
-            ui.label("Add a group to open its channel sheet.").classes("text-sm text-gray-500 italic mt-4")
 
         if wizard.samples:
             ui.label("Sample sheet edits immediately feed the dropdown sources above.").classes(
@@ -1034,18 +1034,18 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     )
 
             with ui.card().classes("w-full basis-0 grow"):
-                allowed_group_kinds = wizard.get_allowed_group_kinds()
-                default_group_kind = allowed_group_kinds[0] if allowed_group_kinds else None
-                default_group_strategy_options = wizard.get_allowed_labeling_strategies(default_group_kind) if default_group_kind else []
+                default_group_strategy_options = wizard.get_allowed_labeling_strategies()
                 default_group_strategy = default_group_strategy_options[0] if default_group_strategy_options else None
                 default_group_channel_count = wizard.get_labeling_strategy_channel_count(default_group_strategy)
 
-                def update_group_strategy_controls(selected_kind: Optional[str]) -> None:
-                    strategy_options = wizard.get_allowed_labeling_strategies(selected_kind)
+                def update_group_strategy_controls(selected_strategy: Optional[str]) -> None:
+                    strategy_options = wizard.get_allowed_labeling_strategies()
                     strategy_select.options = {strategy: strategy for strategy in strategy_options}
                     if strategy_options:
-                        if strategy_select.value not in strategy_options:
+                        if selected_strategy not in strategy_options:
                             strategy_select.value = strategy_options[0]
+                        else:
+                            strategy_select.value = selected_strategy
                     else:
                         strategy_select.value = None
 
@@ -1091,11 +1091,6 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                         label="Group Name",
                         placeholder="e.g., Replicate group",
                     ).classes("flex-grow")
-                    group_kind_input = ui.select(
-                        options={kind: kind for kind in allowed_group_kinds},
-                        value=default_group_kind,
-                        label="Group Kind",
-                    ).classes("flex-grow")
 
                 with ui.row().classes("w-full gap-2 items-end"):
                     strategy_select = ui.select(
@@ -1107,13 +1102,13 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                         f"Channel Count: {default_group_channel_count if default_group_channel_count is not None else 'n/a'}"
                     ).classes("text-sm text-gray-600 px-2 pb-1")
 
-                    def on_group_kind_change(event: Any) -> None:
-                        selected_kind = getattr(event, "value", event)
-                        if selected_kind is None:
-                            selected_kind = group_kind_input.value
-                        update_group_strategy_controls(selected_kind)
+                    def on_group_strategy_change(event: Any) -> None:
+                        selected_strategy = getattr(event, "value", event)
+                        if selected_strategy is None:
+                            selected_strategy = strategy_select.value
+                        update_group_strategy_controls(selected_strategy)
 
-                    group_kind_input.on_value_change(on_group_kind_change)
+                    strategy_select.on_value_change(on_group_strategy_change)
 
                 with ui.row().classes("w-full gap-2 items-end"):
                     group_description_input = ui.input(
@@ -1124,8 +1119,8 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     def add_group() -> None:
                         group_id = group_id_input.value.strip()
                         group_name = group_name_input.value.strip()
-                        group_kind = group_kind_input.value
                         group_description = group_description_input.value.strip()
+                        labeling_strategy = strategy_select.value
 
                         if not group_id:
                             ui.notify("Group ID is required", type="warning")
@@ -1133,10 +1128,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                         if not group_name:
                             ui.notify("Group name is required", type="warning")
                             return
-                        if not group_kind:
-                            ui.notify("Group kind is required", type="warning")
-                            return
-                        if not strategy_select.value:
+                        if not labeling_strategy:
                             ui.notify("Labeling strategy is required", type="warning")
                             return
 
@@ -1144,17 +1136,16 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                             wizard.add_group(
                                 id=group_id,
                                 name=group_name,
-                                kind=group_kind,
                                 description=group_description or None,
-                                labeling_strategy=strategy_select.value,
+                                labeling_strategy=labeling_strategy,
                             )
                             ui.notify(f"Group '{group_id}' added")
                             group_id_input.value = ""
                             group_name_input.value = ""
                             group_description_input.value = ""
-                            group_kind_input.value = default_group_kind
-                            group_kind_input.update()
-                            update_group_strategy_controls(default_group_kind)
+                            strategy_select.value = default_group_strategy
+                            strategy_select.update()
+                            update_group_strategy_controls(default_group_strategy)
                             refresh_ui()
                         except Exception as e:
                             ui.notify(f"Error adding group: {e}", type="negative")
@@ -1175,7 +1166,7 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
 
                     ui.label(
                         "• Group ID is read-only in this phase\n"
-                        "• Group name, kind, labeling strategy, and description can be edited\n"
+                        "• Group name, labeling strategy, and description can be edited\n"
                         "• Channel count is derived from the labeling strategy\n"
                         "• Group details are authored on the next page"
                     ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")

@@ -503,8 +503,14 @@ class TestRunsStepCallbacks:
         assert wizard.groups == []
 
     def test_runs_step_exposes_explicit_group_creation_affordance_when_no_groups_exist(self):
-        """The Groups pane should offer explicit group creation even before any groups exist."""
+        """The Groups pane should expose a flat strategy picker without a Group Kind control."""
         wizard = WizardState()
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="LFQ",
+        )
         mock_ui_ctx = MockUIContext()
 
         with patch("gui_nicegui.ui", mock_ui_ctx):
@@ -517,23 +523,26 @@ class TestRunsStepCallbacks:
             (inp for inp in mock_ui_ctx.inputs if inp.label == "Description (optional)"),
             None,
         )
-        group_kind_select = next((sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind"), None)
         add_group_button = next((btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group"), None)
         regroup_button = next((btn for btn in mock_ui_ctx.buttons if btn.text == "Suggest groups from filenames"), None)
+        strategy_select = next((sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy"), None)
 
         assert group_id_input is not None
         assert group_name_input is not None
         assert group_description_input is not None
-        assert group_kind_select is not None
+        assert strategy_select is not None
         assert add_group_button is not None
         assert regroup_button is not None
-        assert group_kind_select.options == {kind: kind for kind in wizard.get_allowed_group_kinds()}
-        assert group_kind_select.value == wizard.get_allowed_group_kinds()[0]
+        assert not any(sel.label == "Group Kind" for sel in mock_ui_ctx.selects)
+        assert strategy_select.options == {
+            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies()
+        }
+        assert strategy_select.value == wizard.get_allowed_labeling_strategies()[0]
         assert add_group_button.parent is regroup_button.parent
         assert wizard.groups == []
 
-    def test_group_creation_form_updates_labeling_strategy_options_when_kind_changes(self):
-        """Changing the group kind should refresh the available labeling strategies and derived count."""
+    def test_group_creation_form_updates_derived_channel_count_when_strategy_changes(self):
+        """Changing the strategy should refresh the derived channel count without a Group Kind control."""
         wizard = WizardState()
         mock_ui_ctx = MockUIContext()
 
@@ -541,27 +550,29 @@ class TestRunsStepCallbacks:
             with patch("gui_nicegui.JSpreadsheetEditor.prepare_client_runtime", lambda *args, **kwargs: None):
                 create_runs_step(wizard, refresh_ui=lambda: None)
 
-        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
         group_strategy_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy")
         channel_count_label = next(lbl for lbl in mock_ui_ctx.labels if "Channel Count" in lbl.text)
 
         assert group_strategy_select.options == {
-            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies("LFQ")
+            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies()
         }
-        assert group_strategy_select.value == "label free sample"
-        assert "1" in channel_count_label.text
-
-        group_kind_select.trigger_value_change("TMT")
-
-        assert group_strategy_select.options == {
-            strategy: strategy for strategy in wizard.get_allowed_labeling_strategies("TMT")
-        }
-        assert group_strategy_select.value == wizard.get_allowed_labeling_strategies("TMT")[0]
+        assert group_strategy_select.value == wizard.get_allowed_labeling_strategies()[0]
         assert str(wizard.get_labeling_strategy_channel_count(group_strategy_select.value)) in channel_count_label.text
 
-    def test_group_creation_form_adds_group_with_strategy_and_derived_count(self):
-        """The Add Group callback should persist the selected strategy and derived count."""
+        group_strategy_select.trigger_value_change("TMT6")
+
+        assert group_strategy_select.value == "TMT6"
+        assert str(wizard.get_labeling_strategy_channel_count(group_strategy_select.value)) in channel_count_label.text
+
+    def test_group_creation_form_adds_group_with_strategy_without_kind_input(self):
+        """The Add Group callback should persist the selected strategy without needing Group Kind input."""
         wizard = WizardState()
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="LFQ",
+        )
         refresh_ui_calls = []
 
         def mock_refresh_ui():
@@ -575,19 +586,18 @@ class TestRunsStepCallbacks:
 
         group_id_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group ID")
         group_name_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group Name")
-        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
         group_strategy_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy")
         add_group_button = next(btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group")
 
         group_id_input.value = "lfq_1"
         group_name_input.value = "LFQ group"
-        group_kind_select.trigger_value_change("LFQ")
         group_strategy_select.value = "label free sample"
 
         add_group_button.trigger_click()
 
         assert len(wizard.groups) == 1
         assert wizard.groups[0]["id"] == "lfq_1"
+        assert wizard.groups[0]["kind"] == "LFQ"
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
         assert wizard.groups[0]["channel_count"] == 1
         assert refresh_ui_calls
@@ -612,20 +622,20 @@ class TestRunsStepCallbacks:
         group_id_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group ID")
         group_name_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Group Name")
         group_description_input = next(inp for inp in mock_ui_ctx.inputs if inp.label == "Description (optional)")
-        group_kind_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Group Kind")
+        group_strategy_select = next(sel for sel in mock_ui_ctx.selects if sel.label == "Labeling Strategy")
         add_group_button = next(btn for btn in mock_ui_ctx.buttons if btn.text == "Add Group")
 
         group_id_input.value = "replicate_1"
         group_name_input.value = "Replicate group"
         group_description_input.value = "Replicate samples from the same condition"
-        group_kind_select.value = wizard.get_allowed_group_kinds()[0]
+        group_strategy_select.value = next(iter(group_strategy_select.options))
 
         add_group_button.trigger_click()
 
         assert len(wizard.groups) == 1
         assert wizard.groups[0]["id"] == "replicate_1"
         assert wizard.groups[0]["name"] == "Replicate group"
-        assert wizard.groups[0]["kind"] == wizard.get_allowed_group_kinds()[0]
+        assert wizard.groups[0]["labeling_strategy"] == group_strategy_select.value
         assert wizard.groups[0]["description"] == "Replicate samples from the same condition"
         assert wizard.groups[0]["members"] == []
         assert refresh_ui_calls
@@ -904,7 +914,7 @@ class TestRunsStepCallbacks:
         assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
         assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "TMT6" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
-        assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "LFQ" not in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
         mock_ui_ctx = MockUIContext()
         RecordingSpreadsheetEditor.created = []
@@ -1161,8 +1171,8 @@ class TestRunsStepCallbacks:
         assert selector.options == {"lfq_group": "LFQ group", "tmt_group": "TMT group"}
         assert wizard.get_active_group_id() == "lfq_group"
 
-    def test_group_detail_workspace_renders_shared_sample_sheet_and_strategy_sheets(self):
-        """The Group Details workspace should render a shared Sample sheet and separate strategy sheets."""
+    def test_group_detail_workspace_renders_shared_sample_sheet_and_active_group_sheet(self):
+        """The Group Details workspace should render Samples first and only the active group's assignment sheet."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -1188,10 +1198,15 @@ class TestRunsStepCallbacks:
         worksheet_names = [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "Samples" in worksheet_names
         assert "TMT6" in worksheet_names
-        assert "TMT11" in worksheet_names
+        assert "TMT11" not in worksheet_names
+        assert worksheet_names.index("Samples") < worksheet_names.index("TMT6")
         assert any("Group Details" in lbl.text for lbl in mock_ui_ctx.labels)
-        assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
+        assert any(expansion.text == "Membership Summary" and expansion.value is False for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
+        outer_card = mock_ui_ctx.cards[0]
+        membership_expansion = next(expansion for expansion in mock_ui_ctx.expansions if expansion.text == "Membership Summary")
+        sample_card = mock_ui_ctx.cards[1]
+        assert outer_card.children.index(membership_expansion) > outer_card.children.index(sample_card)
 
     def test_manual_path_entry_clears_input_after_add(self):
         """

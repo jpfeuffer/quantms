@@ -310,25 +310,17 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
+        assert data["headers"] == ["id", "name", "labeling_strategy", "channel_count", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
         assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["id"]["read_only"] is True
         assert "read_only" not in data["column_config"]["name"]
-        assert "read_only" not in data["column_config"]["kind"]
         assert "read_only" not in data["column_config"]["labeling_strategy"]
         assert data["column_config"]["channel_count"]["read_only"] is True
         assert "read_only" not in data["column_config"]["description"]
-        assert data["column_config"]["kind"]["type"] == "dropdown"
-        assert data["column_config"]["kind"]["source"] == [
-            {"id": "LFQ", "name": "LFQ"},
-            {"id": "TMT", "name": "TMT"},
-            {"id": "iTRAQ", "name": "iTRAQ"},
-            {"id": "SILAC", "name": "SILAC"},
-        ]
         assert "members" not in data["headers"]
         assert "members" not in data["column_config"]
-        assert data["read_only_cells"] == [{"row": 0, "col": 0}, {"row": 0, "col": 4}]
+        assert data["read_only_cells"] == [{"row": 0, "col": 0}, {"row": 0, "col": 3}]
         assert bridge.get_row_count() == 1
 
     def test_groups_bridge_includes_labeling_strategy_and_channel_count_columns(self):
@@ -340,14 +332,14 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
+        assert data["headers"] == ["id", "name", "labeling_strategy", "channel_count", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
         assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
         assert data["column_config"]["channel_count"]["read_only"] is True
 
     def test_groups_bridge_labeling_strategy_dropdown_uses_all_allowed_strategies_for_unrestricted_experiments(self):
-        """LFQ-only sheets should still expose the full allowed labeling-strategy source when the experiment does not narrow kinds."""
+        """Unrestricted experiments should still expose the full allowed labeling-strategy source."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -359,6 +351,26 @@ class TestJSpreadsheetBridge:
             {"id": strategy, "name": strategy}
             for strategy in wizard.get_allowed_labeling_strategies()
         ]
+
+    def test_groups_bridge_labeling_strategy_dropdown_source_is_narrowed_by_experiment(self):
+        """Experiment constraints should narrow the Groups labeling-strategy dropdown source."""
+        wizard = WizardState()
+        wizard.set_experiment(
+            acquisition_method="DDA",
+            enzyme="Trypsin",
+            dissociation_method="HCD",
+            quantification_method="LFQ",
+        )
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["column_config"]["labeling_strategy"]["source"] == [
+            {"id": "label free sample", "name": "label free sample"}
+        ]
+        assert "kind" not in data["column_config"]
 
     def test_groups_bridge_backfills_missing_labeling_strategy_from_kind(self):
         """Legacy groups without strategy metadata should be normalized when the sheet renders."""
@@ -374,7 +386,7 @@ class TestJSpreadsheetBridge:
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
         assert data["data"][0][data["headers"].index("channel_count")] == 1
 
-    def test_groups_bridge_keeps_kind_and_labeling_strategy_synced_on_full_sheet_edit(self):
+    def test_groups_bridge_keeps_labeling_strategy_synced_on_full_sheet_edit(self):
         """Full-sheet group sync should keep derived channel counts aligned with the chosen strategy."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
@@ -385,18 +397,16 @@ class TestJSpreadsheetBridge:
         headers = data["headers"]
         snapshot = [row[:] for row in data["data"]]
 
-        snapshot[0][headers.index("kind")] = "LFQ"
         snapshot[0][headers.index("labeling_strategy")] = "label free sample"
         snapshot[0][headers.index("channel_count")] = 99
 
         bridge.sync_from_spreadsheet_data(snapshot)
 
-        assert wizard.groups[0]["kind"] == "LFQ"
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
         assert wizard.groups[0]["channel_count"] == 1
 
-    def test_groups_bridge_allows_labeling_strategy_edit_after_kind_change(self):
-        """Groups cell edits should accept a newly valid strategy after the kind is changed."""
+    def test_groups_bridge_allows_labeling_strategy_edit_and_derives_kind(self):
+        """Groups cell edits should accept a strategy edit and derive the matching kind."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -406,12 +416,11 @@ class TestJSpreadsheetBridge:
 
         tmt_strategy = wizard.get_allowed_labeling_strategies("TMT")[0]
 
-        bridge.handle_cell_edit(row_index=0, col_index=headers.index("kind"), new_value="TMT")
         bridge.handle_cell_edit(row_index=0, col_index=headers.index("labeling_strategy"), new_value=tmt_strategy)
 
-        assert wizard.groups[0]["kind"] == "TMT"
         assert wizard.groups[0]["labeling_strategy"] == tmt_strategy
         assert wizard.groups[0]["channel_count"] == wizard.get_labeling_strategy_channel_count(tmt_strategy)
+        assert wizard.groups[0]["kind"] == "TMT"
 
     def test_groups_bridge_sync_paths_update_wizard_groups(self):
         """Groups sync APIs should keep membership owned by the Files side."""
@@ -425,13 +434,15 @@ class TestJSpreadsheetBridge:
 
         rows = bridge.adapter.wizard_groups_to_spreadsheet()
         rows[0].name = "Edited name"
-        rows[0].kind = "TMT"
+        rows[0].labeling_strategy = "TMT6"
         rows[0].members = wizard.runs[1]["id"]
         rows[0].description = "Edited description"
         bridge.adapter.sync_group_edits(rows)
 
         assert wizard.groups[0]["name"] == "Edited name"
         assert wizard.groups[0]["kind"] == "TMT"
+        assert wizard.groups[0]["labeling_strategy"] == "TMT6"
+        assert wizard.groups[0]["channel_count"] == 6
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.groups[0]["description"] == "Edited description"
         assert wizard.runs[0]["group_id"] == "group_1"
@@ -440,13 +451,15 @@ class TestJSpreadsheetBridge:
         spreadsheet_data = bridge.get_spreadsheet_data()
         mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
         mutated_snapshot[0][spreadsheet_data["headers"].index("name")] = "Edited name"
-        mutated_snapshot[0][spreadsheet_data["headers"].index("kind")] = "LFQ"
+        mutated_snapshot[0][spreadsheet_data["headers"].index("labeling_strategy")] = "label free sample"
         mutated_snapshot[0][spreadsheet_data["headers"].index("description")] = "Browser edit"
 
         bridge.sync_from_spreadsheet_data(mutated_snapshot)
 
         assert wizard.groups[0]["name"] == "Edited name"
         assert wizard.groups[0]["kind"] == "LFQ"
+        assert wizard.groups[0]["labeling_strategy"] == "label free sample"
+        assert wizard.groups[0]["channel_count"] == 1
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.groups[0]["description"] == "Browser edit"
         assert wizard.runs[0]["group_id"] == "group_1"
@@ -490,6 +503,23 @@ class TestJSpreadsheetBridge:
         assert data["column_config"]["sample_target"]["type"] == "dropdown"
         assert data["column_config"]["sample_target"]["source"] == [{"id": "sample_1", "name": "sample_1"}]
 
+    def test_group_channels_bridge_can_filter_to_a_single_group(self):
+        """Group channel sheets should be able to scope rendering to one active group row."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+        wizard.add_sample(id="sample_2")
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="tmt_group", name="TMT group", kind="TMT", labeling_strategy="TMT6")
+        wizard.set_group_sample_target("lfq_group", "sample_1")
+        wizard.set_group_channel_assignments("tmt_group", {"TMT126": "sample_2"})
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy="TMT6", group_id="tmt_group")
+        data = bridge.get_spreadsheet_data()
+
+        assert data["headers"][0] == "id"
+        assert [row[0] for row in data["data"]] == ["tmt_group"]
+        assert data["data"][0][1] == "sample_2"
+
     def test_channel_catalog_includes_provenance_for_known_strategies(self):
         """Bundled channel catalog entries should carry strategy provenance when available."""
         catalog = ChannelBuilder.get_channel_catalog()
@@ -532,10 +562,10 @@ class TestJSpreadsheetBridge:
         mock_context.client.run_javascript.assert_called()
 
     def test_groups_bridge_rejects_unknown_members_and_respects_kind_restrictions(self):
-        """Groups edits must honor experiment-driven kind restrictions without exposing member edits."""
+        """Groups edits must honor experiment-driven strategy restrictions without exposing member edits."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
+        wizard.add_group(id="group_1", name="TMT group", kind="TMT", labeling_strategy="TMT6")
         wizard.assign_run(run_index=0, group_id="group_1")
         wizard.set_experiment(
             acquisition_method="DDA",
@@ -547,13 +577,16 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["column_config"]["kind"]["source"] == [{"id": "TMT", "name": "TMT"}]
+        assert data["column_config"]["labeling_strategy"]["source"] == [
+            {"id": strategy, "name": strategy}
+            for strategy in wizard.get_allowed_labeling_strategies()
+        ]
 
         with pytest.raises(ValueError, match="Allowed options: TMT"):
             bridge.handle_cell_edit(
                 row_index=0,
-                col_index=data["headers"].index("kind"),
-                new_value="LFQ",
+                col_index=data["headers"].index("labeling_strategy"),
+                new_value="label free sample",
             )
 
         assert "members" not in data["headers"]

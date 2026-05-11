@@ -48,6 +48,7 @@ class JSpreadsheetBridge:
         wizard: WizardState,
         column_config_builder=None,
         group_strategy: Optional[str] = None,
+        group_id: Optional[str] = None,
         entity_type: Literal["runs", "samples", "mixtures", "assignments", "modifications", "groups", "group_channels"] = "runs",
     ):
         """Initialize bridge with wizard state.
@@ -61,6 +62,7 @@ class JSpreadsheetBridge:
         self.wizard = wizard
         self.entity_type = entity_type
         self.group_strategy = group_strategy
+        self.group_id = group_id
         self.adapter = SpreadsheetAdapter(wizard)
         self.column_config_builder = column_config_builder or ColumnConfigBuilder()
         self.option_provider = OntologyOptionProvider()
@@ -110,7 +112,7 @@ class JSpreadsheetBridge:
             data = [[getattr(row, field, None) for field in headers] for row in rows]
         elif self.entity_type == "group_channels":
             headers = self.adapter.get_group_channel_headers(self.group_strategy)
-            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy, self.group_id)
             data = []
             for row in rows:
                 row_data = [row.id]
@@ -220,7 +222,6 @@ class JSpreadsheetBridge:
             return sources
         elif self.entity_type == "groups":
             return {
-                "kind": [{"id": kind, "name": kind} for kind in self.wizard.get_allowed_group_kinds()],
                 "labeling_strategy": [
                     {"id": strategy, "name": strategy}
                     for strategy in self._get_group_labeling_strategy_options()
@@ -266,7 +267,7 @@ class JSpreadsheetBridge:
         if self.entity_type == "groups":
             return len(self.wizard.groups)
         if self.entity_type == "group_channels":
-            return len(self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy))
+            return len(self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy, self.group_id))
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
     def sync_from_spreadsheet_data(self, spreadsheet_data: list[list[Any]]) -> None:
@@ -397,7 +398,7 @@ class JSpreadsheetBridge:
             return
 
         if self.entity_type == "group_channels":
-            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+            rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy, self.group_id)
             headers = self.adapter.get_group_channel_headers(self.group_strategy)
             for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
                 if not isinstance(row_data, (list, tuple)):
@@ -414,7 +415,7 @@ class JSpreadsheetBridge:
                         value = None
                     row.channels[field_name] = value
                 row.validate()
-            self.adapter.sync_group_channel_edits(rows, self.group_strategy)
+            self.adapter.sync_group_channel_edits(rows, self.group_strategy, self.group_id)
             return
 
         raise ValueError(f"Unknown entity type: {self.entity_type}")
@@ -661,9 +662,7 @@ class JSpreadsheetBridge:
 
         edited_row = current_rows[row_index]
 
-        if field_name == "kind":
-            self._validate_dropdown_value(field_name, new_value)
-        elif field_name == "labeling_strategy":
+        if field_name == "labeling_strategy":
             self._validate_dropdown_value(field_name, new_value)
         elif field_name == "members" and new_value is None:
             new_value = ""
@@ -683,7 +682,7 @@ class JSpreadsheetBridge:
         if field_name == "id":
             raise ValueError("Group ID is read-only")
 
-        current_rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy)
+        current_rows = self.adapter.wizard_group_channels_to_spreadsheet(self.group_strategy, self.group_id)
 
         if row_index < 0 or row_index >= len(current_rows):
             raise ValueError(f"Row index {row_index} out of range")
@@ -697,7 +696,7 @@ class JSpreadsheetBridge:
 
         edited_row.validate()
         current_rows[row_index] = edited_row
-        self.adapter.sync_group_channel_edits(current_rows, self.group_strategy)
+        self.adapter.sync_group_channel_edits(current_rows, self.group_strategy, self.group_id)
 
     def _build_dropdown_constraints(self) -> Dict[str, Set[str]]:
         """
@@ -724,7 +723,6 @@ class JSpreadsheetBridge:
             constraints["mode"] = {"fixed", "variable"}
             constraints["kind"] = {"ontology", "custom"}
         elif self.entity_type == "groups":
-            constraints["kind"] = set(self.wizard.get_allowed_group_kinds())
             constraints["labeling_strategy"] = set(self._get_group_labeling_strategy_options())
 
         return constraints

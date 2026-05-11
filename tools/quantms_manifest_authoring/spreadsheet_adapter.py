@@ -581,7 +581,7 @@ class SpreadsheetAdapter:
         Returns:
             List of field names representing columns
         """
-        return ["id", "name", "kind", "labeling_strategy", "channel_count", "description"]
+        return ["id", "name", "labeling_strategy", "channel_count", "description"]
 
     def get_column_headers_modifications(self) -> List[str]:
         """
@@ -700,12 +700,16 @@ class SpreadsheetAdapter:
     def wizard_group_channels_to_spreadsheet(
         self,
         labeling_strategy: Optional[str],
+        group_id: Optional[str] = None,
     ) -> List[GroupChannelSpreadsheetRow]:
         """Convert groups for a labeling strategy into spreadsheet rows."""
         normalized_strategy = self._normalize_group_channel_strategy(labeling_strategy)
         rows: List[GroupChannelSpreadsheetRow] = []
 
         for idx, group in enumerate(self.wizard.groups):
+            if group_id is not None and str(group.get("id") or "") != str(group_id):
+                continue
+
             group_strategy = self._normalize_group_channel_strategy(group.get("labeling_strategy"))
             if not group_strategy:
                 group_strategy = self._default_strategy_for_kind(str(group.get("kind") or ""))
@@ -723,6 +727,7 @@ class SpreadsheetAdapter:
         self,
         rows: List[GroupChannelSpreadsheetRow],
         labeling_strategy: Optional[str],
+        group_id: Optional[str] = None,
     ) -> None:
         """Synchronize group-channel spreadsheet rows back to WizardState."""
         normalized_strategy = self._normalize_group_channel_strategy(labeling_strategy)
@@ -734,6 +739,9 @@ class SpreadsheetAdapter:
         for row in rows:
             group_index = self.wizard._get_group_index(row.id)
             group = self.wizard.groups[group_index]
+            if group_id is not None and str(group.get("id") or "") != str(group_id):
+                continue
+
             group_strategy = self._normalize_group_channel_strategy(group.get("labeling_strategy"))
             if not group_strategy:
                 group_strategy = self._default_strategy_for_kind(str(group.get("kind") or ""))
