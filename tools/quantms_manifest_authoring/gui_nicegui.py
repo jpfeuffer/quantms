@@ -842,12 +842,7 @@ def create_group_detail_step(
     wizard: WizardState,
     refresh_ui: Callable,
 ) -> JSpreadsheetEditor | SpreadsheetEditorFlushGroup | None:
-    """Create the active group detail page for multiplexed and LFQ groups."""
-    active_group = wizard.get_active_group()
-    if active_group is None and wizard.groups:
-        wizard.set_active_group_id(wizard.groups[0]["id"])
-        active_group = wizard.get_active_group()
-
+    """Create the shared group details page with global samples and per-strategy assignment sheets."""
     spreadsheet_editors: List[JSpreadsheetEditor] = []
 
     def return_to_groups() -> None:
@@ -859,53 +854,21 @@ def create_group_detail_step(
 
     with ui.card().classes("w-full mt-6"):
         if not wizard.groups:
-            ui.label("No group is open.").classes("text-sm text-gray-600")
+            ui.label("No groups added yet.").classes("text-sm text-gray-600")
             ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
             return
-
-        if active_group is None:
-            ui.label("No group is open.").classes("text-sm text-gray-600")
-            ui.button("Back to Groups", on_click=return_to_groups).props("flat no-caps")
-            return
-
-        group_id: str = str(active_group.get("id") or "")
-        if not group_id:
-            ui.label("No group is open.").classes("text-sm text-gray-600")
-            ui.button("Back to Groups", on_click=lambda: (wizard.clear_active_group(), refresh_ui())).props(
-                "flat no-caps"
-            )
-            return
-
-        group_name = active_group.get("name") or group_id or "Group"
-        group_kind: str = wizard.normalize_group_kind(active_group.get("kind")) or str(
-            active_group.get("kind") or ""
-        )
-        group_options = {group["id"]: group.get("name") or group["id"] for group in wizard.groups}
 
         with ui.row().classes("w-full items-center justify-between gap-3"):
             with ui.column().classes("gap-0"):
-                ui.label(f"Group Details: {group_name}").classes("text-lg font-semibold")
-                ui.label(f"Kind: {group_kind}").classes("text-sm text-gray-600")
-            with ui.row().classes("items-end gap-3"):
-                group_select = ui.select(
-                    options=group_options,
-                    value=group_id,
-                    label="Group",
-                ).classes("w-64")
-
-                def update_active_group(event: Any) -> None:
-                    selected_value = getattr(event, "value", event)
-                    if not selected_value:
-                        return
-                    wizard.set_active_group_id(str(selected_value))
-                    refresh_ui()
-
-                group_select.on_value_change(update_active_group)
-                ui.button(
-                    "Back to Groups",
-                    on_click=return_to_groups,
-                    icon="arrow_back",
-                ).props("flat no-caps")
+                ui.label("Group Details").classes("text-lg font-semibold")
+                ui.label("Samples are global. Groups below are organized by labeling strategy.").classes(
+                    "text-sm text-gray-600"
+                )
+            ui.button(
+                "Back to Groups",
+                on_click=return_to_groups,
+                icon="arrow_back",
+            ).props("flat no-caps")
 
         JSpreadsheetEditor.prepare_client_runtime()
 
@@ -917,44 +880,57 @@ def create_group_detail_step(
             sample_editor.render()
             spreadsheet_editors.append(sample_editor)
 
-        if active_group and group_id:
-            group_strategies = wizard.get_group_channel_sheet_strategies()
-            if not group_strategies:
-                group_strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(active_group.get("kind"))
-                if group_strategy:
-                    group_strategies = [group_strategy]
+        present_group_strategies = set(wizard.get_group_channel_sheet_strategies())
+        ordered_group_strategies = [
+            strategy for strategy in wizard.get_allowed_labeling_strategies() if strategy in present_group_strategies
+        ]
+        ordered_group_strategies.extend(
+            strategy for strategy in wizard.get_group_channel_sheet_strategies() if strategy not in ordered_group_strategies
+        )
 
-            for group_strategy in group_strategies:
-                group_sheet_name = "LFQ" if group_strategy == wizard.get_default_labeling_strategy("LFQ") else (group_strategy or group_name or group_id)
-                with ui.card().classes("w-full mt-6"):
-                    ui.label(f"{group_sheet_name} Assignment Sheet").classes("text-md font-semibold")
+        for group_strategy in ordered_group_strategies:
+            group_sheet_name = "LFQ" if group_strategy == wizard.get_default_labeling_strategy("LFQ") else (group_strategy or "Groups")
+            group_ids = wizard.get_group_ids_for_labeling_strategy(group_strategy)
+            with ui.card().classes("w-full mt-6"):
+                ui.label(f"{group_sheet_name} Assignment Sheet").classes("text-md font-semibold")
+                if group_ids:
                     ui.label(
-                        "Assign samples to the group's channels using the shared Samples sheet as the source."
+                        f"Groups in this labeling category: {', '.join(group_ids)}"
                     ).classes("text-sm text-gray-600")
-                    bridge = JSpreadsheetBridge(
-                        wizard,
-                        entity_type="group_channels",
-                        group_strategy=group_strategy,
-                        group_id=None,
-                    )
-                    editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
-                    editor.render()
-                    spreadsheet_editors.append(editor)
-                    _render_instruction_block(
-                        [
-                            "• Sample selections are dropdowns sourced from the shared Samples sheet",
-                            "• Each sheet shows the rows for one labeling strategy",
-                            "• Channel names come from the bundled channel catalog",
-                        ],
-                        "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
-                    )
-        else:
-            ui.label("Add a group to open its assignment sheet.").classes("text-sm text-gray-500 italic mt-4")
+                ui.label(
+                    "Assign samples to the group's channels using the shared Samples sheet as the source."
+                ).classes("text-sm text-gray-600")
+                bridge = JSpreadsheetBridge(
+                    wizard,
+                    entity_type="group_channels",
+                    group_strategy=group_strategy,
+                    group_id=None,
+                )
+                editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
+                editor.render()
+                spreadsheet_editors.append(editor)
+                _render_instruction_block(
+                    [
+                        "• Sample selections are dropdowns sourced from the shared Samples sheet",
+                        "• Each sheet shows the groups for one labeling strategy",
+                        "• Channel names come from the bundled channel catalog",
+                    ],
+                    "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+                )
 
-        members = list(active_group.get("members", []) or [])
         with ui.expansion(text="Membership Summary", icon="info", value=False).classes("w-full mt-6"):
-            if members:
-                ui.label(f"Group members ({len(members)} run(s))").classes("text-sm font-semibold")
+            for group in wizard.groups:
+                group_id = str(group.get("id") or "")
+                group_name = str(group.get("name") or group_id or "Group")
+                group_strategy = str(group.get("labeling_strategy") or wizard.get_default_labeling_strategy(group.get("kind")) or "")
+                members = list(group.get("members", []) or [])
+                header = f"{group_name}"
+                if group_strategy:
+                    header = f"{header} ({group_strategy})"
+                ui.label(f"{header}: {len(members)} run(s)").classes("text-sm font-semibold")
+                if not members:
+                    ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500")
+                    continue
                 for member_id in members:
                     run = next((candidate for candidate in wizard.runs if candidate.get("id") == member_id), None)
                     if run:
@@ -964,8 +940,6 @@ def create_group_detail_step(
                     else:
                         member_text = member_id
                     ui.label(f"• {member_text}").classes("text-sm text-gray-700")
-            else:
-                ui.label("No runs are assigned to this group yet.").classes("text-sm text-gray-500")
 
         if wizard.samples:
             ui.label("Sample sheet edits immediately feed the dropdown sources above.").classes(
@@ -1654,8 +1628,16 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
             """Return the lightweight state signature that backs a cached visible page."""
             if page_index == 1:
                 return (
-                    editor.wizard.get_active_group_id(),
-                    tuple(str(group.get("id") or "") for group in editor.wizard.groups),
+                    tuple(
+                        (
+                            str(group.get("id") or ""),
+                            str(group.get("name") or ""),
+                            str(group.get("labeling_strategy") or ""),
+                            str(group.get("kind") or ""),
+                        )
+                        for group in editor.wizard.groups
+                    ),
+                    tuple(str(sample.get("id") or "") for sample in editor.wizard.samples),
                 )
             return None
 

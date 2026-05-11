@@ -466,6 +466,10 @@ class JSpreadsheetEditor:
 
                 if (window.jspreadsheet && typeof window.jspreadsheet.destroy === 'function' && container.spreadsheet) {{
                     try {{
+                        if (container.__quantmsSheetSyncTimer) {{
+                            window.clearTimeout(container.__quantmsSheetSyncTimer);
+                            container.__quantmsSheetSyncTimer = null;
+                        }}
                         window.jspreadsheet.destroy(container, false);
                     }} catch (error) {{
                         console.warn('Failed to destroy previous spreadsheet instance', error);
@@ -474,6 +478,25 @@ class JSpreadsheetEditor:
 
                 container.innerHTML = '';
                 window.__quantmsSpreadsheetInstances = window.__quantmsSpreadsheetInstances || {{}};
+
+                const scheduleSheetSync = (worksheet) => {{
+                    if (!worksheet || typeof worksheet.getData !== 'function') {{
+                        return;
+                    }}
+
+                    if (container.__quantmsSheetSyncTimer) {{
+                        window.clearTimeout(container.__quantmsSheetSyncTimer);
+                    }}
+
+                    container.__quantmsSheetSyncTimer = window.setTimeout(() => {{
+                        container.__quantmsSheetSyncTimer = null;
+                        emitSpreadsheetEvent({{
+                            type: 'sheet_sync',
+                            widget_id: widgetId,
+                            data: worksheet.getData(),
+                        }});
+                    }}, 20);
+                }};
 
                 const spreadsheet = window.jspreadsheet(container, {{
                     tabs: false,
@@ -487,6 +510,9 @@ class JSpreadsheetEditor:
                             col: x,
                             value: value,
                         }});
+                    }},
+                    onafterchanges: function(worksheet) {{
+                        scheduleSheetSync(worksheet);
                     }},
                     ondeleterow: function(worksheet, rows) {{
                         emitSpreadsheetEvent({{
@@ -605,6 +631,13 @@ class JSpreadsheetEditor:
             value = event_data.get('value')
             if row is not None and col is not None:
                 self.handle_cell_edit(int(row), int(col), value)
+        elif event_type == 'sheet_sync':
+            refresh_signature_before = self._get_dependency_refresh_signature()
+            data = event_data.get('data')
+            if isinstance(data, list):
+                self._sync_data_from_browser(data)
+                if self._get_dependency_refresh_signature() != refresh_signature_before:
+                    self.on_change()
         elif event_type == 'row_delete':
             rows = event_data.get('rows')
             if rows is not None:
@@ -617,17 +650,34 @@ class JSpreadsheetEditor:
     def handle_cell_edit(self, row_index: int, col_index: int, new_value: Any) -> None:
         """Handle a cell edit from the spreadsheet."""
         try:
+            refresh_signature_before = self._get_dependency_refresh_signature()
             refresh_required = self.bridge.handle_cell_edit(row_index, col_index, new_value)
             if self.bridge.entity_type == "runs":
                 headers = self.bridge.adapter.get_column_headers()
                 if 0 <= col_index < len(headers) and headers[col_index] == "group_id":
                     self.on_change()
-            elif self.bridge.entity_type == "samples" and refresh_required is not False:
-                self.on_change()
-            elif self.bridge.entity_type == "groups" and refresh_required is not False:
+            elif refresh_required is not False and self._get_dependency_refresh_signature() != refresh_signature_before:
                 self.on_change()
         except Exception as e:
             ui.notify(f"Error updating cell: {e}", type="negative")
+
+    def _get_dependency_refresh_signature(self) -> Any:
+        """Return a lightweight signature for edits that require dependent sheets to rerender."""
+        if self.bridge.entity_type == "samples":
+            return tuple(str(sample.get("id") or "") for sample in self.wizard.samples)
+        if self.bridge.entity_type == "mixtures":
+            return tuple(str(mixture.get("id") or "") for mixture in self.wizard.mixtures)
+        if self.bridge.entity_type == "groups":
+            return tuple(
+                (
+                    str(group.get("id") or ""),
+                    str(group.get("name") or ""),
+                    str(group.get("labeling_strategy") or ""),
+                    str(group.get("kind") or ""),
+                )
+                for group in self.wizard.groups
+            )
+        return None
 
 
     def handle_row_delete(self, row_index: Any) -> None:

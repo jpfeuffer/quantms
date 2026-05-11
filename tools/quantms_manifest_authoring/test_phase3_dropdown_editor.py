@@ -95,6 +95,69 @@ class TestOntologyProviderInstrumentOptions:
         ]
 
 
+class TestOntologyProviderSampleSubtreeOptions:
+    """Tests for subtree-scoped sample metadata options from the ontology provider."""
+
+    def _assert_subtree_options(self, field, root_curie, labels_by_curie):
+        adapter = MagicMock()
+        adapter.descendants.return_value = list(labels_by_curie)
+        adapter.get_label.side_effect = lambda curie: labels_by_curie[curie]
+
+        provider = OntologyOptionProvider(oak_adapter=adapter)
+        options = provider.get_options(field)
+
+        adapter.descendants.assert_called_once_with(root_curie, reflexive=False)
+        expected_options = [
+            {"label": label, "value": label}
+            for label in sorted(labels_by_curie.values(), key=str.lower)
+        ]
+        assert options == expected_options
+
+    def test_subtree_options_for_organism(self):
+        """Organism options should come from the NCBI Taxonomy subtree."""
+        self._assert_subtree_options(
+            "organism",
+            "NCBITaxon:131567",
+            {
+                "NCBITaxon:9606": "Homo sapiens",
+                "NCBITaxon:10090": "Mus musculus",
+            },
+        )
+
+    def test_subtree_options_for_organism_part(self):
+        """Organism part options should come from the UBERON subtree."""
+        self._assert_subtree_options(
+            "organism_part",
+            "UBERON:0001062",
+            {
+                "UBERON:0002107": "Liver",
+                "UBERON:0000955": "Brain",
+            },
+        )
+
+    def test_subtree_options_for_disease(self):
+        """Disease options should come from the DOID subtree."""
+        self._assert_subtree_options(
+            "disease",
+            "DOID:4",
+            {
+                "DOID:1059": "Diabetes mellitus",
+                "DOID:162": "Cancer",
+            },
+        )
+
+    def test_subtree_options_for_cell_type(self):
+        """Cell type options should come from the Cell Ontology subtree."""
+        self._assert_subtree_options(
+            "cell_type",
+            "CL:0000000",
+            {
+                "CL:0000236": "T cell",
+                "CL:0000842": "B cell",
+            },
+        )
+
+
 class TestSpreadsheetColumnConfig:
     """Tests for column configuration with dropdown support."""
 

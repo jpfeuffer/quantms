@@ -220,6 +220,16 @@ class TestWizardState:
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample_1"
 
+    def test_wizard_rejects_duplicate_sample_id(self):
+        """Sample identifiers must be unique."""
+        from gui_wizard_state import WizardState
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+
+        with pytest.raises(ValueError, match="Sample 'sample_1' already exists"):
+            wizard.add_sample(id="sample_1")
+
     def test_wizard_add_mixture(self):
         """Test adding a mixture to the wizard."""
         from gui_wizard_state import WizardState
@@ -2126,6 +2136,71 @@ class TestGroupDetailPageRouting:
         assert wizard_editor.wizard.get_active_group_id() == "lfq_group"
         assert render_calls == [None, "lfq_group"]
         assert any(label.text == "Group Details: lfq_group" for label in routing_ui.labels)
+
+    def test_group_details_rerender_after_sample_ids_change_in_cached_page(self):
+        """Returning to a cached Group Details page should rebuild when shared sample IDs change."""
+        import asyncio
+
+        from gui_nicegui import WizardEditor, create_manifest_editor_ui
+
+        class RefreshAwareRoutingUI(self._RoutingMockUI):
+            def button(self, text="", on_click=None, icon="", **kwargs):
+                btn = super().button(text=text, on_click=on_click, icon=icon, **kwargs)
+
+                def register_on_click(callback):
+                    btn.on_click_callback = callback
+                    return btn
+
+                btn.on_click_callback = on_click
+                btn.on_click = register_on_click
+
+                def trigger_click():
+                    if btn.on_click_callback is None:
+                        return None
+                    result = btn.on_click_callback()
+                    if asyncio.iscoroutine(result):
+                        return asyncio.run(result)
+                    return result
+
+                btn.trigger_click = trigger_click
+                return btn
+
+        wizard_editor = WizardEditor()
+        wizard_editor.wizard.add_run(file="/data/test.raw")
+        wizard_editor.wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+        wizard_editor.wizard.add_sample(id="sample_1")
+        wizard_editor.wizard.set_current_step_index(1)
+        wizard_editor.wizard.set_active_group_id("lfq_group")
+
+        routing_ui = RefreshAwareRoutingUI()
+        render_calls = []
+
+        def fake_group_detail_step(editor_wizard, *_args, **_kwargs):
+            sample_ids = tuple(sample["id"] for sample in editor_wizard.samples)
+            render_calls.append(sample_ids)
+            routing_ui.label(f"Samples: {', '.join(sample_ids)}")
+
+        with patch("gui_nicegui.ui", routing_ui), patch(
+            "gui_nicegui.create_runs_step", side_effect=lambda *_args, **_kwargs: None
+        ), patch("gui_nicegui.create_group_detail_step", side_effect=fake_group_detail_step), patch(
+            "gui_nicegui.create_review_step", side_effect=lambda *_args, **_kwargs: None
+        ):
+            create_manifest_editor_ui(wizard_editor)
+
+        assert render_calls == [("sample_1",)]
+
+        back_button = next(button for button in routing_ui.buttons if button.text == "Back")
+        back_button.trigger_click()
+        assert wizard_editor.wizard.get_main_flow_page_index() == 0
+
+        wizard_editor.wizard.samples[0]["id"] = "sample_renamed"
+
+        next_button = next(button for button in routing_ui.buttons if button.text == "Next")
+        next_button.trigger_click()
+
+        assert wizard_editor.wizard.get_main_flow_page_index() == 1
+        assert render_calls == [("sample_1",), ("sample_renamed",)]
+        assert any(label.text == "Samples: sample_renamed" for label in routing_ui.labels)
 
     def test_wizard_navigation_guards_against_pending_edit_loss(self):
         """

@@ -571,6 +571,14 @@ class WizardState:
             if group.get("id") == group_id:
                 raise ValueError(f"Group '{group_id}' already exists")
 
+    def _ensure_unique_sample_id(self, sample_id: str, *, exclude_index: Optional[int] = None) -> None:
+        """Ensure a sample identifier is unique within the current wizard state."""
+        for index, sample in enumerate(self.samples):
+            if exclude_index is not None and index == exclude_index:
+                continue
+            if sample.get("id") == sample_id:
+                raise ValueError(f"Sample '{sample_id}' already exists")
+
     def rename_group(self, old_id: str, new_id: Any) -> None:
         """Rename a group identifier and cascade the change into run assignments."""
         normalized_new_id = self._normalize_optional_group_text(new_id)
@@ -679,11 +687,12 @@ class WizardState:
                 missing_text = ", ".join(missing_fields)
                 raise ValueError(f"Group row {row_index + 1} is incomplete: missing {missing_text}")
 
-            if group_id in seen_ids:
-                raise ValueError(f"Group '{group_id}' already exists")
-            seen_ids.add(group_id)
+            normalized_group_id = str(group_id)
+            if normalized_group_id in seen_ids:
+                raise ValueError(f"Group '{normalized_group_id}' already exists")
+            seen_ids.add(normalized_group_id)
 
-            group["id"] = group_id
+            group["id"] = normalized_group_id
             group["name"] = group_name
             self.ensure_group_labeling_metadata(group, labeling_strategy=group_strategy)
 
@@ -1083,10 +1092,13 @@ class WizardState:
             disease: Disease state
             cell_type: Cell type
         """
-        if not id:
+        normalized_id = str(id).strip() if id is not None else ""
+        if not normalized_id:
             raise ValueError("Sample ID is required")
 
-        sample: Dict[str, Any] = {"id": id}
+        self._ensure_unique_sample_id(normalized_id)
+
+        sample: Dict[str, Any] = {"id": normalized_id}
         if organism:
             sample["organism"] = organism
         if organism_part:

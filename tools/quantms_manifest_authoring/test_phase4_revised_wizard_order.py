@@ -300,10 +300,8 @@ class TestVisibleFlowNavigationGate:
         with patch("gui_nicegui.ui", mock_ui):
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
-        selector = next((sel for sel in mock_ui.selects if sel.label == "Group"), None)
-        assert selector is not None
-        assert selector.options == {"group_1": "Group 1", "group_2": "Group 2"}
-        assert wizard.get_active_group_id() == "group_1"
+        assert not any(sel.label == "Group" for sel in mock_ui.selects)
+        assert any(label.text == "Group Details" for label in mock_ui.labels)
 
 
 class TestAssignmentsQuantificationAwareness:

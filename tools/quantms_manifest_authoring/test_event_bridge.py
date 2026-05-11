@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch, call
 sys.path.insert(0, str(Path(__file__).parent))
 
 from gui_wizard_state import WizardState
+from jspreadsheet_bridge import JSpreadsheetBridge
 from jspreadsheet_editor import JSpreadsheetEditor
 
 
@@ -47,18 +48,22 @@ class TestEventBridgeContainerMounting:
         # Track what JavaScript was run
         run_js_calls = []
 
-        with patch('jspreadsheet_editor.ui.run_javascript') as mock_run_js:
-            with patch('jspreadsheet_editor.ui.element') as mock_element:
-                with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
-                    # Mock the container element with proper ID attributes
-                    mock_container = MagicMock()
-                    mock_container.id = 12345  # Internal numeric id
-                    mock_container.html_id = 'c12345'  # NiceGUI DOM id format
-                    mock_container.classes = MagicMock(return_value=mock_container)  # Allow chaining
-                    mock_element.return_value = mock_container
+        with patch('jspreadsheet_editor.context') as mock_context:
+            mock_context.client.id = 1
+            mock_context.client.has_socket_connection = True
+            mock_context.client.run_javascript = MagicMock()
+            with patch.object(JSpreadsheetEditor, 'prepare_client_runtime'):
+                with patch('jspreadsheet_editor.ui.element') as mock_element:
+                    with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
+                        # Mock the container element with proper ID attributes
+                        mock_container = MagicMock()
+                        mock_container.id = 12345  # Internal numeric id
+                        mock_container.html_id = 'c12345'  # NiceGUI DOM id format
+                        mock_container.classes = MagicMock(return_value=mock_container)  # Allow chaining
+                        mock_element.return_value = mock_container
 
-                    editor.render()
-                    run_js_calls = [call_args[0][0] for call_args in mock_run_js.call_args_list]
+                        editor.render()
+                        run_js_calls = [call_args[0][0] for call_args in mock_context.client.run_javascript.call_args_list]
 
         # Verify container was created
         mock_element.assert_called_once()
@@ -87,23 +92,27 @@ class TestEventBridgeContainerMounting:
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
 
-        with patch('jspreadsheet_editor.ui.run_javascript') as mock_run_js:
-            with patch('jspreadsheet_editor.ui.element') as mock_element:
-                with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
-                    mock_container = MagicMock()
-                    mock_container.id = 999  # Internal id
-                    mock_container.html_id = 'c999'  # NiceGUI format
-                    mock_container.classes = MagicMock(return_value=mock_container)
-                    mock_element.return_value = mock_container
+        with patch('jspreadsheet_editor.context') as mock_context:
+            mock_context.client.id = 1
+            mock_context.client.has_socket_connection = True
+            mock_context.client.run_javascript = MagicMock()
+            with patch.object(JSpreadsheetEditor, 'prepare_client_runtime'):
+                with patch('jspreadsheet_editor.ui.element') as mock_element:
+                    with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
+                        mock_container = MagicMock()
+                        mock_container.id = 999  # Internal id
+                        mock_container.html_id = 'c999'  # NiceGUI format
+                        mock_container.classes = MagicMock(return_value=mock_container)
+                        mock_element.return_value = mock_container
 
-                    editor.render()
+                        editor.render()
 
-                    # Extract JavaScript calls
-                    js_calls = [call_args[0][0] for call_args in mock_run_js.call_args_list]
-                    js_code = '\n'.join(js_calls)
+                        # Extract JavaScript calls
+                        js_calls = [call_args[0][0] for call_args in mock_context.client.run_javascript.call_args_list]
+                        js_code = '\n'.join(js_calls)
 
-                    # Should reference the container html_id in initialization
-                    assert 'c999' in js_code
+                        # Should reference the container html_id in initialization
+                        assert 'c999' in js_code
 
 
 class TestEventBridgeCallbacks:
@@ -141,6 +150,38 @@ class TestEventBridgeCallbacks:
         assert wizard.runs[0]["fraction"] == 3
 
         # Spreadsheet edits should not rerender the full page
+        on_change.assert_not_called()
+
+    def test_sheet_sync_event_persists_drag_copy_without_rerender(self):
+        """Batch sheet sync events should persist drag-copy changes without tearing down the sheet."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample1", organism="human", condition="treated")
+        wizard.add_sample(id="sample2")
+        wizard.add_sample(id="sample3")
+
+        on_change = MagicMock()
+        editor = JSpreadsheetEditor(
+            wizard,
+            on_change,
+            bridge=JSpreadsheetBridge(wizard, entity_type="samples"),
+        )
+
+        event = {
+            "type": "sheet_sync",
+            "widget_id": editor.widget_id,
+            "data": [
+                ["sample1", "human", None, "treated", None, None],
+                ["sample2", "human", None, "treated", None, None],
+                ["sample3", "human", None, "treated", None, None],
+            ],
+        }
+
+        editor._handle_spreadsheet_event(event)
+
+        assert wizard.samples[1]["organism"] == "human"
+        assert wizard.samples[1]["condition"] == "treated"
+        assert wizard.samples[2]["organism"] == "human"
+        assert wizard.samples[2]["condition"] == "treated"
         on_change.assert_not_called()
 
     def test_row_delete_event_emitted_and_handled(self):
@@ -210,18 +251,22 @@ class TestEventBridgeJavaScript:
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
 
-        with patch('jspreadsheet_editor.ui.run_javascript') as mock_run_js:
-            with patch('jspreadsheet_editor.ui.element') as mock_element:
-                with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
-                    mock_container = MagicMock()
-                    mock_container.id = 1  # Internal id
-                    mock_container.html_id = 'c1'  # NiceGUI format
-                    mock_container.classes = MagicMock(return_value=mock_container)
-                    mock_element.return_value = mock_container
+        with patch('jspreadsheet_editor.context') as mock_context:
+            mock_context.client.id = 1
+            mock_context.client.has_socket_connection = True
+            mock_context.client.run_javascript = MagicMock()
+            with patch.object(JSpreadsheetEditor, 'prepare_client_runtime'):
+                with patch('jspreadsheet_editor.ui.element') as mock_element:
+                    with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
+                        mock_container = MagicMock()
+                        mock_container.id = 1  # Internal id
+                        mock_container.html_id = 'c1'  # NiceGUI format
+                        mock_container.classes = MagicMock(return_value=mock_container)
+                        mock_element.return_value = mock_container
 
-                    editor.render()
+                        editor.render()
 
-                    js_code = '\n'.join([call_args[0][0] for call_args in mock_run_js.call_args_list])
+                        js_code = '\n'.join([call_args[0][0] for call_args in mock_context.client.run_javascript.call_args_list])
 
                     # Should use NiceGUI's event mechanism
                     # Look for either direct event emission or query selector
@@ -230,6 +275,26 @@ class TestEventBridgeJavaScript:
                         # If window.onCellEdit is still present, it must be properly
                         # wired to emit events, not just a placeholder
                         assert 'emitEvent' in js_code or 'ui.emit' in js_code or 'sendEvent' in js_code
+
+    def test_create_spreadsheet_widget_emits_sheet_sync_events_after_batch_changes(self):
+        """The browser integration should publish a batch sync event for drag-copy and paste operations."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample1")
+
+        on_change = MagicMock()
+        editor = JSpreadsheetEditor(wizard, on_change)
+        editor.container = MagicMock(html_id='c1')
+
+        with patch('jspreadsheet_editor.context') as mock_context:
+            mock_context.client.run_javascript = MagicMock()
+
+            editor._create_spreadsheet_widget()
+
+            js_code = mock_context.client.run_javascript.call_args[0][0]
+
+        assert 'onafterchanges' in js_code
+        assert "type: 'sheet_sync'" in js_code
+        assert 'window.setTimeout' in js_code
 
     def test_javascript_mounts_into_container_not_document_body(self):
         """
@@ -242,18 +307,22 @@ class TestEventBridgeJavaScript:
         on_change = MagicMock()
         editor = JSpreadsheetEditor(wizard, on_change)
 
-        with patch('jspreadsheet_editor.ui.run_javascript') as mock_run_js:
-            with patch('jspreadsheet_editor.ui.element') as mock_element:
-                with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
-                    mock_container = MagicMock()
-                    mock_container.id = 99999  # Internal id
-                    mock_container.html_id = 'c99999'  # NiceGUI format
-                    mock_container.classes = MagicMock(return_value=mock_container)
-                    mock_element.return_value = mock_container
+        with patch('jspreadsheet_editor.context') as mock_context:
+            mock_context.client.id = 1
+            mock_context.client.has_socket_connection = True
+            mock_context.client.run_javascript = MagicMock()
+            with patch.object(JSpreadsheetEditor, 'prepare_client_runtime'):
+                with patch('jspreadsheet_editor.ui.element') as mock_element:
+                    with patch('jspreadsheet_editor.ui.on') as mock_ui_on:
+                        mock_container = MagicMock()
+                        mock_container.id = 99999  # Internal id
+                        mock_container.html_id = 'c99999'  # NiceGUI format
+                        mock_container.classes = MagicMock(return_value=mock_container)
+                        mock_element.return_value = mock_container
 
-                    editor.render()
+                        editor.render()
 
-                    js_code = '\n'.join([call_args[0][0] for call_args in mock_run_js.call_args_list])
+                        js_code = '\n'.join([call_args[0][0] for call_args in mock_context.client.run_javascript.call_args_list])
 
                     # Should NOT have this pattern
                     assert 'document.body.appendChild(container)' not in js_code

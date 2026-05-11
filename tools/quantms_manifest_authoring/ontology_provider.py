@@ -124,6 +124,18 @@ FALLBACK_OPTIONS_MAP = {
 
 PSI_MS_INSTRUMENT_ROOT = "MS:1000463"
 
+NCBI_TAXONOMY_ROOT = "NCBITaxon:131567"
+UBERON_ROOT = "UBERON:0001062"
+DOID_ROOT = "DOID:4"
+CL_ROOT = "CL:0000000"
+
+SAMPLE_SUBTREE_ROOTS = {
+    "organism": NCBI_TAXONOMY_ROOT,
+    "organism_part": UBERON_ROOT,
+    "disease": DOID_ROOT,
+    "cell_type": CL_ROOT,
+}
+
 UNIMOD_POSITION_TO_TERM_SPECIFICITY = {
     "anywhere": "none",
     "any n-term": "n-term",
@@ -214,6 +226,9 @@ class OntologyOptionProvider:
             if field == "instrument":
                 return self._get_instrument_options_from_subtree(adapter)
 
+            if field in SAMPLE_SUBTREE_ROOTS:
+                return self._get_options_from_subtree(adapter, SAMPLE_SUBTREE_ROOTS[field])
+
             # Other fields still use a simple lexical fallback path for now.
             field_mapping = {
                 "enzyme": ["protease", "enzyme"],
@@ -253,23 +268,18 @@ class OntologyOptionProvider:
             # to gracefully fall back to local definitions
             return None
 
-    def _get_instrument_options_from_subtree(self, adapter) -> Optional[List[Dict[str, str]]]:
-        """
-        Get PSI-MS instrument options from the instrument subtree.
-
-        Uses the PSI-MS root term `MS:1000463` (instrument) and walks descendants
-        instead of performing a broad keyword search.
-        Values remain human-readable labels because the rest of the authoring
-        flow stores instrument names, not CURIEs.
-        """
+    def _get_options_from_subtree(self, adapter, root_curie: str) -> Optional[List[Dict[str, str]]]:
+        """Get ontology options from a subtree rooted at the given CURIE."""
         if not hasattr(adapter, "descendants"):
             return None
 
         try:
-            descendants = list(adapter.descendants(PSI_MS_INSTRUMENT_ROOT, reflexive=False))
+            descendants = list(adapter.descendants(root_curie, reflexive=False))
         except TypeError:
-            descendants = list(adapter.descendants(PSI_MS_INSTRUMENT_ROOT))
-            descendants = [curie for curie in descendants if curie != PSI_MS_INSTRUMENT_ROOT]
+            descendants = list(adapter.descendants(root_curie))
+            descendants = [curie for curie in descendants if curie != root_curie]
+        except Exception:
+            return None
 
         options = []
         seen_labels = set()
@@ -287,6 +297,17 @@ class OntologyOptionProvider:
 
         options.sort(key=lambda option: option["label"].lower())
         return options if options else None
+
+    def _get_instrument_options_from_subtree(self, adapter) -> Optional[List[Dict[str, str]]]:
+        """
+        Get PSI-MS instrument options from the instrument subtree.
+
+        Uses the PSI-MS root term `MS:1000463` (instrument) and walks descendants
+        instead of performing a broad keyword search.
+        Values remain human-readable labels because the rest of the authoring
+        flow stores instrument names, not CURIEs.
+        """
+        return self._get_options_from_subtree(adapter, PSI_MS_INSTRUMENT_ROOT)
 
     def get_supported_fields(self) -> List[str]:
         """

@@ -204,8 +204,8 @@ class JSpreadsheetBridge:
 
     def _get_dropdown_sources(self, headers: list[str]) -> Dict[str, list[dict[str, str]]]:
         """Get explicit dropdown sources for entity-specific columns."""
+        sample_options = self._get_unique_sample_options()
         if self.entity_type == "mixtures":
-            sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
             return {header: sample_options for header in headers if header != "id"}
         elif self.entity_type == "runs":
             group_options = [
@@ -218,7 +218,6 @@ class JSpreadsheetBridge:
         elif self.entity_type == "assignments":
             sources = {}
             if "sample" in headers:
-                sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
                 sources["sample"] = sample_options
             if "mixture" in headers:
                 mixture_options = [{"id": mixture["id"], "name": mixture["id"]} for mixture in self.wizard.mixtures]
@@ -232,7 +231,6 @@ class JSpreadsheetBridge:
                 ],
             }
         elif self.entity_type == "group_channels":
-            sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
             return {header: sample_options for header in headers if header != "id"}
         elif self.entity_type == "modifications":
             return {
@@ -247,6 +245,18 @@ class JSpreadsheetBridge:
             }
         else:
             return {}
+
+    def _get_unique_sample_options(self) -> list[dict[str, str]]:
+        """Return sample dropdown options with duplicate ids collapsed in first-seen order."""
+        options: list[dict[str, str]] = []
+        seen_ids: Set[str] = set()
+        for sample in self.wizard.samples:
+            sample_id = str(sample.get("id") or "").strip()
+            if not sample_id or sample_id in seen_ids:
+                continue
+            seen_ids.add(sample_id)
+            options.append({"id": sample_id, "name": sample_id})
+        return options
 
     def _get_group_labeling_strategy_options(self) -> list[str]:
         """Get the current groups-table strategy options using the existing wizard catalog."""
@@ -299,9 +309,16 @@ class JSpreadsheetBridge:
         if self.entity_type == "samples":
             rows = self.adapter.wizard_samples_to_spreadsheet()
             headers = self.adapter.get_column_headers_samples()
-            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+            for row_index, row_data in enumerate(spreadsheet_data):
                 if not isinstance(row_data, (list, tuple)):
                     continue
+
+                if row_index >= len(rows):
+                    has_values = any(value not in (None, "") for value in row_data[: len(headers)])
+                    if not has_values:
+                        continue
+                    rows.append(SampleSpreadsheetRow(row_index=row_index))
+
                 row = rows[row_index]
                 for col_index, field_name in enumerate(headers[: len(row_data)]):
                     value = row_data[col_index]

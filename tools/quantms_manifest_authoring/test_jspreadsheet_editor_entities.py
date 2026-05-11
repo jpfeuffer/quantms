@@ -206,6 +206,21 @@ class TestEditorEventDispatching:
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample2"
 
+    def test_editor_refreshes_samples_when_sample_ids_change(self):
+        """Sample ID changes should rerender dependent sheets that source sample dropdowns."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample1")
+
+        refresh_ui = MagicMock()
+        bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+
+        editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
+
+        editor.handle_event("cell_edit", row_index=0, col_index=0, new_value="sample_renamed")
+
+        refresh_ui.assert_called_once()
+        assert wizard.samples[0]["id"] == "sample_renamed"
+
     def test_editor_refreshes_groups_when_a_new_group_id_is_typed(self):
         """A new Groups-sheet row should rerender immediately once its id is typed."""
         wizard = WizardState()

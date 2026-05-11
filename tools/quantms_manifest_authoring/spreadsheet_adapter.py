@@ -1043,6 +1043,13 @@ class SpreadsheetAdapter:
         for row in rows:
             row.validate()
 
+        seen_ids = set()
+        for row in rows:
+            sample_id = row.id
+            if sample_id in seen_ids:
+                raise ValueError(f"Sample '{sample_id}' already exists")
+            seen_ids.add(sample_id)
+
         # Replace wizard samples with synced rows
         self.wizard.samples = [row.to_dict() for row in rows]
 

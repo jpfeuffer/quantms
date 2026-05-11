@@ -918,7 +918,7 @@ class TestRunsStepCallbacks:
         assert any("Group Details" in text for text in label_texts)
         assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
-        assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
+        assert not any(sel.label == "Group" for sel in mock_ui_ctx.selects)
         assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "TMT6" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
@@ -937,7 +937,7 @@ class TestRunsStepCallbacks:
         label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
         assert any(expansion.text == "Membership Summary" for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)
-        assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
+        assert not any(sel.label == "Group" for sel in mock_ui_ctx.selects)
         assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
@@ -1158,8 +1158,8 @@ class TestRunsStepCallbacks:
         wizard.next_step()
         assert editor.can_go_forward_for_visible_page() is True
 
-    def test_group_detail_page_exposes_selector_when_no_group_is_active(self):
-        """The Group Details page should provide a selector instead of relying on an open button."""
+    def test_group_detail_page_shows_global_workspace_when_no_group_is_active(self):
+        """The Group Details page should render the shared workspace without a per-group selector."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -1173,10 +1173,10 @@ class TestRunsStepCallbacks:
         with patch("gui_nicegui.ui", mock_ui_ctx):
             create_group_detail_step(wizard, refresh_ui=lambda: None)
 
-        selector = next((sel for sel in mock_ui_ctx.selects if sel.label == "Group"), None)
-        assert selector is not None
-        assert selector.options == {"lfq_group": "LFQ group", "tmt_group": "TMT group"}
-        assert wizard.get_active_group_id() == "lfq_group"
+        assert not any(sel.label == "Group" for sel in mock_ui_ctx.selects)
+        label_texts = [lbl.text for lbl in mock_ui_ctx.labels]
+        assert any(text == "Group Details" for text in label_texts)
+        assert any("organized by labeling strategy" in text for text in label_texts)
 
     def test_group_detail_workspace_renders_shared_sample_sheet_and_all_involved_assignment_sheets(self):
         """The Group Details workspace should render Samples first and all involved assignment sheets near the top."""

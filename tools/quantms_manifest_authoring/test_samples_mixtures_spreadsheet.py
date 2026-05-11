@@ -301,6 +301,20 @@ class TestSpreadsheetAdapterSamples:
         assert wizard.samples[1]["id"] == "sample2"
         assert wizard.samples[1]["organism"] == "homo sapiens"
 
+    def test_adapter_rejects_duplicate_sample_ids_via_spreadsheet_sync(self):
+        """Spreadsheet sample sync must reject duplicate sample identifiers."""
+        from spreadsheet_adapter import SampleSpreadsheetRow
+
+        wizard = WizardState()
+        wizard.add_sample(id="sample1")
+
+        adapter = SpreadsheetAdapter(wizard)
+        rows = adapter.wizard_samples_to_spreadsheet()
+        rows.append(SampleSpreadsheetRow(id="sample1", organism="homo sapiens", row_index=1))
+
+        with pytest.raises(ValueError, match="Sample 'sample1' already exists"):
+            adapter.sync_sample_edits(rows)
+
     def test_adapter_delete_sample_via_spreadsheet_row(self):
         """Test deleting a sample via spreadsheet row sync."""
         wizard = WizardState()

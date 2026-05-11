@@ -455,6 +455,24 @@ class TestJSpreadsheetBridge:
             {"id": "group_2", "name": "group_2"},
         ]
 
+    def test_samples_full_sheet_sync_adds_new_rows_from_browser_snapshot(self):
+        """Full-sheet sample sync should persist drag-copied values into new spare rows."""
+        wizard = WizardState()
+        wizard.add_sample(id="sample_1")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+
+        bridge.sync_from_spreadsheet_data(
+            [
+                ["sample_1", None, None, None, None, None, None, None],
+                ["sample_2", None, None, None, None, None, None, None],
+                ["sample_3", None, None, None, None, None, None, None],
+                ["", None, None, None, None, None, None, None],
+            ]
+        )
+
+        assert [sample["id"] for sample in wizard.samples] == ["sample_1", "sample_2", "sample_3"]
+
     def test_groups_bridge_allows_labeling_strategy_edit_and_derives_kind(self):
         """Groups cell edits should accept a strategy edit and derive the matching kind."""
         wizard = WizardState()
