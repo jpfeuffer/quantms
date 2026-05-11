@@ -99,6 +99,27 @@ class TestJSpreadsheetEditorWithEntityType:
         editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=custom_bridge)
         assert editor.bridge is custom_bridge
 
+    def test_editor_serializes_group_channel_min_display_rows(self):
+        """Group assignment sheets should pass their exact row count into the browser bootstrap payload."""
+        wizard = WizardState()
+        wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+
+        refresh_ui = MagicMock()
+        bridge = JSpreadsheetBridge(wizard, entity_type="group_channels", group_strategy="LFQ")
+        editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="LFQ")
+
+        container = MagicMock()
+        container.html_id = "lfq-container"
+
+        with patch("jspreadsheet_editor.context") as mock_context:
+            mock_context.client.run_javascript = MagicMock()
+            editor.container = container
+
+            editor._initialize_data()
+
+        initialize_script = mock_context.client.run_javascript.call_args[0][0]
+        assert 'min_display_rows: 1' in initialize_script
+
     def test_editor_uses_provided_worksheet_name_in_widget_id(self):
         """Test that editor uses worksheet_name parameter in widget configuration."""
         wizard = WizardState()

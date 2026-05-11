@@ -231,6 +231,7 @@ class JSpreadsheetEditor:
         allow_delete_row_json = json.dumps(spreadsheet_data.get("allow_delete_row", True))
         allow_insert_row_json = json.dumps(spreadsheet_data.get("allow_insert_row", False))
         min_spare_rows_json = json.dumps(spreadsheet_data.get("min_spare_rows", 0))
+        min_display_rows_json = json.dumps(spreadsheet_data.get("min_display_rows"))
         widget_id_json = json.dumps(self.widget_id)
         container_id_json = json.dumps(container_id)
 
@@ -244,6 +245,7 @@ class JSpreadsheetEditor:
                 allow_delete_row: {allow_delete_row_json},
                 allow_insert_row: {allow_insert_row_json},
                 min_spare_rows: {min_spare_rows_json},
+                min_display_rows: {min_display_rows_json},
                 widget_id: {widget_id_json},
                 container_id: {container_id_json}
             }};
@@ -286,6 +288,9 @@ class JSpreadsheetEditor:
                 const minSpareRows = Number.isFinite(spreadsheetData.min_spare_rows)
                     ? spreadsheetData.min_spare_rows
                     : 0;
+                const minDisplayRows = Number.isFinite(spreadsheetData.min_display_rows)
+                    ? spreadsheetData.min_display_rows
+                    : Math.max(data.length, 5);
                 const readOnlyCellKeys = new Set(readOnlyCells.map(cell => `${{cell.row}}:${{cell.col}}`));
                 const containerId = spreadsheetData.container_id;
                 const widgetId = spreadsheetData.widget_id;
@@ -494,7 +499,7 @@ class JSpreadsheetEditor:
                         worksheetName: worksheetName,
                         data: data,
                         columns: columns,
-                        minDimensions: [headers.length, Math.max(data.length, 5)],
+                        minDimensions: [headers.length, minDisplayRows],
                         minSpareRows: minSpareRows,
                         tableOverflow: true,
                         editable: true,

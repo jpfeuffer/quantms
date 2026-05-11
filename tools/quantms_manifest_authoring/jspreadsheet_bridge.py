@@ -149,6 +149,7 @@ class JSpreadsheetBridge:
                 for row_index, _ in enumerate(rows)
             ]
             spreadsheet_data["allow_delete_row"] = False
+            spreadsheet_data["min_display_rows"] = len(rows)
 
         return spreadsheet_data
 

@@ -2058,6 +2058,75 @@ class TestGroupDetailPageRouting:
         assert render_calls == ["lfq_group", None]
         assert any(label.text == "No group is open." for label in routing_ui.labels)
 
+    def test_group_details_rerender_after_groups_are_added_to_a_previously_empty_cached_page(self):
+        """Navigating back to a cached empty Group Details page should rebuild once groups exist."""
+        import asyncio
+
+        from gui_nicegui import WizardEditor, create_manifest_editor_ui
+
+        class RefreshAwareRoutingUI(self._RoutingMockUI):
+            def button(self, text="", on_click=None, icon="", **kwargs):
+                btn = super().button(text=text, on_click=on_click, icon=icon, **kwargs)
+
+                def register_on_click(callback):
+                    btn.on_click_callback = callback
+                    return btn
+
+                btn.on_click_callback = on_click
+                btn.on_click = register_on_click
+
+                def trigger_click():
+                    if btn.on_click_callback is None:
+                        return None
+                    result = btn.on_click_callback()
+                    if asyncio.iscoroutine(result):
+                        return asyncio.run(result)
+                    return result
+
+                btn.trigger_click = trigger_click
+                return btn
+
+        wizard_editor = WizardEditor()
+        wizard_editor.wizard.add_run(file="/data/test.raw")
+        wizard_editor.wizard.set_current_step_index(1)
+
+        routing_ui = RefreshAwareRoutingUI()
+        render_calls = []
+
+        def fake_group_detail_step(editor_wizard, *_args, **_kwargs):
+            if editor_wizard.groups and editor_wizard.get_active_group_id() is None:
+                editor_wizard.set_active_group_id(editor_wizard.groups[0]["id"])
+
+            active_group = editor_wizard.get_active_group_id()
+            render_calls.append(active_group)
+            if active_group is None:
+                routing_ui.label("No group is open.")
+            else:
+                routing_ui.label(f"Group Details: {active_group}")
+
+        with patch("gui_nicegui.ui", routing_ui), patch(
+            "gui_nicegui.create_runs_step", side_effect=lambda *_args, **_kwargs: None
+        ), patch("gui_nicegui.create_group_detail_step", side_effect=fake_group_detail_step), patch(
+            "gui_nicegui.create_review_step", side_effect=lambda *_args, **_kwargs: None
+        ):
+            create_manifest_editor_ui(wizard_editor)
+
+        assert render_calls == [None]
+
+        back_button = next(button for button in routing_ui.buttons if button.text == "Back")
+        back_button.trigger_click()
+        assert wizard_editor.wizard.get_main_flow_page_index() == 0
+
+        wizard_editor.wizard.add_group(id="lfq_group", name="LFQ group", kind="LFQ")
+
+        next_button = next(button for button in routing_ui.buttons if button.text == "Next")
+        next_button.trigger_click()
+
+        assert wizard_editor.wizard.get_main_flow_page_index() == 1
+        assert wizard_editor.wizard.get_active_group_id() == "lfq_group"
+        assert render_calls == [None, "lfq_group"]
+        assert any(label.text == "Group Details: lfq_group" for label in routing_ui.labels)
+
     def test_wizard_navigation_guards_against_pending_edit_loss(self):
         """
         Integration test: Verify the complete pre-navigation flush flow.

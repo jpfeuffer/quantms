@@ -552,6 +552,7 @@ class TestJSpreadsheetBridge:
         assert data["data"][0][1] == "sample_1"
         assert data["column_config"]["sample_target"]["type"] == "dropdown"
         assert data["column_config"]["sample_target"]["source"] == [{"id": "sample_1", "name": "sample_1"}]
+        assert data["min_display_rows"] == 1
 
     def test_group_channels_bridge_can_filter_to_a_single_group(self):
         """Group channel sheets should be able to scope rendering to one active group row."""

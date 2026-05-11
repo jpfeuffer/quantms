@@ -1653,8 +1653,18 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
         def get_main_page_render_key(page_index: int) -> Optional[Any]:
             """Return the lightweight state signature that backs a cached visible page."""
             if page_index == 1:
-                return editor.wizard.get_active_group_id()
+                return (
+                    editor.wizard.get_active_group_id(),
+                    tuple(str(group.get("id") or "") for group in editor.wizard.groups),
+                )
             return None
+
+        def get_visible_page_index() -> int:
+            """Resolve the currently visible page, including direct active-group routing."""
+            current_page_index = editor.wizard.get_main_flow_page_index()
+            if current_page_index == 0 and editor.wizard.get_active_group_id() and editor.wizard.groups:
+                return 1
+            return current_page_index
 
         with step_content:
             for _ in main_page_labels:
@@ -1665,7 +1675,7 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
         def render_progress() -> None:
             """Refresh the read-only wizard progress indicator."""
             progress_container.clear()
-            current_page_index = editor.wizard.get_main_flow_page_index()
+            current_page_index = get_visible_page_index()
 
             with progress_container:
                 for idx, page_label in enumerate(main_page_labels):
@@ -1700,7 +1710,7 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
 
         def show_current_page(rerender_current_page: bool) -> None:
             """Show the active visible page and reuse any previously mounted content."""
-            current_page_index = editor.wizard.get_main_flow_page_index()
+            current_page_index = get_visible_page_index()
 
             render_page_content(current_page_index, force=rerender_current_page)
 
@@ -1716,7 +1726,7 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
 
         def update_nav_buttons() -> None:
             """Update button states based on the visible page flow."""
-            current_page_index = editor.wizard.get_main_flow_page_index()
+            current_page_index = get_visible_page_index()
             back_btn.enabled = current_page_index > 0
             next_btn.enabled = current_page_index < len(main_page_labels) - 1 and editor.can_go_forward_for_visible_page()
 
@@ -1734,7 +1744,12 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                     if inspect.iscoroutine(flush_result):
                         await flush_result
 
-                current_page_index = editor.wizard.get_main_flow_page_index()
+                current_page_index = get_visible_page_index()
+                if current_page_index == 1 and editor.wizard.get_main_flow_page_index() == 0:
+                    editor.wizard.clear_active_group()
+                    refresh_ui(rerender_current_page=False)
+                    return
+
                 while editor.wizard.get_main_flow_page_index() == current_page_index and editor.wizard.current_step_index > 0:
                     editor.wizard.previous_step()
 
@@ -1756,8 +1771,8 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                 if not editor.can_go_forward_for_visible_page():
                     return
 
-                current_page_index = editor.wizard.get_main_flow_page_index()
-                while editor.wizard.get_main_flow_page_index() == current_page_index:
+                current_page_index = get_visible_page_index()
+                while get_visible_page_index() == current_page_index:
                     editor.wizard.next_step()
 
                 refresh_ui(rerender_current_page=False)
