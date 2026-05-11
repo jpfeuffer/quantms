@@ -16,6 +16,7 @@ with guided step-by-step progression and validation concentrated in Review.
 """
 
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any, List, Callable, Optional, Dict
 
@@ -365,6 +366,12 @@ def _build_modification_payload(
         payload["profile"] = profile
 
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _render_instruction_block(lines: List[str], classes: str) -> None:
+    """Render instruction text with explicit HTML line breaks."""
+    content = "<br>".join(escape(line) for line in lines)
+    ui.html(f'<div class="{classes}">{content}</div>')
 
 
 def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> Optional[JSpreadsheetEditor]:
@@ -801,11 +808,14 @@ def create_modifications_surface(wizard: WizardState, refresh_ui: Callable) -> O
             editor.render()
             active_editor = editor
 
-            ui.label(
-                "• Click cells to edit modification fields\n"
-                "• Right-click rows to delete\n"
-                "* Mode, profile, and term specificity are available in the authoring flow"
-            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+            _render_instruction_block(
+                [
+                    "• Click cells to edit modification fields",
+                    "• Right-click rows to delete",
+                    "* Mode, profile, and term specificity are available in the authoring flow",
+                ],
+                "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+            )
         else:
             ui.label("No modifications added yet. Use the form above to add one.").classes(
                 "text-sm text-gray-500 italic mt-4"
@@ -910,11 +920,14 @@ def create_group_detail_step(
                 editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
                 editor.render()
                 spreadsheet_editors.append(editor)
-                ui.label(
-                    "• Sample selections are dropdowns sourced from the shared Samples sheet\n"
-                    "• Only the active group's row is editable here\n"
-                    "• Channel names come from the bundled channel catalog"
-                ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                _render_instruction_block(
+                    [
+                        "• Sample selections are dropdowns sourced from the shared Samples sheet",
+                        "• Only the active group's row is editable here",
+                        "• Channel names come from the bundled channel catalog",
+                    ],
+                    "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+                )
         else:
             ui.label("Add a group to open its assignment sheet.").classes("text-sm text-gray-500 italic mt-4")
 
@@ -1022,12 +1035,15 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     files_editor.render()
                     spreadsheet_editors.append(files_editor)
 
-                    ui.label(
-                        "• Click cells to edit (file, fraction, instrument, group_id)\n"
-                        "• Right-click rows to delete\n"
-                        "• Drag-copy is supported when dragging cell borders\n"
-                        "* File is required"
-                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                    _render_instruction_block(
+                        [
+                            "• Click cells to edit (file, fraction, instrument, group_id)",
+                            "• Right-click rows to delete",
+                            "• Drag-copy is supported when dragging cell borders",
+                            "* File is required",
+                        ],
+                        "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+                    )
                 else:
                     ui.label("No files added yet. Use 'Choose Local Files' to add MS data files.").classes(
                         "text-sm text-gray-500 italic"
@@ -1164,12 +1180,15 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
                     groups_editor.render()
                     spreadsheet_editors.append(groups_editor)
 
-                    ui.label(
-                        "• Group ID is read-only in this phase\n"
-                        "• Group name, labeling strategy, and description can be edited\n"
-                        "• Channel count is derived from the labeling strategy\n"
-                        "• Group details are authored on the next page"
-                    ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+                    _render_instruction_block(
+                        [
+                            "• Group ID is read-only in this phase",
+                            "• Group name, labeling strategy, and description can be edited",
+                            "• Channel count is derived automatically from the labeling strategy",
+                            "• Group details are authored on the next page",
+                        ],
+                        "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+                    )
                 else:
                     ui.label("No groups added yet. Group membership will appear here when groups exist.").classes(
                         "text-sm text-gray-500 italic"
@@ -1262,11 +1281,14 @@ def create_samples_step(wizard: WizardState, refresh_ui: Callable) -> Optional[J
             active_editor = editor
 
             # Footer with instructions
-            ui.label(
-                "• Click cells to edit (id, organism, organism_part, condition, biological_replicate, technical_replicate)\n"
-                "• Right-click rows to delete\n"
-                "* ID is required"
-            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+            _render_instruction_block(
+                [
+                    "• Click cells to edit (id, organism, organism_part, condition, biological_replicate, technical_replicate)",
+                    "• Right-click rows to delete",
+                    "* ID is required",
+                ],
+                "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+            )
         else:
             ui.label("No samples added yet. Use 'Add Sample' to add samples.").classes(
                 "text-sm text-gray-500 italic mt-4"
@@ -1370,11 +1392,14 @@ def create_mixtures_step(wizard: WizardState, refresh_ui: Callable) -> Optional[
             active_editor = editor
 
             # Footer with instructions
-            ui.label(
-                "• Click cells to edit (id and channel sample assignments)\n"
-                "• Right-click rows to delete\n"
-                "* ID is required"
-            ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+            _render_instruction_block(
+                [
+                    "• Click cells to edit (id and channel sample assignments)",
+                    "• Right-click rows to delete",
+                    "* ID is required",
+                ],
+                "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+            )
         else:
             ui.label("No mixtures added yet (optional for LFQ)").classes("text-sm text-gray-500 italic mt-4")
 
@@ -1433,10 +1458,13 @@ def create_assignments_step(wizard: WizardState, refresh_ui: Callable) -> Option
         active_editor = editor
 
         # Footer with instructions
-        ui.label(
-            "• Click cells to edit (run file and sample/mixture assignment)\n"
-            "* Run file and assignment are required"
-        ).classes("text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded")
+        _render_instruction_block(
+            [
+                "• Click cells to edit (run file and sample/mixture assignment)",
+                "* Run file and assignment are required",
+            ],
+            "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+        )
 
     return active_editor
 

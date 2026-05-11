@@ -142,7 +142,7 @@ class JSpreadsheetBridge:
                 {"row": row_index, "col": col_index}
                 for row_index, _ in enumerate(rows)
                 for col_index, field_name in enumerate(headers)
-                if field_name in {"id", "channel_count"}
+                if field_name == "id"
             ]
             spreadsheet_data["allow_delete_row"] = False
         elif self.entity_type == "group_channels":
@@ -386,8 +386,6 @@ class JSpreadsheetBridge:
                         if normalized_value != row.id:
                             raise ValueError("Group ID is read-only in full-sheet sync")
                         continue
-                    if field_name == "channel_count":
-                        continue
                     if field_name == "labeling_strategy" and value == "":
                         value = None
                     if field_name in {"members", "description"} and value == "":
@@ -474,14 +472,11 @@ class JSpreadsheetBridge:
                     raise ValueError(f"Fraction must be an integer, got: {new_value}")
         elif field_name == "file" and (new_value is None or new_value == ""):
             raise ValueError("File path is required")
-        elif field_name == "group_id" and (new_value is None or new_value == ""):
-            new_value = None
-            if "group_id" not in self.wizard.runs[row_index]:
-                self.wizard.clear_run_field(row_index, "group_id")
         elif field_name == "group_id":
-            available_group_ids = {group["id"] for group in self.wizard.groups}
-            if str(new_value) not in available_group_ids:
-                raise ValueError(f"Group '{new_value}' not found in groups")
+            normalized_group_id = str(new_value).strip() if new_value is not None else ""
+            new_value = normalized_group_id or None
+            if new_value is None and "group_id" not in self.wizard.runs[row_index]:
+                self.wizard.clear_run_field(row_index, "group_id")
 
         # Validate dropdown constraints for allowed fields
         if field_name in self._dropdown_constraint_cache:
@@ -652,8 +647,6 @@ class JSpreadsheetBridge:
 
         if field_name == "id":
             raise ValueError("Group ID is read-only")
-        if field_name == "channel_count":
-            raise ValueError("Channel count is read-only")
 
         current_rows = self.adapter.wizard_groups_to_spreadsheet()
 

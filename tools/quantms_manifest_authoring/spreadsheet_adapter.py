@@ -581,7 +581,7 @@ class SpreadsheetAdapter:
         Returns:
             List of field names representing columns
         """
-        return ["id", "name", "labeling_strategy", "channel_count", "description"]
+        return ["id", "name", "labeling_strategy", "description"]
 
     def get_column_headers_modifications(self) -> List[str]:
         """
@@ -851,7 +851,9 @@ class SpreadsheetAdapter:
         for idx, row in enumerate(rows):
             # Get the updated fields from the spreadsheet row
             updated_fields = {}
-            group_id = row.group_id
+            group_id = str(row.group_id).strip() if row.group_id is not None else None
+            if group_id == "":
+                group_id = None
 
             for field in RunFieldInfo.get_all_fields():
                 if field == "file":
@@ -869,10 +871,7 @@ class SpreadsheetAdapter:
             self.wizard.update_run(idx, **updated_fields)
 
             if group_id is not None:
-                available_group_ids = {group["id"] for group in self.wizard.groups}
-                if group_id not in available_group_ids:
-                    raise ValueError(f"Group '{group_id}' not found in groups")
-                self.wizard.assign_run(idx, group_id=group_id, create_missing_group=False)
+                self.wizard.assign_run(idx, group_id=group_id, create_missing_group=True)
             elif "group_id" in self.wizard.runs[idx]:
                 self.wizard.clear_run_field(idx, "group_id")
 

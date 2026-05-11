@@ -681,9 +681,24 @@ class JSpreadsheetEditor:
 
                 // Deterministically commit the active cell editor before snapshotting.
                 const activeElement = document.activeElement;
-                const activeCell = activeElement && typeof activeElement.closest === 'function'
+                let activeCell = activeElement && typeof activeElement.closest === 'function'
                     ? activeElement.closest('td[data-x][data-y]')
                     : null;
+
+                if (!activeCell && Array.isArray(worksheet.selectedCell) && Array.isArray(worksheet.records)) {{
+                    const selectedX = Number(worksheet.selectedCell[0]);
+                    const selectedY = Number(worksheet.selectedCell[1]);
+                    const selectedRow = Number.isInteger(selectedY) ? worksheet.records[selectedY] : null;
+                    const selectedRecord = Array.isArray(selectedRow) && Number.isInteger(selectedX)
+                        ? selectedRow[selectedX]
+                        : null;
+                    const selectedElement = selectedRecord && selectedRecord.element;
+
+                    if (selectedElement && selectedElement.getAttribute('data-x') !== null &&
+                            selectedElement.getAttribute('data-y') !== null) {{
+                        activeCell = selectedElement;
+                    }}
+                }}
 
                 if (activeCell && typeof worksheet.closeEditor === 'function') {{
                     worksheet.closeEditor(activeCell, true);

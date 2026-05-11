@@ -161,7 +161,7 @@ class TestJSpreadsheetBridge:
         """Runs spreadsheet should expose existing groups as dropdown options without creatable metadata."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", kind="LFQ")
 
         bridge = JSpreadsheetBridge(wizard)
         data = bridge.get_spreadsheet_data()
@@ -177,25 +177,25 @@ class TestJSpreadsheetBridge:
         assert wizard.runs[0]["group_id"] == "group_1"
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
 
-    def test_bridge_rejects_missing_group_when_group_id_is_edited(self):
-        """Runs spreadsheet edits should not create a group when the user types a missing group_id."""
+    def test_bridge_auto_creates_missing_group_when_group_id_is_edited(self):
+        """Runs spreadsheet edits should create a missing group when the user types a new group_id."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
 
         bridge = JSpreadsheetBridge(wizard)
         headers = bridge.get_spreadsheet_data()["headers"]
 
-        with pytest.raises(ValueError, match="Group 'new_group' not found"):
-            bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="new_group")
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("group_id"), new_value="new_group")
 
-        assert "group_id" not in wizard.runs[0]
-        assert wizard.groups == []
+        assert wizard.runs[0]["group_id"] == "new_group"
+        assert wizard.groups[0]["id"] == "new_group"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
 
     def test_bridge_group_dropdown_does_not_advertise_free_text_creation_metadata(self):
         """Runs spreadsheet should not advertise that group_id supports creating new values."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
-        wizard.add_group(id="group_1", name="Replicate group", kind="replicate")
+        wizard.add_group(id="group_1", name="Replicate group", kind="LFQ")
 
         bridge = JSpreadsheetBridge(wizard)
         data = bridge.get_spreadsheet_data()
@@ -310,21 +310,19 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "labeling_strategy", "channel_count", "description"]
+        assert data["headers"] == ["id", "name", "labeling_strategy", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
-        assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["id"]["read_only"] is True
         assert "read_only" not in data["column_config"]["name"]
         assert "read_only" not in data["column_config"]["labeling_strategy"]
-        assert data["column_config"]["channel_count"]["read_only"] is True
         assert "read_only" not in data["column_config"]["description"]
         assert "members" not in data["headers"]
         assert "members" not in data["column_config"]
-        assert data["read_only_cells"] == [{"row": 0, "col": 0}, {"row": 0, "col": 3}]
+        assert data["read_only_cells"] == [{"row": 0, "col": 0}]
         assert bridge.get_row_count() == 1
 
-    def test_groups_bridge_includes_labeling_strategy_and_channel_count_columns(self):
-        """Groups spreadsheet should expose labeling strategy and derived channel count."""
+    def test_groups_bridge_exposes_labeling_strategy_without_channel_count_column(self):
+        """Groups spreadsheet should expose labeling strategy without a separate channel-count column."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="LFQ group", kind="LFQ")
@@ -332,11 +330,10 @@ class TestJSpreadsheetBridge:
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
         data = bridge.get_spreadsheet_data()
 
-        assert data["headers"] == ["id", "name", "labeling_strategy", "channel_count", "description"]
+        assert data["headers"] == ["id", "name", "labeling_strategy", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
-        assert data["data"][0][data["headers"].index("channel_count")] == 1
         assert data["column_config"]["labeling_strategy"]["type"] == "dropdown"
-        assert data["column_config"]["channel_count"]["read_only"] is True
+        assert "channel_count" not in data["column_config"]
 
     def test_groups_bridge_labeling_strategy_dropdown_uses_all_allowed_strategies_for_unrestricted_experiments(self):
         """Unrestricted experiments should still expose the full allowed labeling-strategy source."""
@@ -384,10 +381,9 @@ class TestJSpreadsheetBridge:
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
         assert wizard.groups[0]["channel_count"] == 1
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
-        assert data["data"][0][data["headers"].index("channel_count")] == 1
 
     def test_groups_bridge_keeps_labeling_strategy_synced_on_full_sheet_edit(self):
-        """Full-sheet group sync should keep derived channel counts aligned with the chosen strategy."""
+        """Full-sheet group sync should keep derived channel counts aligned even without a visible column."""
         wizard = WizardState()
         wizard.add_run(file="/data/test.raw")
         wizard.add_group(id="group_1", name="Multiplex group", kind="TMT", labeling_strategy="TMT6")
@@ -398,7 +394,6 @@ class TestJSpreadsheetBridge:
         snapshot = [row[:] for row in data["data"]]
 
         snapshot[0][headers.index("labeling_strategy")] = "label free sample"
-        snapshot[0][headers.index("channel_count")] = 99
 
         bridge.sync_from_spreadsheet_data(snapshot)
 
@@ -611,8 +606,8 @@ class TestJSpreadsheetBridge:
         """Full-sheet sync should keep run-side group_id edits working."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw", instrument="Orbitrap")
-        wizard.add_group(id="group_1", name="Group 1", kind="DDA")
-        wizard.add_group(id="group_2", name="Group 2", kind="DDA")
+        wizard.add_group(id="group_1", name="Group 1", kind="LFQ")
+        wizard.add_group(id="group_2", name="Group 2", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         bridge = JSpreadsheetBridge(wizard)
@@ -627,11 +622,28 @@ class TestJSpreadsheetBridge:
         assert wizard.groups[1]["members"] == [wizard.runs[0]["id"]]
         assert wizard.runs[0]["instrument"] == "Orbitrap"
 
+    def test_runs_full_sheet_sync_auto_creates_missing_group_id(self):
+        """Full-sheet sync should create a missing group_id typed into the Files sheet."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/sample.raw", instrument="Orbitrap")
+
+        bridge = JSpreadsheetBridge(wizard)
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
+        mutated_snapshot[0][spreadsheet_data["headers"].index("group_id")] = "new_group"
+
+        bridge.sync_from_spreadsheet_data(mutated_snapshot)
+
+        assert wizard.runs[0]["group_id"] == "new_group"
+        assert wizard.groups[0]["id"] == "new_group"
+        assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
+        assert wizard.runs[0]["instrument"] == "Orbitrap"
+
     def test_groups_full_sheet_sync_rejects_id_edits(self):
         """Groups full-sheet sync should reject edits to the immutable group identifier."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
-        wizard.add_group(id="group_1", name="Group 1", kind="DDA")
+        wizard.add_group(id="group_1", name="Group 1", kind="LFQ")
         wizard.assign_run(run_index=0, group_id="group_1")
 
         bridge = JSpreadsheetBridge(wizard, entity_type="groups")
