@@ -255,7 +255,7 @@ class WizardState:
         if not group_id:
             return
 
-        if any(group["id"] == group_id for group in self.groups):
+        if any(group.get("id") == group_id for group in self.groups):
             return
 
         self.add_group(
@@ -554,6 +554,139 @@ class WizardState:
                 return index
         raise ValueError(f"Run '{run_id}' not found in runs")
 
+    @staticmethod
+    def _normalize_optional_group_text(value: Any) -> Optional[str]:
+        """Normalize optional text fields used by spreadsheet-authored group rows."""
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _ensure_unique_group_id(self, group_id: str, *, exclude_index: Optional[int] = None) -> None:
+        """Ensure a group identifier is unique within the current wizard state."""
+        for index, group in enumerate(self.groups):
+            if exclude_index is not None and index == exclude_index:
+                continue
+            if group.get("id") == group_id:
+                raise ValueError(f"Group '{group_id}' already exists")
+
+    def rename_group(self, old_id: str, new_id: Any) -> None:
+        """Rename a group identifier and cascade the change into run assignments."""
+        normalized_new_id = self._normalize_optional_group_text(new_id)
+        if not normalized_new_id:
+            raise ValueError("Group ID is required")
+
+        group_index = self._get_group_index(old_id)
+        current_group = self.groups[group_index]
+        if current_group.get("id") == normalized_new_id:
+            return
+
+        self._ensure_unique_group_id(normalized_new_id, exclude_index=group_index)
+        current_group["id"] = normalized_new_id
+
+        for run in self.runs:
+            if run.get("group_id") == old_id:
+                run["group_id"] = normalized_new_id
+
+        if self.active_group_id == old_id:
+            self.active_group_id = normalized_new_id
+
+    def sync_group_sheet_row(
+        self,
+        row_index: int,
+        *,
+        id: Any = _UNSET,
+        name: Any = _UNSET,
+        labeling_strategy: Any = _UNSET,
+        description: Any = _UNSET,
+    ) -> None:
+        """Apply a Groups-sheet row edit without requiring the row to be complete yet."""
+        if row_index < 0 or row_index > len(self.groups):
+            raise ValueError(f"Row index {row_index} out of range")
+
+        if row_index == len(self.groups):
+            self.groups.append({"members": []})
+
+        group = self.groups[row_index]
+        group.setdefault("members", [])
+
+        if id is not _UNSET:
+            normalized_id = self._normalize_optional_group_text(id)
+            current_id = group.get("id")
+            if current_id:
+                if not normalized_id:
+                    raise ValueError("Group ID is required")
+                if normalized_id != current_id:
+                    self.rename_group(current_id, normalized_id)
+                    group = self.groups[row_index]
+            elif normalized_id:
+                self._ensure_unique_group_id(normalized_id, exclude_index=row_index)
+                group["id"] = normalized_id
+
+        if name is not _UNSET:
+            normalized_name = self._normalize_optional_group_text(name)
+            if normalized_name is None:
+                group.pop("name", None)
+            else:
+                group["name"] = normalized_name
+
+        if description is not _UNSET:
+            normalized_description = self._normalize_optional_group_text(description)
+            if normalized_description is None:
+                group.pop("description", None)
+            else:
+                group["description"] = normalized_description
+
+        if labeling_strategy is not _UNSET:
+            normalized_strategy = self._normalize_optional_group_text(labeling_strategy)
+            if normalized_strategy is None:
+                group.pop("labeling_strategy", None)
+                group.pop("kind", None)
+                group.pop("channel_count", None)
+            else:
+                self.ensure_group_labeling_metadata(group, labeling_strategy=normalized_strategy)
+
+        has_visible_values = any(
+            self._normalize_optional_group_text(group.get(field))
+            for field in ("id", "name", "labeling_strategy", "description")
+        )
+        has_linked_state = bool(group.get("members")) or bool(group.get("sample_target")) or bool(group.get("channel_sample_assignments"))
+        if not has_visible_values and not has_linked_state:
+            removed_group = self.groups.pop(row_index)
+            removed_group_id = removed_group.get("id")
+            if removed_group_id and self.active_group_id == removed_group_id:
+                self.active_group_id = None
+
+    def validate_groups_for_runs_step(self) -> None:
+        """Validate that all authored groups are complete before leaving the Runs page."""
+        seen_ids: set[str] = set()
+
+        for row_index, group in enumerate(self.groups):
+            group_id = self._normalize_optional_group_text(group.get("id"))
+            group_name = self._normalize_optional_group_text(group.get("name"))
+            group_strategy = self._normalize_optional_group_text(group.get("labeling_strategy"))
+
+            missing_fields: list[str] = []
+            if not group_id:
+                missing_fields.append("id")
+            if not group_name:
+                missing_fields.append("name")
+            if not group_strategy:
+                missing_fields.append("labeling_strategy")
+
+            if missing_fields:
+                missing_text = ", ".join(missing_fields)
+                raise ValueError(f"Group row {row_index + 1} is incomplete: missing {missing_text}")
+
+            if group_id in seen_ids:
+                raise ValueError(f"Group '{group_id}' already exists")
+            seen_ids.add(group_id)
+
+            group["id"] = group_id
+            group["name"] = group_name
+            self.ensure_group_labeling_metadata(group, labeling_strategy=group_strategy)
+
     def update_group(
         self,
         group_id: str,
@@ -663,7 +796,7 @@ class WizardState:
     def _get_group_index(self, group_id: str) -> int:
         """Return the index of a group by id."""
         for index, group in enumerate(self.groups):
-            if group["id"] == group_id:
+            if group.get("id") == group_id:
                 return index
         raise ValueError(f"Group '{group_id}' not found in groups")
 
@@ -793,8 +926,7 @@ class WizardState:
             raise ValueError("Group ID is required")
         if not name:
             raise ValueError("Group name is required")
-        if any(group["id"] == id for group in self.groups):
-            raise ValueError(f"Group '{id}' already exists")
+        self._ensure_unique_group_id(id)
 
         group = {
             "id": id,

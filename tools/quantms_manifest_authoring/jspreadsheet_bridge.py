@@ -14,6 +14,7 @@ from gui_wizard_state import WizardState
 from spreadsheet_adapter import (
     SpreadsheetAdapter,
     SampleFieldInfo,
+    SampleSpreadsheetRow,
     MixtureFieldInfo,
     RunFieldInfo,
     GroupFieldInfo,
@@ -138,13 +139,10 @@ class JSpreadsheetBridge:
         if self.entity_type == "modifications":
             spreadsheet_data["read_only_cells"] = self._get_modification_read_only_cells(headers, rows)
         elif self.entity_type == "groups":
-            spreadsheet_data["read_only_cells"] = [
-                {"row": row_index, "col": col_index}
-                for row_index, _ in enumerate(rows)
-                for col_index, field_name in enumerate(headers)
-                if field_name == "id"
-            ]
+            spreadsheet_data["read_only_cells"] = []
             spreadsheet_data["allow_delete_row"] = False
+            spreadsheet_data["allow_insert_row"] = True
+            spreadsheet_data["min_spare_rows"] = 1
         elif self.entity_type == "group_channels":
             spreadsheet_data["read_only_cells"] = [
                 {"row": row_index, "col": 0}
@@ -209,7 +207,12 @@ class JSpreadsheetBridge:
             sample_options = [{"id": sample["id"], "name": sample["id"]} for sample in self.wizard.samples]
             return {header: sample_options for header in headers if header != "id"}
         elif self.entity_type == "runs":
-            group_options = [{"id": group["id"], "name": group["id"]} for group in self.wizard.groups]
+            group_options = [
+                {"id": group_id, "name": group_id}
+                for group in self.wizard.groups
+                for group_id in [group.get("id")]
+                if group_id
+            ]
             return {"group_id": group_options}
         elif self.entity_type == "assignments":
             sources = {}
@@ -373,26 +376,17 @@ class JSpreadsheetBridge:
             return
 
         if self.entity_type == "groups":
-            rows = self.adapter.wizard_groups_to_spreadsheet()
             headers = self.adapter.get_column_headers_groups()
-            for row_index, row_data in enumerate(spreadsheet_data[: len(rows)]):
+            original_group_count = len(self.wizard.groups)
+            for row_index, row_data in enumerate(spreadsheet_data):
                 if not isinstance(row_data, (list, tuple)):
                     continue
-                row = rows[row_index]
-                for col_index, field_name in enumerate(headers[: len(row_data)]):
-                    value = row_data[col_index]
-                    if field_name == "id":
-                        normalized_value = None if value == "" else value
-                        if normalized_value != row.id:
-                            raise ValueError("Group ID is read-only in full-sheet sync")
-                        continue
-                    if field_name == "labeling_strategy" and value == "":
-                        value = None
-                    if field_name in {"members", "description"} and value == "":
-                        value = None if field_name == "description" else ""
-                    row.update(**{field_name: value})
-                row.validate()
-            self.adapter.sync_group_edits(rows)
+                row_updates = self._build_group_sheet_row_updates(headers, row_data)
+                if row_index >= original_group_count and row_updates is None:
+                    continue
+                self.wizard.sync_group_sheet_row(row_index, **(row_updates or {}))
+
+            self._dropdown_constraint_cache = self._build_dropdown_constraints()
             return
 
         if self.entity_type == "group_channels":
@@ -419,7 +413,7 @@ class JSpreadsheetBridge:
         raise ValueError(f"Unknown entity type: {self.entity_type}")
 
 
-    def handle_cell_edit(self, row_index: int, col_index: int, new_value: Any) -> None:
+    def handle_cell_edit(self, row_index: int, col_index: int, new_value: Any) -> Optional[bool]:
         """
         Handle a cell edit event from jspreadsheet.
 
@@ -432,19 +426,19 @@ class JSpreadsheetBridge:
             ValueError: If validation fails
         """
         if self.entity_type == "runs":
-            self._handle_cell_edit_runs(row_index, col_index, new_value)
+            return self._handle_cell_edit_runs(row_index, col_index, new_value)
         elif self.entity_type == "samples":
-            self._handle_cell_edit_samples(row_index, col_index, new_value)
+            return self._handle_cell_edit_samples(row_index, col_index, new_value)
         elif self.entity_type == "mixtures":
-            self._handle_cell_edit_mixtures(row_index, col_index, new_value)
+            return self._handle_cell_edit_mixtures(row_index, col_index, new_value)
         elif self.entity_type == "assignments":
-            self._handle_cell_edit_assignments(row_index, col_index, new_value)
+            return self._handle_cell_edit_assignments(row_index, col_index, new_value)
         elif self.entity_type == "modifications":
-            self._handle_cell_edit_modifications(row_index, col_index, new_value)
+            return self._handle_cell_edit_modifications(row_index, col_index, new_value)
         elif self.entity_type == "groups":
-            self._handle_cell_edit_groups(row_index, col_index, new_value)
+            return self._handle_cell_edit_groups(row_index, col_index, new_value)
         elif self.entity_type == "group_channels":
-            self._handle_cell_edit_group_channels(row_index, col_index, new_value)
+            return self._handle_cell_edit_group_channels(row_index, col_index, new_value)
         else:
             raise ValueError(f"Unknown entity type: {self.entity_type}")
 
@@ -500,8 +494,11 @@ class JSpreadsheetBridge:
         # Get current rows and update the edited cell
         current_rows = self.adapter.wizard_samples_to_spreadsheet()
 
-        if row_index < 0 or row_index >= len(current_rows):
+        if row_index < 0 or row_index > len(current_rows):
             raise ValueError(f"Row index {row_index} out of range")
+
+        if row_index == len(current_rows):
+            current_rows.append(SampleSpreadsheetRow(row_index=row_index))
 
         edited_row = current_rows[row_index]
 
@@ -640,32 +637,52 @@ class JSpreadsheetBridge:
         current_rows[row_index] = edited_row
         self.adapter.sync_modification_edits(current_rows)
 
-    def _handle_cell_edit_groups(self, row_index: int, col_index: int, new_value: Any) -> None:
+    def _handle_cell_edit_groups(self, row_index: int, col_index: int, new_value: Any) -> Optional[bool]:
         """Handle cell edit for editable group rows."""
         headers = self.adapter.get_column_headers_groups()
         field_name = headers[col_index]
 
-        if field_name == "id":
-            raise ValueError("Group ID is read-only")
-
-        current_rows = self.adapter.wizard_groups_to_spreadsheet()
-
-        if row_index < 0 or row_index >= len(current_rows):
+        if row_index < 0:
             raise ValueError(f"Row index {row_index} out of range")
 
-        edited_row = current_rows[row_index]
+        current_row_count = len(self.wizard.groups)
+        if row_index > current_row_count:
+            raise ValueError(f"Row index {row_index} out of range")
 
-        if field_name == "labeling_strategy":
+        if field_name == "labeling_strategy" and new_value not in (None, ""):
             self._validate_dropdown_value(field_name, new_value)
-        elif field_name == "members" and new_value is None:
-            new_value = ""
 
-        edited_row.update(**{field_name: new_value})
-        edited_row.validate()
+        if row_index == current_row_count and self._normalize_group_sheet_value(new_value) is None:
+            return False
 
-        current_rows[row_index] = edited_row
-        self.adapter.sync_group_edits(current_rows)
+        self.wizard.sync_group_sheet_row(row_index, **{field_name: new_value})
         self._dropdown_constraint_cache = self._build_dropdown_constraints()
+        return True
+
+    @staticmethod
+    def _normalize_group_sheet_value(value: Any) -> Optional[str]:
+        """Normalize a typed value for a Groups-sheet cell."""
+        if value is None:
+            return None
+
+        text = str(value).strip()
+        return text or None
+
+    def _build_group_sheet_row_updates(
+        self,
+        headers: list[str],
+        row_data: list[Any] | tuple[Any, ...],
+    ) -> Optional[dict[str, Any]]:
+        """Convert a full-sheet Groups row into normalized wizard updates."""
+        updates: dict[str, Any] = {}
+
+        for col_index, field_name in enumerate(headers[: len(row_data)]):
+            updates[field_name] = self._normalize_group_sheet_value(row_data[col_index])
+
+        if all(value is None for value in updates.values()):
+            return None
+
+        return updates
 
     def _handle_cell_edit_group_channels(self, row_index: int, col_index: int, new_value: Any) -> None:
         """Handle cell edit for strategy-based group channel sheets."""

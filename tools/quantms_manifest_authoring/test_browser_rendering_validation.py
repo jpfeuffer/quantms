@@ -25,7 +25,9 @@ import asyncio
 import sys
 import json
 import time
+import weakref
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -167,6 +169,60 @@ class TestJavaScriptLibraryLoading:
 class TestEventHandlerWiring:
     """Tests for JavaScript event handler registration."""
 
+    def test_dispatch_spreadsheet_event_accepts_nicegui_event_args(self):
+        """AC22b: The shared dispatcher should unwrap NiceGUI event objects that store payloads in .args."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1)
+
+        on_change = MagicMock()
+        editor = JSpreadsheetEditor(wizard, on_change)
+        registry = JSpreadsheetEditor._get_registry('_instances', weakref.WeakValueDictionary)
+        registry[editor.widget_id] = editor
+
+        class MockEvent:
+            def __init__(self, args):
+                self.args = args
+
+        event = MockEvent({
+            'type': 'cell_edit',
+            'widget_id': editor.widget_id,
+            'row': 0,
+            'col': 1,
+            'value': '2',
+        })
+
+        JSpreadsheetEditor._dispatch_spreadsheet_event(event)
+
+        assert wizard.runs[0]['fraction'] == 2
+        on_change.assert_not_called()
+
+    def test_dispatch_spreadsheet_event_accepts_single_payload_args_list(self):
+        """AC22c: The shared dispatcher should unwrap NiceGUI emits that arrive as args=[payload]."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw", fraction=1)
+
+        on_change = MagicMock()
+        editor = JSpreadsheetEditor(wizard, on_change)
+        registry = JSpreadsheetEditor._get_registry('_instances', weakref.WeakValueDictionary)
+        registry[editor.widget_id] = editor
+
+        class MockEvent:
+            def __init__(self, args):
+                self.args = args
+
+        event = MockEvent([{
+            'type': 'cell_edit',
+            'widget_id': editor.widget_id,
+            'row': 0,
+            'col': 1,
+            'value': '3',
+        }])
+
+        JSpreadsheetEditor._dispatch_spreadsheet_event(event)
+
+        assert wizard.runs[0]['fraction'] == 3
+        on_change.assert_not_called()
+
     def test_python_event_handler_filters_by_widget_id(self):
         """
         AC22: The _handle_spreadsheet_event() method only processes events
@@ -223,6 +279,32 @@ class TestEventHandlerWiring:
 
         # Should process and update wizard
         assert wizard.runs[0]['fraction'] == 2
+        on_change.assert_not_called()
+
+    def test_python_event_handler_processes_string_indices_from_browser(self):
+        """
+        Browser-emitted spreadsheet events can serialize row/col indices as strings.
+        The handler should coerce them before dispatching to the bridge.
+        """
+        wizard = WizardState()
+        wizard.add_run(file='/data/test.raw', fraction=1)
+
+        from unittest.mock import MagicMock
+
+        on_change = MagicMock()
+        editor = JSpreadsheetEditor(wizard, on_change)
+
+        event = {
+            'type': 'cell_edit',
+            'widget_id': editor.widget_id,
+            'row': '0',
+            'col': '1',
+            'value': '4',
+        }
+
+        editor._handle_spreadsheet_event(event)
+
+        assert wizard.runs[0]['fraction'] == 4
         on_change.assert_not_called()
 
     def test_python_event_handler_processes_row_delete(self):

@@ -107,6 +107,20 @@ class WizardEditor:
 
         return True
 
+    def validate_current_page_for_next(self) -> None:
+        """Run page-scoped validation only when the user explicitly clicks Next."""
+        current_page_index = self.wizard.get_main_flow_page_index()
+
+        if current_page_index == 0:
+            if not self.wizard.runs:
+                raise ValueError("At least one run is required before advancing past the RUNS step")
+            self.wizard.validate_groups_for_runs_step()
+            return
+
+        if current_page_index == 1 and self.wizard.current_step_index < WizardStep.ASSIGNMENTS.get_index():
+            if not self.wizard._experiment_settings_saved:
+                raise ValueError("Experiment settings must be saved before advancing to the review step")
+
 
 class ManifestEditingWizard(WizardEditor):
     """Alias for WizardEditor for backward compatibility."""
@@ -904,30 +918,36 @@ def create_group_detail_step(
             spreadsheet_editors.append(sample_editor)
 
         if active_group and group_id:
-            group_strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(active_group.get("kind"))
-            group_sheet_name = "LFQ" if group_strategy == wizard.get_default_labeling_strategy("LFQ") else (group_strategy or group_name or group_id)
-            with ui.card().classes("w-full mt-6"):
-                ui.label(f"{group_sheet_name} Assignment Sheet").classes("text-md font-semibold")
-                ui.label(
-                    "Assign samples to the active group's channels using the shared Samples sheet as the source."
-                ).classes("text-sm text-gray-600")
-                bridge = JSpreadsheetBridge(
-                    wizard,
-                    entity_type="group_channels",
-                    group_strategy=group_strategy,
-                    group_id=group_id,
-                )
-                editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
-                editor.render()
-                spreadsheet_editors.append(editor)
-                _render_instruction_block(
-                    [
-                        "• Sample selections are dropdowns sourced from the shared Samples sheet",
-                        "• Only the active group's row is editable here",
-                        "• Channel names come from the bundled channel catalog",
-                    ],
-                    "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
-                )
+            group_strategies = wizard.get_group_channel_sheet_strategies()
+            if not group_strategies:
+                group_strategy = active_group.get("labeling_strategy") or wizard.get_default_labeling_strategy(active_group.get("kind"))
+                if group_strategy:
+                    group_strategies = [group_strategy]
+
+            for group_strategy in group_strategies:
+                group_sheet_name = "LFQ" if group_strategy == wizard.get_default_labeling_strategy("LFQ") else (group_strategy or group_name or group_id)
+                with ui.card().classes("w-full mt-6"):
+                    ui.label(f"{group_sheet_name} Assignment Sheet").classes("text-md font-semibold")
+                    ui.label(
+                        "Assign samples to the group's channels using the shared Samples sheet as the source."
+                    ).classes("text-sm text-gray-600")
+                    bridge = JSpreadsheetBridge(
+                        wizard,
+                        entity_type="group_channels",
+                        group_strategy=group_strategy,
+                        group_id=None,
+                    )
+                    editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name=group_sheet_name)
+                    editor.render()
+                    spreadsheet_editors.append(editor)
+                    _render_instruction_block(
+                        [
+                            "• Sample selections are dropdowns sourced from the shared Samples sheet",
+                            "• Each sheet shows the rows for one labeling strategy",
+                            "• Channel names come from the bundled channel catalog",
+                        ],
+                        "text-xs text-gray-600 mt-4 p-2 bg-gray-50 rounded",
+                    )
         else:
             ui.label("Add a group to open its assignment sheet.").classes("text-sm text-gray-500 italic mt-4")
 
@@ -1182,8 +1202,9 @@ def create_runs_step(wizard: WizardState, refresh_ui: Callable) -> Optional[Any]
 
                     _render_instruction_block(
                         [
-                            "• Group ID is read-only in this phase",
-                            "• Group name, labeling strategy, and description can be edited",
+                            "• Group ID, name, labeling strategy, and description are editable",
+                            "• New group IDs become available in the Files table as soon as they are typed",
+                            "• Incomplete group rows are validated only when you click Next",
                             "• Channel count is derived automatically from the labeling strategy",
                             "• Group details are authored on the next page",
                         ],
@@ -1729,6 +1750,8 @@ def create_manifest_editor_ui(editor: WizardEditor) -> None:
                     import inspect
                     if inspect.iscoroutine(flush_result):
                         await flush_result
+
+                editor.validate_current_page_for_next()
 
                 if not editor.can_go_forward_for_visible_page():
                     return

@@ -404,6 +404,13 @@ class MockUIContext:
             self._container_stack[-1].children.append(lbl)
         return lbl
 
+    def html(self, content=""):
+        """Create a mock HTML block."""
+        html = MockUICard(owner=self, kind="html")
+        html.content = content
+        self.cards.append(html)
+        return html
+
     def row(self):
         """Create a mock row."""
         row = MockUIRow(owner=self, kind="row")
@@ -874,7 +881,7 @@ class TestRunsStepCallbacks:
         assert worksheet_names.count("Modifications") == 1
 
     def test_group_detail_surface_branches_by_group_kind(self):
-        """The dedicated group detail surface should branch into multiplexed and LFQ flows."""
+        """The dedicated group detail surface should show every involved labeling-strategy sheet."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -914,7 +921,7 @@ class TestRunsStepCallbacks:
         assert any(sel.label == "Group" for sel in mock_ui_ctx.selects)
         assert "Samples" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "TMT6" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
-        assert "LFQ" not in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
+        assert "LFQ" in [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
 
         mock_ui_ctx = MockUIContext()
         RecordingSpreadsheetEditor.created = []
@@ -1171,8 +1178,8 @@ class TestRunsStepCallbacks:
         assert selector.options == {"lfq_group": "LFQ group", "tmt_group": "TMT group"}
         assert wizard.get_active_group_id() == "lfq_group"
 
-    def test_group_detail_workspace_renders_shared_sample_sheet_and_active_group_sheet(self):
-        """The Group Details workspace should render Samples first and only the active group's assignment sheet."""
+    def test_group_detail_workspace_renders_shared_sample_sheet_and_all_involved_assignment_sheets(self):
+        """The Group Details workspace should render Samples first and all involved assignment sheets near the top."""
         from gui_nicegui import create_group_detail_step
 
         wizard = WizardState()
@@ -1198,8 +1205,9 @@ class TestRunsStepCallbacks:
         worksheet_names = [editor.worksheet_name for editor in RecordingSpreadsheetEditor.created]
         assert "Samples" in worksheet_names
         assert "TMT6" in worksheet_names
-        assert "TMT11" not in worksheet_names
+        assert "TMT11" in worksheet_names
         assert worksheet_names.index("Samples") < worksheet_names.index("TMT6")
+        assert worksheet_names.index("Samples") < worksheet_names.index("TMT11")
         assert any("Group Details" in lbl.text for lbl in mock_ui_ctx.labels)
         assert any(expansion.text == "Membership Summary" and expansion.value is False for expansion in mock_ui_ctx.expansions)
         assert any("Back to Groups" in btn.text for btn in mock_ui_ctx.buttons)

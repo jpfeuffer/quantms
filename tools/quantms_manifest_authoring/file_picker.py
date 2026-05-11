@@ -169,6 +169,9 @@ class MsFilePickerDialog(ui.dialog):
             # result is a list of selected file paths
     """
 
+    DIALOG_STYLE = "width: min(95vw, 72rem); max-height: 90vh; overflow: hidden;"
+    GRID_STYLE = "height: min(60vh, 36rem);"
+
     def __init__(self, multiple: bool = True):
         """
         Initialize the MS file picker dialog.
@@ -183,11 +186,11 @@ class MsFilePickerDialog(ui.dialog):
         self.multiple = multiple
 
         # Build dialog UI
-        with self, ui.card():
+        with self, ui.card().style(self.DIALOG_STYLE).classes("overflow-hidden"):
             # Header with path navigation
-            with ui.row().classes("w-full items-center justify-between"):
+            with ui.row().classes("w-full items-center justify-between gap-4 flex-wrap"):
                 ui.label("Select MS Data Files").classes("text-lg font-bold")
-                self.path_label = ui.label(str(self.path)).classes("text-xs text-gray-500")
+                self.path_label = ui.label(str(self.path)).classes("text-xs text-gray-500 break-all text-right")
 
             # File grid
             self.grid = ui.aggrid(
@@ -198,7 +201,7 @@ class MsFilePickerDialog(ui.dialog):
                     },
                 },
                 html_columns=[0],
-            ).classes("w-96").on("cellDoubleClicked", self.handle_double_click)
+            ).classes("w-full").style(self.GRID_STYLE).on("cellDoubleClicked", self.handle_double_click)
 
             # Navigation buttons
             with ui.row().classes("w-full justify-end gap-2"):
@@ -227,9 +230,8 @@ class MsFilePickerDialog(ui.dialog):
         # Build row data
         row_data = []
 
-        # Add parent directory navigation (if not at home or above)
-        home = self.picker.get_home_directory()
-        if self.path != home and self.path.parent != self.path:
+        # Add parent directory navigation for any non-root directory.
+        if self.path.parent != self.path:
             row_data.append({
                 "name": '📁 <strong>..</strong>',
                 "path": str(self.path.parent),

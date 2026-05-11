@@ -30,6 +30,30 @@ from jspreadsheet_bridge import JSpreadsheetBridge
 class TestJSpreadsheetEditorWithEntityType:
     """Tests for JSpreadsheetEditor supporting different entity types."""
 
+    def test_editor_renders_empty_samples_sheet(self):
+        """Empty Samples sheets should still render so the first sample can be created."""
+        wizard = WizardState()
+
+        refresh_ui = MagicMock()
+        bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+        editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge, worksheet_name="Samples")
+
+        container = MagicMock()
+        container.html_id = "samples-container"
+        container.classes.return_value = container
+
+        with patch("jspreadsheet_editor.ui.element", return_value=container), \
+             patch.object(JSpreadsheetEditor, "_ensure_cdn_loaded"), \
+             patch.object(JSpreadsheetEditor, "_ensure_event_bridge_registered"), \
+             patch("jspreadsheet_editor.context") as mock_context:
+            mock_context.client.has_socket_connection = True
+            editor._initialize_spreadsheet = MagicMock()
+
+            editor.render()
+
+        assert editor.container is container
+        editor._initialize_spreadsheet.assert_called_once()
+
     def test_editor_initializes_for_samples(self):
         """Test that editor can be initialized for samples entity type."""
         wizard = WizardState()
@@ -160,6 +184,21 @@ class TestEditorEventDispatching:
         # Verify row was deleted
         assert len(wizard.samples) == 1
         assert wizard.samples[0]["id"] == "sample2"
+
+    def test_editor_refreshes_groups_when_a_new_group_id_is_typed(self):
+        """A new Groups-sheet row should rerender immediately once its id is typed."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Existing group", kind="LFQ")
+
+        refresh_ui = MagicMock()
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        editor = JSpreadsheetEditor(wizard, refresh_ui, bridge=bridge)
+
+        editor.handle_event("cell_edit", row_index=1, col_index=0, new_value="group_2")
+
+        refresh_ui.assert_called_once()
+        assert [group["id"] for group in wizard.groups] == ["group_1", "group_2"]
 
 
 class TestMultipleEditorCoexistence:

@@ -191,6 +191,19 @@ class TestVisibleFlowNavigationGate:
 
         assert editor.can_go_forward_for_visible_page()
 
+    def test_runs_page_validates_incomplete_groups_only_when_next_is_clicked(self):
+        """Runs-page group rows may stay incomplete during editing but must validate before page advance."""
+        from gui_nicegui import ManifestEditingWizard
+
+        editor = ManifestEditingWizard()
+        editor.wizard.add_run(file="test.raw")
+        editor.wizard.sync_group_sheet_row(0, id="group_1")
+
+        assert editor.can_go_forward_for_visible_page()
+
+        with pytest.raises(ValueError, match="Group row 1 is incomplete"):
+            editor.validate_current_page_for_next()
+
     def test_group_details_page_uses_selector_when_active_group_is_not_set(self):
         """The Group Details page should be able to surface a group selector directly."""
         from gui_nicegui import create_group_detail_step
@@ -219,6 +232,12 @@ class TestVisibleFlowNavigationGate:
                 lbl.update.return_value = lbl
                 self.labels.append(lbl)
                 return lbl
+
+            def html(self, content=""):
+                block = MagicMock()
+                block.content = content
+                block.classes.return_value = block
+                return block
 
             def button(self, text="", on_click=None, icon="", **kwargs):
                 btn = MagicMock()
@@ -264,6 +283,17 @@ class TestVisibleFlowNavigationGate:
                 column.classes.return_value = column
                 column.props.return_value = column
                 return column
+
+            def expansion(self, text="", icon="", value=False):
+                expansion = MagicMock()
+                expansion.text = text
+                expansion.icon = icon
+                expansion.value = value
+                expansion.__enter__.return_value = expansion
+                expansion.__exit__.return_value = None
+                expansion.classes.return_value = expansion
+                expansion.props.return_value = expansion
+                return expansion
 
         mock_ui = _GroupDetailMockUI()
 

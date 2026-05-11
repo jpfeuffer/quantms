@@ -26,6 +26,18 @@ from jspreadsheet_bridge import JSpreadsheetBridge
 class TestJSpreadsheetBridgeForSamples:
     """Tests for JSpreadsheetBridge with samples entity type."""
 
+    def test_bridge_can_create_first_sample_from_empty_state(self):
+        """An empty Samples sheet should accept the first sample row through the edit path."""
+        wizard = WizardState()
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="samples")
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        bridge.handle_cell_edit(row_index=0, col_index=headers.index("id"), new_value="sample1")
+
+        assert len(wizard.samples) == 1
+        assert wizard.samples[0]["id"] == "sample1"
+
     def test_bridge_initializes_with_entity_type_samples(self):
         """Test that bridge can be initialized with entity_type='samples'."""
         wizard = WizardState()

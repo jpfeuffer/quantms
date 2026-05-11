@@ -312,13 +312,13 @@ class TestJSpreadsheetBridge:
 
         assert data["headers"] == ["id", "name", "labeling_strategy", "description"]
         assert data["data"][0][data["headers"].index("labeling_strategy")] == "label free sample"
-        assert data["column_config"]["id"]["read_only"] is True
+        assert "read_only" not in data["column_config"]["id"]
         assert "read_only" not in data["column_config"]["name"]
         assert "read_only" not in data["column_config"]["labeling_strategy"]
         assert "read_only" not in data["column_config"]["description"]
         assert "members" not in data["headers"]
         assert "members" not in data["column_config"]
-        assert data["read_only_cells"] == [{"row": 0, "col": 0}]
+        assert data["read_only_cells"] == []
         assert bridge.get_row_count() == 1
 
     def test_groups_bridge_exposes_labeling_strategy_without_channel_count_column(self):
@@ -399,6 +399,61 @@ class TestJSpreadsheetBridge:
 
         assert wizard.groups[0]["labeling_strategy"] == "label free sample"
         assert wizard.groups[0]["channel_count"] == 1
+
+    def test_groups_bridge_creates_new_group_from_new_sheet_row_cell_edits(self):
+        """Editing a blank Groups-sheet row should create a draft group as soon as its id is typed."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Existing group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        headers = bridge.get_spreadsheet_data()["headers"]
+
+        assert bridge.handle_cell_edit(row_index=1, col_index=headers.index("id"), new_value="group_2") is True
+
+        assert [group.get("id") for group in wizard.groups] == ["group_1", "group_2"]
+
+        runs_bridge = JSpreadsheetBridge(wizard, entity_type="runs")
+        runs_data = runs_bridge.get_spreadsheet_data()
+        assert runs_data["column_config"]["group_id"]["source"] == [
+            {"id": "group_1", "name": "group_1"},
+            {"id": "group_2", "name": "group_2"},
+        ]
+
+        assert bridge.handle_cell_edit(row_index=1, col_index=headers.index("name"), new_value="New group") is True
+        assert bridge.handle_cell_edit(
+            row_index=1,
+            col_index=headers.index("labeling_strategy"),
+            new_value="label free sample",
+        ) is True
+
+        assert wizard.groups[1]["name"] == "New group"
+        assert wizard.groups[1]["labeling_strategy"] == "label free sample"
+
+    def test_groups_bridge_full_sheet_sync_adds_new_group_rows(self):
+        """Full-sheet sync should preserve incomplete new Groups-sheet rows as draft groups."""
+        wizard = WizardState()
+        wizard.add_run(file="/data/test.raw")
+        wizard.add_group(id="group_1", name="Existing group", kind="LFQ")
+
+        bridge = JSpreadsheetBridge(wizard, entity_type="groups")
+        spreadsheet_data = bridge.get_spreadsheet_data()
+        mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
+        mutated_snapshot.append(["group_2", "", "", "from sheet"])
+
+        bridge.sync_from_spreadsheet_data(mutated_snapshot)
+
+        assert [group["id"] for group in wizard.groups] == ["group_1", "group_2"]
+        assert wizard.groups[1]["description"] == "from sheet"
+        assert "name" not in wizard.groups[1]
+        assert "labeling_strategy" not in wizard.groups[1]
+
+        runs_bridge = JSpreadsheetBridge(wizard, entity_type="runs")
+        runs_data = runs_bridge.get_spreadsheet_data()
+        assert runs_data["column_config"]["group_id"]["source"] == [
+            {"id": "group_1", "name": "group_1"},
+            {"id": "group_2", "name": "group_2"},
+        ]
 
     def test_groups_bridge_allows_labeling_strategy_edit_and_derives_kind(self):
         """Groups cell edits should accept a strategy edit and derive the matching kind."""
@@ -540,9 +595,7 @@ class TestJSpreadsheetBridge:
                 [
                     "group_1",
                     "Updated group",
-                    "SILAC",
                     "SILAC_2plex",
-                    2,
                     "Updated via flush",
                 ],
             ])
@@ -639,8 +692,8 @@ class TestJSpreadsheetBridge:
         assert wizard.groups[0]["members"] == [wizard.runs[0]["id"]]
         assert wizard.runs[0]["instrument"] == "Orbitrap"
 
-    def test_groups_full_sheet_sync_rejects_id_edits(self):
-        """Groups full-sheet sync should reject edits to the immutable group identifier."""
+    def test_groups_full_sheet_sync_renames_group_id_and_updates_runs(self):
+        """Groups full-sheet sync should allow id edits and cascade them into run assignments."""
         wizard = WizardState()
         wizard.add_run(file="/data/sample.raw")
         wizard.add_group(id="group_1", name="Group 1", kind="LFQ")
@@ -651,11 +704,10 @@ class TestJSpreadsheetBridge:
         mutated_snapshot = [row[:] for row in spreadsheet_data["data"]]
         mutated_snapshot[0][spreadsheet_data["headers"].index("id")] = "group_edited"
 
-        with pytest.raises(ValueError, match="Group ID is read-only"):
-            bridge.sync_from_spreadsheet_data(mutated_snapshot)
+        bridge.sync_from_spreadsheet_data(mutated_snapshot)
 
-        assert wizard.groups[0]["id"] == "group_1"
-        assert wizard.runs[0]["group_id"] == "group_1"
+        assert wizard.groups[0]["id"] == "group_edited"
+        assert wizard.runs[0]["group_id"] == "group_edited"
 
     def test_bridge_edge_case_row_index_out_of_range(self):
         """

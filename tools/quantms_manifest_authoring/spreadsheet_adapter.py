@@ -198,7 +198,7 @@ class GroupFieldInfo:
             "type": "str",
             "required": True,
             "description": "Group identifier",
-            "read_only": True,
+            "read_only": False,
         },
         "name": {
             "type": "str",
@@ -790,7 +790,7 @@ class SpreadsheetAdapter:
         """
         rows = []
         for idx, group in enumerate(self.wizard.groups):
-            if hasattr(self.wizard, "ensure_group_labeling_metadata"):
+            if hasattr(self.wizard, "ensure_group_labeling_metadata") and (group.get("labeling_strategy") or group.get("kind")):
                 self.wizard.ensure_group_labeling_metadata(group)
             row = GroupSpreadsheetRow.from_wizard_group(group, row_index=idx)
             rows.append(row)
@@ -919,29 +919,13 @@ class SpreadsheetAdapter:
                 f"row count mismatch: spreadsheet has {len(rows)} rows but wizard has {len(self.wizard.groups)} groups"
             )
 
-        for row in rows:
-            row.validate()
-
-        for row in rows:
-            current_group = next(group for group in self.wizard.groups if group["id"] == row.id)
-            update_kwargs = {
-                "name": row.name,
-                "description": row.description,
-            }
-
-            if row.labeling_strategy is not None:
-                update_kwargs["labeling_strategy"] = row.labeling_strategy
-
-            if not (
-                isinstance(current_group.get("kind"), str)
-                and isinstance(row.kind, str)
-                and current_group["kind"].strip().casefold() == row.kind.strip().casefold()
-            ):
-                update_kwargs["kind"] = row.kind
-
-            self.wizard.update_group(
-                row.id,
-                **update_kwargs,
+        for row_index, row in enumerate(rows):
+            self.wizard.sync_group_sheet_row(
+                row_index,
+                id=row.id,
+                name=row.name,
+                labeling_strategy=row.labeling_strategy,
+                description=row.description,
             )
 
     def get_row_by_index(self, index: int) -> Optional[SpreadsheetRow]:

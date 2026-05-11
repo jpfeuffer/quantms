@@ -170,6 +170,15 @@ class JSpreadsheetEditor:
     @staticmethod
     def _dispatch_spreadsheet_event(event_data) -> None:
         if not isinstance(event_data, dict):
+            event_args = getattr(event_data, 'args', None)
+            if isinstance(event_args, dict):
+                event_data = event_args
+            elif isinstance(event_args, (list, tuple)) and len(event_args) == 1 and isinstance(event_args[0], dict):
+                event_data = event_args[0]
+            else:
+                return
+
+        if not isinstance(event_data, dict):
             return
 
         widget_id = event_data.get('widget_id')
@@ -188,7 +197,7 @@ class JSpreadsheetEditor:
         self._get_registry('_instances', weakref.WeakValueDictionary)[self.widget_id] = self
         self.prepare_client_runtime()
 
-        if not self.wizard or self.bridge.get_row_count() == 0:
+        if not self.wizard or (self.bridge.get_row_count() == 0 and self.bridge.entity_type != "samples"):
             return
 
         if getattr(context.client, 'has_socket_connection', False):
@@ -199,7 +208,10 @@ class JSpreadsheetEditor:
                 on_connect(self._initialize_spreadsheet)
 
     def _initialize_spreadsheet(self) -> None:
-        if not self.container or not self.wizard or self.bridge.get_row_count() == 0:
+        if not self.container or not self.wizard:
+            return
+
+        if self.bridge.get_row_count() == 0 and self.bridge.entity_type != "samples":
             return
 
         self._initialize_data()
@@ -217,6 +229,8 @@ class JSpreadsheetEditor:
         column_config_json = json.dumps(column_config)
         read_only_cells_json = json.dumps(spreadsheet_data.get("read_only_cells", []))
         allow_delete_row_json = json.dumps(spreadsheet_data.get("allow_delete_row", True))
+        allow_insert_row_json = json.dumps(spreadsheet_data.get("allow_insert_row", False))
+        min_spare_rows_json = json.dumps(spreadsheet_data.get("min_spare_rows", 0))
         widget_id_json = json.dumps(self.widget_id)
         container_id_json = json.dumps(container_id)
 
@@ -228,6 +242,8 @@ class JSpreadsheetEditor:
                 column_config: {column_config_json},
                 read_only_cells: {read_only_cells_json},
                 allow_delete_row: {allow_delete_row_json},
+                allow_insert_row: {allow_insert_row_json},
+                min_spare_rows: {min_spare_rows_json},
                 widget_id: {widget_id_json},
                 container_id: {container_id_json}
             }};
@@ -266,6 +282,10 @@ class JSpreadsheetEditor:
                 const columnConfig = spreadsheetData.column_config || {{}};
                 const readOnlyCells = spreadsheetData.read_only_cells || [];
                 const allowDeleteRow = spreadsheetData.allow_delete_row !== false;
+                const allowInsertRow = spreadsheetData.allow_insert_row === true;
+                const minSpareRows = Number.isFinite(spreadsheetData.min_spare_rows)
+                    ? spreadsheetData.min_spare_rows
+                    : 0;
                 const readOnlyCellKeys = new Set(readOnlyCells.map(cell => `${{cell.row}}:${{cell.col}}`));
                 const containerId = spreadsheetData.container_id;
                 const widgetId = spreadsheetData.widget_id;
@@ -453,38 +473,39 @@ class JSpreadsheetEditor:
                 const spreadsheet = window.jspreadsheet(container, {{
                     tabs: false,
                     toolbar: false,
+                    onchange: function(worksheet, cell, x, y, value) {{
+                        applyReadOnlyStylesToRenderedRow(worksheet, y);
+                        emitSpreadsheetEvent({{
+                            type: 'cell_edit',
+                            widget_id: widgetId,
+                            row: y,
+                            col: x,
+                            value: value,
+                        }});
+                    }},
+                    ondeleterow: function(worksheet, rows) {{
+                        emitSpreadsheetEvent({{
+                            type: 'row_delete',
+                            widget_id: widgetId,
+                            rows: rows,
+                        }});
+                    }},
                     worksheets: [{{
                         worksheetName: worksheetName,
                         data: data,
                         columns: columns,
                         minDimensions: [headers.length, Math.max(data.length, 5)],
+                        minSpareRows: minSpareRows,
                         tableOverflow: true,
                         editable: true,
                         allowInsertColumn: false,
                         allowDeleteColumn: false,
                         allowDeleteRow: allowDeleteRow,
                         allowManualInsertColumn: false,
-                        allowInsertRow: false,
-                        allowManualInsertRow: false,
+                        allowInsertRow: allowInsertRow,
+                        allowManualInsertRow: allowInsertRow,
                         updateTable: function(worksheet, cell, x, y) {{
                             applyReadOnlyCellState(worksheet, cell, x, y);
-                        }},
-                        onchange: function(worksheet, cell, x, y, value) {{
-                            applyReadOnlyStylesToRenderedRow(worksheet, y);
-                            emitSpreadsheetEvent({{
-                                type: 'cell_edit',
-                                widget_id: widgetId,
-                                row: y,
-                                col: x,
-                                value: value,
-                            }});
-                        }},
-                        ondeleterow: function(worksheet, rows) {{
-                            emitSpreadsheetEvent({{
-                                type: 'row_delete',
-                                widget_id: widgetId,
-                                rows: rows,
-                            }});
                         }},
                     }}],
                 }});
@@ -578,7 +599,7 @@ class JSpreadsheetEditor:
             col = event_data.get('col')
             value = event_data.get('value')
             if row is not None and col is not None:
-                self.handle_cell_edit(row, col, value)
+                self.handle_cell_edit(int(row), int(col), value)
         elif event_type == 'row_delete':
             rows = event_data.get('rows')
             if rows is not None:
@@ -586,17 +607,19 @@ class JSpreadsheetEditor:
             else:
                 row = event_data.get('row')
                 if row is not None:
-                    self.handle_row_delete(row)
+                    self.handle_row_delete(int(row))
 
     def handle_cell_edit(self, row_index: int, col_index: int, new_value: Any) -> None:
         """Handle a cell edit from the spreadsheet."""
         try:
-            self.bridge.handle_cell_edit(row_index, col_index, new_value)
+            refresh_required = self.bridge.handle_cell_edit(row_index, col_index, new_value)
             if self.bridge.entity_type == "runs":
                 headers = self.bridge.adapter.get_column_headers()
                 if 0 <= col_index < len(headers) and headers[col_index] == "group_id":
                     self.on_change()
-            elif self.bridge.entity_type == "groups":
+            elif self.bridge.entity_type == "samples" and refresh_required is not False:
+                self.on_change()
+            elif self.bridge.entity_type == "groups" and refresh_required is not False:
                 self.on_change()
         except Exception as e:
             ui.notify(f"Error updating cell: {e}", type="negative")
