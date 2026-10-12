@@ -118,7 +118,8 @@ workflow LFQ {
 }
 
 //
-// ProteomicsLFQ options that shape feature detection (part of the feature checkpoint fingerprint)
+// ProteomicsLFQ options that shape feature detection (part of the feature checkpoint fingerprint;
+// shared by PROTEOMICSLFQ_DETECT and PROTEOMICSLFQ, so -resume re-detects when any of them changes)
 //
 def proteomicsLfqFeatureArgs() {
     return [
@@ -130,6 +131,11 @@ def proteomicsLfqFeatureArgs() {
         "-Seeding:algorithm ${params.lfq_seeding_algorithm}",
         "-Seeding:intThreshold ${params.lfq_intensity_threshold}",
         params.quantify_decoys ? '-PeptideQuantification:quantify_decoys' : '',
+        // Identification cleanup during detection depends on the protein quantification mode (only
+        // strictly_unique_peptides keeps the protein_references that its uniqueness filter needs), so
+        // detection must use the same mode as the combining step (OpenMS/OpenMS#10481). Being part of
+        // these arguments also makes -resume re-run detection when --protein_quant changes.
+        "-protein_quantification ${params.protein_quant}",
     ].findAll { arg -> arg }.join(' ')
 }
 

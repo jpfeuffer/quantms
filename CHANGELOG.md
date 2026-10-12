@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING — default search engine is now `prose`** (previously `comet`).
 - PercolatorAdapter runs Percolator in-process (`-use_subprocess false`); the pipeline fails if PSM-level rescoring silently fell back to the external binary. Peptide/protein-level FDR modes still use the external binary.
 - ProteomicsLFQ and IsobaricWorkflow no longer write the unused mzTab file.
+- ProSE honours `--run_fdr_cutoff` (applied after its internal rescoring; values <= 0 are rejected) and `--decoy_string` (custom decoy prefix or suffix), and rejects `--fdr_level` other than `psm_level_fdrs` at startup.
+- Distributed LFQ feature detection uses the same `--protein_quant` mode as the combining step, so `strictly_unique_peptides` keeps protein references and `-resume` re-runs detection when the mode changes ([OpenMS#10481](https://github.com/OpenMS/OpenMS/issues/10481)).
 - Test profiles that use MS-GF+, multi-engine merging, localization or isobaric quantification set `convert_raw = true`.
 
 - [#729](https://github.com/bigbio/quantms/pull/729) **Migrate to the shared `bigbio/pmultiqc` nf-module**: the local `pmultiqc` module is replaced by the community-maintained nf-module and `pmultiqc` is bumped to `0.0.47`. MultiQC flags previously hard-coded inside the module are now passed via `ext.args` in `conf/modules/shared.config`, and the quantms logo is staged alongside the report inputs.

@@ -125,6 +125,14 @@ workflow QUANTMS {
             if (params.ms2features_enable || params.psm_clean) {
                 error("--search_engines prose performs its own Percolator rescoring and does not support --ms2features_enable or --psm_clean. Use comet, sage or msgf for MS2 feature rescoring.")
             }
+            // ProSE's internal Percolator rescoring and its per-run filter work on PSM-level q-values only.
+            if (params.fdr_level != 'psm_level_fdrs') {
+                error("--search_engines prose supports only --fdr_level psm_level_fdrs (got '${params.fdr_level}'). Use comet, sage or msgf for peptide- or protein-level Percolator FDR.")
+            }
+            // PercolatorAdapter treats --run_fdr_cutoff 0 as a q-value cutoff of 0, whereas ProSE treats 0 as 'no filtering'.
+            if (!(params.run_fdr_cutoff > 0)) {
+                error("--search_engines prose requires --run_fdr_cutoff > 0 (got ${params.run_fdr_cutoff}), because ProSE interprets 0 as 'no filtering'. Use 1.0 to keep all PSMs.")
+            }
         } else if (params.fdr_level != 'psm_level_fdrs') {
             log.warn("--fdr_level ${params.fdr_level} is only implemented by the external percolator executable; PercolatorAdapter will not use the in-process Percolator backend.")
         }

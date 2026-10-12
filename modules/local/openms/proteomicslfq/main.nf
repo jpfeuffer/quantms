@@ -55,7 +55,6 @@ process PROTEOMICSLFQ {
         -fasta ${db_name} \\
         ${feature_args} \\
         -protein_inference ${params.protein_inference_method} \\
-        -protein_quantification ${params.protein_quant} \\
         -alignment_order ${params.alignment_order} \\
         -psmFDR ${params.psm_level_fdr_cutoff} \\
         -proteinFDR ${params.protein_level_fdr_cutoff} \\

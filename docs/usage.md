@@ -95,7 +95,9 @@ Before rescoring, ProSE adds PeptDeep (AlphaPeptDeep ONNX models, run with ONNX 
 time features to every PSM (`--prose_peptdeep`, default `true`; instrument class `--prose_peptdeep_instrument`, collision energy is
 calibrated from the data). The pipeline fails if the OpenMS image lacks ONNX support or the models, or if no predicted features were
 added; `--prose_peptdeep false` explicitly rescores without predicted features. ProSE cannot be combined
-with other search engines, `--ms2features_enable` or `--psm_clean`.
+with other search engines, `--ms2features_enable` or `--psm_clean`. ProSE applies `--run_fdr_cutoff` per run to its Percolator q-values (must be > 0;
+use `1.0` to keep all PSMs), supports only `--fdr_level psm_level_fdrs`, and recognises existing decoys with the `--decoy_string`
+marker as prefix or suffix.
 
 Comet, Sage and MS-GF+ remain available (`--search_engines comet`, `sage`, `msgf` or comma-separated combinations). Their PSMs are
 rescored with OpenMS PercolatorAdapter in-process (no external percolator binary). Peptide- or protein-level Percolator FDRs

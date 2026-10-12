@@ -1,0 +1,112 @@
+nextflow_process {
+
+    name "Test Process PROSE"
+    script "../main.nf"
+    process "PROSE"
+    tag "modules"
+    tag "modules_local"
+    tag "prose"
+
+    // Decoy markers outside OpenMS' common-marker vocabulary (DecoyDatabase cannot generate them, but
+    // user-supplied databases can contain them): ProSE recognises these decoys only through
+    // -Search:decoy_prefix (params.decoy_string), as prefix or suffix. Otherwise it would treat them
+    // as targets, generate its own decoys and the module would fail its decoy_mode "external" check.
+
+    test("phospho rep1 - user-supplied database with custom decoy prefix") {
+
+        when {
+            params {
+                decoy_string = 'QMSD_'
+                decoy_string_position = 'prefix'
+                run_fdr_cutoff = 0.05
+            }
+            process {
+                """
+                // test_lfq_prose database with its DECOY_ accession prefix replaced by the custom marker
+                def db = file(workflow.workDir.resolve('custom_decoy_prefix.fasta').toString())
+                db.text = file(params.pipelines_testdata_base_path + '/testdata/lfq_ci_phospho/pools_crap_targetdecoy.fasta', checkIfExists: true)
+                    .text.replaceAll(/(?m)^>DECOY_/, '>QMSD_')
+                input[0] = channel.of([
+                    [
+                        mzml_id: 'SF_200217_pPeptideLibrary_pool1_HCDnlETcaD_OT_rep1',
+                        enzyme: 'Trypsin',
+                        precursormasstolerance: 10,
+                        precursormasstoleranceunit: 'ppm',
+                        fragmentmasstolerance: 0.6,
+                        fragmentmasstoleranceunit: 'Da',
+                        fixedmodifications: 'Carbamidomethyl (C)',
+                        variablemodifications: 'Acetyl (N-term),Deamidated (N),Deamidated (Q),Oxidation (M),Phospho (S),Phospho (T),Phospho (Y)'
+                    ],
+                    // test_lfq_prose run (Thermo RAW, read directly)
+                    file('https://ftp.pride.ebi.ac.uk/pride/data/archive/2019/09/PXD007058/SF_200217_pPeptideLibrary_pool1_HCDnlETcaD_OT_rep1.raw', checkIfExists: true),
+                    db
+                ])
+                """
+            }
+        }
+
+        then {
+            def summary = path(process.out.summary[0]).text
+            def prose_log = path(process.out.log[0]).text
+            def targets = (summary =~ /db_target_proteins: (\d+)/)[0][1] as int
+            def decoys = (summary =~ /db_decoy_proteins: (\d+)/)[0][1] as int
+            assertAll(
+                { assert process.success },
+                // The supplied decoys are reused, not treated as targets and decoyed again.
+                { assert summary.contains('decoy_mode: "external"') },
+                { assert targets > 0 && decoys == targets },
+                { assert (prose_log =~ /Percolator +: rescored 1 \/ 1 file/).find() },
+                { assert path(process.out.id_files_prose[0][1]).exists() }
+            )
+        }
+    }
+
+    test("phospho rep1 - user-supplied database with custom decoy suffix") {
+
+        when {
+            params {
+                decoy_string = '_QMSD'
+                decoy_string_position = 'suffix'
+                run_fdr_cutoff = 0.05
+            }
+            process {
+                """
+                // test_lfq_prose database with its DECOY_ accession prefix replaced by the custom marker
+                def db = file(workflow.workDir.resolve('custom_decoy_suffix.fasta').toString())
+                db.text = file(params.pipelines_testdata_base_path + '/testdata/lfq_ci_phospho/pools_crap_targetdecoy.fasta', checkIfExists: true)
+                    .text.replaceAll(/(?m)^>DECOY_(\\S+)/, '>\$1_QMSD')
+                input[0] = channel.of([
+                    [
+                        mzml_id: 'SF_200217_pPeptideLibrary_pool1_HCDnlETcaD_OT_rep1',
+                        enzyme: 'Trypsin',
+                        precursormasstolerance: 10,
+                        precursormasstoleranceunit: 'ppm',
+                        fragmentmasstolerance: 0.6,
+                        fragmentmasstoleranceunit: 'Da',
+                        fixedmodifications: 'Carbamidomethyl (C)',
+                        variablemodifications: 'Acetyl (N-term),Deamidated (N),Deamidated (Q),Oxidation (M),Phospho (S),Phospho (T),Phospho (Y)'
+                    ],
+                    // test_lfq_prose run (Thermo RAW, read directly)
+                    file('https://ftp.pride.ebi.ac.uk/pride/data/archive/2019/09/PXD007058/SF_200217_pPeptideLibrary_pool1_HCDnlETcaD_OT_rep1.raw', checkIfExists: true),
+                    db
+                ])
+                """
+            }
+        }
+
+        then {
+            def summary = path(process.out.summary[0]).text
+            def prose_log = path(process.out.log[0]).text
+            def targets = (summary =~ /db_target_proteins: (\d+)/)[0][1] as int
+            def decoys = (summary =~ /db_decoy_proteins: (\d+)/)[0][1] as int
+            assertAll(
+                { assert process.success },
+                // The supplied decoys are reused, not treated as targets and decoyed again.
+                { assert summary.contains('decoy_mode: "external"') },
+                { assert targets > 0 && decoys == targets },
+                { assert (prose_log =~ /Percolator +: rescored 1 \/ 1 file/).find() },
+                { assert path(process.out.id_files_prose[0][1]).exists() }
+            )
+        }
+    }
+}

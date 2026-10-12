@@ -27,6 +27,11 @@ process PROSE {
     if (meta.enzyme == 'unspecific cleavage') {
         specificity = 'none'
     }
+    // ProSE applies Search:FDR:PSM per run after its internal Percolator rescoring (on Percolator q-values),
+    // like PercolatorAdapter's -score:fdr. ProSE reads 0 as "no filtering", so 0 is rejected (see workflows/quantms.nf).
+    if (!(params.run_fdr_cutoff > 0)) {
+        error("ProSE: --run_fdr_cutoff must be > 0 (got ${params.run_fdr_cutoff}); ProSE interprets 0 as 'no filtering'. Use 1.0 to keep all PSMs.")
+    }
     if (specificity == null) {
         error("ProSE: unsupported --num_enzyme_termini '${params.num_enzyme_termini}' (valid: fully, semi, none)")
     }
@@ -67,7 +72,8 @@ process PROSE {
         -Search:modifications:variable_max_per_peptide $params.max_mods \\
         -Search:report:top_hits $params.num_hits \\
         -Search:decoys auto \\
-        -Search:FDR:PSM 0 \\
+        -Search:decoy_prefix '${params.decoy_string}' \\
+        -Search:FDR:PSM ${params.run_fdr_cutoff} \\
         -Search:peptdeep:enable ${params.prose_peptdeep ? 'true' : 'false'} \\
         -Search:peptdeep:instrument ${params.prose_peptdeep_instrument} \\
         -debug $params.db_debug \\
